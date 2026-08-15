@@ -12,7 +12,6 @@ jobs:
           --health-cmd "pg_isready -U business_ci" --health-interval 10s
           --health-timeout 5s --health-retries 5
     env:
-      DATABASE_URL: postgresql://business_ci:business_ci@localhost:5432/business_ci
       DASHBOARD_PASSWORD: ""
     steps:
       - uses: actions/checkout@v4
@@ -22,9 +21,17 @@ jobs:
       - run: pip check
       - run: sudo apt-get update && sudo apt-get install -y postgresql-client
       - run: python -m core.migrations.runner
+        env: {DATABASE_URL: "postgresql://business_ci:business_ci@localhost:5432/business_ci"}
       - name: Verify migrations are idempotent
         run: test -z "$(python -m core.migrations.runner)"
+        env: {DATABASE_URL: "postgresql://business_ci:business_ci@localhost:5432/business_ci"}
       - run: python -m compileall -q core services workers features main.py
+      # DATABASE_URL is deliberately NOT set for the suite. The candidate store
+      # has a file backend and a PostgreSQL backend, and the tests isolate by
+      # monkeypatching the file path. With DATABASE_URL exported job-wide every
+      # test shares one candidates_store table, so unrelated tests collide with
+      # "An active profile already exists for phone ...". Scoping the variable
+      # to the migration steps restores the isolation the tests are built on.
       - run: python -m pytest -q
       - uses: actions/setup-node@v4
         with: {node-version: "22", cache: npm, cache-dependency-path: dashboard/package-lock.json}
