@@ -1,9 +1,13 @@
 # Current-main split resync report
 
+> Historical resync checkpoint. Superseded by
+> `docs/migration/staging-validation-report.md` for current validation evidence.
+
 Date: 2026-08-15
 Final classification: **IN PROGRESS**
 
-This is the authoritative report for the 2026-08-15 resync. Older July extraction reports and generated inventories are historical evidence only.
+This records the pre-validation resync checkpoint. Older July extraction reports and
+generated inventories are historical evidence only.
 
 ## 1. Source of truth
 
