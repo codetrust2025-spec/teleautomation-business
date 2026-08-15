@@ -55,6 +55,21 @@ async def health():
     return {"status": "ok", "service": "teleautomation-operations"}
 
 
+@app.get("/version")
+async def version():
+    """Identify exactly which commit is serving this deployment.
+
+    A deployment that cannot say what it is running cannot be verified, and
+    cannot be rolled back with confidence. RELEASE_SHA is baked in at image
+    build time; "unknown" means the image was built outside the release path.
+    """
+    return {
+        "service": os.getenv("SERVICE_NAME", "teleautomation-operations"),
+        "sha": os.getenv("RELEASE_SHA", "unknown"),
+        "built_at": os.getenv("RELEASE_BUILT_AT", "unknown"),
+    }
+
+
 def _require_internal(request: Request) -> None:
     from core.dashboard_access import is_internal_service_authorized
 
