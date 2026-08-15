@@ -25,7 +25,7 @@ jobs:
       - name: Verify migrations are idempotent
         run: test -z "$(python -m core.migrations.runner)"
       - run: python -m compileall -q core services workers features main.py
-      - run: pytest -q
+      - run: python -m pytest -q
       - uses: actions/setup-node@v4
         with: {node-version: "22", cache: npm, cache-dependency-path: dashboard/package-lock.json}
       - run: npm ci
