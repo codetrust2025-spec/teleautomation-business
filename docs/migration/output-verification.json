@@ -1,0 +1,30 @@
+{
+  "status": "PASS",
+  "projects": {
+    "MESSAGING": {
+      "root": "C:\\Users\\codet\\OneDrive\\Desktop\\Teleautomation_prod\\teleautomation-messaging",
+      "git_ready": true,
+      "symlinks": [],
+      "registered_contracts": 214,
+      "expected_direct_contracts": 130,
+      "missing_direct_contracts": [],
+      "forbidden_domain_files": []
+    },
+    "BUSINESS": {
+      "root": "C:\\Users\\codet\\OneDrive\\Desktop\\Teleautomation_prod\\teleautomation-business",
+      "git_ready": true,
+      "symlinks": [],
+      "registered_contracts": 119,
+      "expected_direct_contracts": 116,
+      "missing_direct_contracts": [],
+      "forbidden_domain_files": []
+    }
+  },
+  "blocked_external": [
+    "live data migration",
+    "production cutover",
+    "DNS/TLS",
+    "provider callbacks",
+    "authenticated role matrix"
+  ]
+}

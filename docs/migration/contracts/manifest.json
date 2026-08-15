@@ -1,0 +1,10 @@
+{
+  "openapi_paths": 204,
+  "openapi_sha256": "6b3f4314672dc15ac26595f8bfd4bd73ca5998555481bffc1d3061a2852d3451",
+  "registered_routes": 244,
+  "route_contracts_sha256": "c0329864c710e4403610e12ee3083198900ee88ccae97ca9c83adba1ecc72e3c",
+  "secret_values_recorded": false,
+  "source_commit": "4882a24000e3ec7fd4dc9ebddcc9f47c44119041",
+  "startup_hooks_executed": false,
+  "status": "CONTRACT_FROZEN_SOURCE_ONLY"
+}

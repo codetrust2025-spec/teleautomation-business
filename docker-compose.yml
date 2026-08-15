@@ -1,0 +1,22 @@
+services:
+  api:
+    build:
+      context: .
+      args:
+        VITE_OPERATIONS_PUBLIC_URL: ${OPERATIONS_PUBLIC_URL:-}
+        VITE_MARKETING_PUBLIC_URL: ${MARKETING_PUBLIC_URL:-}
+    env_file: .env
+    environment:
+      TELEAUTOMATION_SAFE_UI_MODE: ${TELEAUTOMATION_SAFE_UI_MODE:-false}
+    ports: ["127.0.0.1:8200:8000"]
+    volumes:
+      - operations_data:/var/lib/teleautomation-operations
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  operations_data:

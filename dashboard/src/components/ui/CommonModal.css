@@ -1,0 +1,310 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   CommonModal — unified modal system
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Backdrop */
+.cm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  animation: cmFadeIn 0.15s ease-out;
+}
+
+/* Card */
+.cm-card {
+  width: min(420px, calc(100% - 32px));
+  max-height: calc(100dvh - 48px);
+  overflow-y: auto;
+  background: #1a1f35;
+  border: 1px solid rgba(99, 102, 241, 0.2);
+  border-radius: 12px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(99, 102, 241, 0.08);
+  outline: none;
+  animation: cmScaleIn 0.15s ease-out;
+  display: flex;
+  flex-direction: column;
+}
+
+.cm-card--wide {
+  width: min(560px, calc(100% - 32px));
+}
+
+/* Header */
+.cm-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 20px 20px 0;
+}
+
+.cm-header-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.cm-title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: #f1f5f9;
+  line-height: 1.3;
+}
+
+.cm-description {
+  margin: 4px 0 0;
+  font-size: 0.85rem;
+  color: rgba(148, 163, 184, 0.9);
+  line-height: 1.4;
+}
+
+.cm-close {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: rgba(148, 163, 184, 0.7);
+  font-size: 18px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.cm-close:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #f1f5f9;
+}
+
+/* Body */
+.cm-body {
+  padding: 16px 20px;
+  flex: 1;
+  min-height: 0;
+}
+
+/* Error */
+.cm-error {
+  margin: 0 20px 12px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  color: #fca5a5;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+/* Footer */
+.cm-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 20px 16px;
+  border-top: 1px solid rgba(99, 102, 241, 0.1);
+}
+
+/* Buttons */
+.cm-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  transition: background 0.15s, opacity 0.15s, transform 0.1s;
+  white-space: nowrap;
+}
+.cm-btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+.cm-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cm-btn--ghost {
+  background: rgba(255, 255, 255, 0.06);
+  color: #94a3b8;
+}
+.cm-btn--ghost:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  color: #f1f5f9;
+}
+
+.cm-btn--primary {
+  background: #6366f1;
+  color: #fff;
+}
+.cm-btn--primary:hover:not(:disabled) {
+  background: #7c7ff7;
+}
+
+.cm-btn--danger {
+  background: #dc2626;
+  color: #fff;
+}
+.cm-btn--danger:hover:not(:disabled) {
+  background: #ef4444;
+}
+
+.cm-btn--warning {
+  background: #d97706;
+  color: #fff;
+}
+.cm-btn--warning:hover:not(:disabled) {
+  background: #f59e0b;
+}
+
+.cm-btn--success {
+  background: #16a34a;
+  color: #fff;
+}
+.cm-btn--success:hover:not(:disabled) {
+  background: #22c55e;
+}
+
+/* Spinner */
+.cm-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: cmSpin 0.6s linear infinite;
+}
+
+/* Form field helpers (use inside cm-body) */
+.cm-field {
+  margin-bottom: 14px;
+}
+.cm-field:last-child {
+  margin-bottom: 0;
+}
+.cm-field-label {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: rgba(148, 163, 184, 0.9);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.cm-field-label--required::after {
+  content: " *";
+  color: #f87171;
+}
+.cm-input {
+  width: 100%;
+  padding: 9px 12px;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(99, 102, 241, 0.2);
+  border-radius: 6px;
+  color: #f1f5f9;
+  font-size: 0.9rem;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.cm-input:focus {
+  border-color: rgba(99, 102, 241, 0.5);
+}
+.cm-input::placeholder {
+  color: rgba(148, 163, 184, 0.5);
+}
+.cm-select {
+  width: 100%;
+  padding: 9px 12px;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(99, 102, 241, 0.2);
+  border-radius: 6px;
+  color: #f1f5f9;
+  font-size: 0.9rem;
+  outline: none;
+  appearance: none;
+  cursor: pointer;
+}
+.cm-select:focus {
+  border-color: rgba(99, 102, 241, 0.5);
+}
+.cm-textarea {
+  width: 100%;
+  min-height: 72px;
+  padding: 9px 12px;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(99, 102, 241, 0.2);
+  border-radius: 6px;
+  color: #f1f5f9;
+  font-size: 0.9rem;
+  outline: none;
+  resize: vertical;
+  font-family: inherit;
+}
+.cm-textarea:focus {
+  border-color: rgba(99, 102, 241, 0.5);
+}
+.cm-field-error {
+  margin-top: 4px;
+  font-size: 0.78rem;
+  color: #f87171;
+}
+
+/* Confirmation message style */
+.cm-confirm-message {
+  font-size: 0.9rem;
+  color: rgba(226, 232, 240, 0.9);
+  line-height: 1.5;
+}
+.cm-confirm-message strong {
+  color: #f1f5f9;
+}
+
+/* Animations */
+@keyframes cmFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes cmScaleIn {
+  from { opacity: 0; transform: scale(0.95) translateY(8px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+@keyframes cmSpin {
+  to { transform: rotate(360deg); }
+}
+
+/* Mobile: bottom-sheet style */
+@media (max-width: 600px) {
+  .cm-backdrop {
+    align-items: flex-end;
+    padding: 0;
+  }
+  .cm-card {
+    width: 100%;
+    max-width: 100%;
+    max-height: 92dvh;
+    border-radius: 16px 16px 0 0;
+    animation: cmSlideUp 0.2s ease-out;
+  }
+  .cm-card--wide {
+    width: 100%;
+  }
+}
+
+@keyframes cmSlideUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}

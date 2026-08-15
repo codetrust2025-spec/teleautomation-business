@@ -1,0 +1,12 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+node_modules/
+dashboard/dist/
+static/
+data/
+*.session
+*.session-journal
+logs/
+local-preview.*.log

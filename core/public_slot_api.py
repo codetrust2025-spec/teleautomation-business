@@ -1,0 +1,821 @@
+"""Public interview slot booking API (no dashboard login required)."""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import logging
+import os
+import re
+import uuid
+from threading import Lock
+from typing import Any
+
+from fastapi import File, Form, UploadFile
+from fastapi.responses import JSONResponse
+
+from core.ocr_policy import processing_mode
+
+logger = logging.getLogger(__name__)
+_booking_confirmation_lock = Lock()
+
+# Invite extraction must always answer with JSON. Nginx gives the app 300s
+# (proxy_read_timeout) before serving its own HTML 504, which the browser
+# cannot parse, so the application deadline is deliberately well below that.
+# 90s proved too tight: the vision model was still working at 90,091ms and
+# every invite fell through to manual entry. 240s leaves a 60s margin under
+# Nginx's 300s proxy_read_timeout, so the application still answers first.
+INVITE_EXTRACTION_TIMEOUT_DEFAULT = 240
+INVITE_EXTRACTION_TIMEOUT_CEILING = 240
+
+
+def invite_extraction_timeout_seconds() -> int:
+    """Seconds to wait for invite extraction before falling back to manual entry.
+
+    Configurable via INVITE_EXTRACTION_TIMEOUT, but always clamped below the
+    proxy read timeout so the proxy can never answer before the application.
+    """
+    raw = os.environ.get("INVITE_EXTRACTION_TIMEOUT", "")
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        value = INVITE_EXTRACTION_TIMEOUT_DEFAULT
+    if value <= 0:
+        value = INVITE_EXTRACTION_TIMEOUT_DEFAULT
+    return min(value, INVITE_EXTRACTION_TIMEOUT_CEILING)
+
+
+def _invite_extraction_fallback(warning: str, *, trace_id: str = "") -> dict:
+    """Sanitized manual-entry payload. Creates no candidate and no booking."""
+    return {
+        "status": "ok",
+        "success": False,
+        "extraction_source": "error",
+        "processing_mode": processing_mode(),
+        "data": {
+            "candidate_name": "",
+            "interview_date": "",
+            "start_time": "",
+            "end_time": "",
+            "interview_round": "",
+            "technology": "",
+            "meeting_platform": "",
+            "confidence_score": 0,
+            "missing_fields": ["interview_date", "start_time", "interview_round"],
+            "warnings": [warning],
+            "is_payment_screenshot": False,
+            "looks_like_interview_invite": True,
+            "manual_fields_required": True,
+            "invite_trace_id": trace_id,
+        },
+    }
+
+
+def _invite_trace_id(value: str = "") -> str:
+    """Return a safe correlation id without logging candidate-controlled text."""
+    supplied = str(value or "").strip().lower()
+    if re.fullmatch(r"[0-9a-f]{32}", supplied):
+        return supplied
+    return uuid.uuid4().hex
+
+
+def _invite_trace_value(value: Any, *, limit: int = 80) -> str:
+    """Bound and flatten diagnostic values before writing public input to logs."""
+    return " ".join(str(value or "").split())[:limit]
+
+
+def _log_invite_extraction_trace(
+    *,
+    trace_id: str,
+    image_sha256: str,
+    result: dict[str, Any],
+    outcome: str = "complete",
+) -> None:
+    """Log only the time provenance needed to diagnose AM/PM drift."""
+    raw_date = result.pop("_model_raw_interview_date", "")
+    raw_start = result.pop("_model_raw_start_time", "")
+    raw_end = result.pop("_model_raw_end_time", "")
+    result["invite_trace_id"] = trace_id
+    # Production intentionally filters ordinary INFO traffic. This provenance
+    # must survive so an AM/PM incident can be proven end to end.
+    logger.warning(
+        "Invite booking trace phase=extract outcome=%s trace_id=%s image_sha256=%s "
+        "raw_date=%r raw_start=%r raw_end=%r normalized_date=%r "
+        "normalized_start=%r normalized_end=%r normalized_time_24h=%r "
+        "model=%s node=%s safe=%s method=%s",
+        outcome,
+        trace_id,
+        image_sha256,
+        _invite_trace_value(raw_date),
+        _invite_trace_value(raw_start),
+        _invite_trace_value(raw_end),
+        _invite_trace_value(result.get("interview_date") or result.get("date")),
+        _invite_trace_value(result.get("start_time")),
+        _invite_trace_value(result.get("end_time")),
+        _invite_trace_value(result.get("time")),
+        _invite_trace_value(result.get("primary_model")),
+        _invite_trace_value(
+            result.get("inference_node_id") or result.get("inference_node_label")
+        ),
+        bool(result.get("auto_booking_safe")),
+        _invite_trace_value(
+            result.get("extraction_method") or result.get("extraction_source")
+        ),
+    )
+
+
+def _json_error(message: str, status: int = 400, **extra: Any) -> JSONResponse:
+    payload: dict[str, Any] = {"status": "error", "message": message}
+    payload.update(extra)
+    return JSONResponse(payload, status_code=status)
+
+
+def install_public_slot_routes(app) -> None:
+    from features import candidate_store as cs
+
+    @app.get("/public/slots/candidates")
+    async def public_slot_candidates(channel: str | None = None):
+        rows = cs.interview_slot_picker_rows(channel=channel or "profile")
+        return JSONResponse(
+            {"status": "ok", "candidates": rows, "count": len(rows)},
+            headers={"Cache-Control": "no-store, max-age=0"},
+        )
+
+    @app.get("/public/slots/booked")
+    async def public_slot_booked(days: int = 60):
+        snap = cs.public_booked_interview_slots(days=days)
+        return JSONResponse(
+            {"status": "ok", **snap},
+            headers={"Cache-Control": "no-store, max-age=0"},
+        )
+
+    @app.post("/public/slots/payment-proof")
+    async def public_slot_payment_proof(
+        name: str = Form(...),
+        file: UploadFile = File(...),
+        note: str = Form(default=""),
+        service_type: str = Form(default=""),
+        phone: str = Form(default=""),
+        candidate_id: str = Form(default=""),
+        technology: str = Form(default=""),
+        interview_round: str = Form(default=""),
+    ):
+        try:
+            raw = await file.read()
+            if service_type.strip() == "round_wise":
+                due_amount = cs.baseline_for_service("round_wise")
+                payment_owner = None
+            else:
+                due_amount = cs.merged_balance_due_for_name(name) if name else 0
+                payment_owner = cs._best_row_for_slot_name(name)
+            # Payee validation is security-critical and deliberately fails
+            # closed. Never save or credit the receipt before this succeeds.
+            try:
+                from features.payment_verification_engine import verify_payment_screenshot
+                from features.ollama_payment_extract import generate_payment_narrative
+
+                ai_extraction = await asyncio.to_thread(
+                    verify_payment_screenshot,
+                    raw,
+                    file.content_type or "image/jpeg",
+                    source_module="public_slot_payment_proof",
+                    expected_amount=due_amount,
+                    entity_id=str((payment_owner or {}).get("id") or ""),
+                    entity_name=name.strip(),
+                    candidate_id=str((payment_owner or {}).get("id") or ""),
+                    referrer_hint=str((payment_owner or {}).get("reference") or ""),
+                    purpose="candidate_payment",
+                    payment_scope=(
+                        "ROUND" if service_type.strip() == "round_wise" else "PROFILE"
+                    ),
+                    create_ledger=False,
+                )
+                ai_extraction["company_payment_reasons"] = list(
+                    ai_extraction.get("deterministic_reasons") or []
+                )
+                if not ai_extraction.get("booking_eligible"):
+                    verification_state = str(
+                        ai_extraction.get("verification_state") or ""
+                    )
+                    if verification_state == "INCOMPLETE_PAYMENT_EVIDENCE":
+                        message = (
+                            "More Payment Details Required. Upload the complete "
+                            "transaction-details screenshot showing the receiver "
+                            "identifier and Transaction ID or UTR."
+                        )
+                    else:
+                        message = (
+                            " ".join(ai_extraction["company_payment_reasons"])
+                            or "This receipt is not a verified payment to a registered company or referrer account."
+                        )
+                    return _json_error(
+                        message,
+                        ai_extraction=ai_extraction,
+                    )
+            except Exception as ai_exc:
+                logger.exception("Company payment verification failed")
+                return _json_error(
+                    "Could not verify this payment against the company/referrer registry. "
+                    "Upload a clear receipt showing the receiver UPI ID or payment phone number, amount, UTR, and successful status."
+                )
+
+            from features.pending_slot_payment import save_verified_proof
+
+            pending_proof = save_verified_proof(
+                name=name,
+                service_type=service_type.strip() or "profile_service",
+                phone=phone,
+                candidate_id=candidate_id,
+                technology=technology,
+                interview_round=interview_round,
+                data=raw,
+                original_name=file.filename or "payment.jpg",
+                mime_type=file.content_type or "image/jpeg",
+                amount_due=due_amount,
+                note=note or "",
+                verification=ai_extraction,
+            )
+            result = {
+                "candidate_id": "",
+                "proof_id": pending_proof["id"],
+                "proof": pending_proof,
+                "balance_due": 0,
+                "name": name.strip(),
+                "message": pending_proof.get("message") or "",
+            }
+            try:
+                ai_extraction["narrative"] = await asyncio.to_thread(
+                    generate_payment_narrative,
+                    ai_extraction,
+                    candidate_name=name,
+                    expected_amount=due_amount,
+                    received_amount=0,
+                )
+            except Exception as narrative_exc:
+                logger.debug("Payment narrative generation skipped: %s", narrative_exc)
+        except ValueError as e:
+            return _json_error(str(e))
+        resp = {"status": "ok", **result}
+        resp["ai_extraction"] = ai_extraction
+        return resp
+
+    @app.post("/public/slots/parse-screenshot")
+    async def public_slot_parse_screenshot(file: UploadFile = File(...)):
+        raw = await file.read()
+        mime = file.content_type or "image/jpeg"
+        logger.info(
+            "Invite upload received filename=%s mime=%s bytes=%d sha256=%s transport=original",
+            file.filename or "",
+            mime,
+            len(raw),
+            hashlib.sha256(raw).hexdigest()[:16],
+        )
+        try:
+            from features.slot_screenshot_parse import parse_invite_screenshot
+
+            parsed = await asyncio.to_thread(parse_invite_screenshot, raw, mime)
+        except ValueError as e:
+            return _json_error(str(e))
+        except Exception as exc:
+            logger.exception("parse-screenshot failed")
+            return _json_error(f"Could not read screenshot: {exc}", status=500)
+        return {"status": "ok", "slot": parsed}
+
+    @app.post("/public/slots/extract-invite-ai")
+    async def public_slot_extract_invite_ai(file: UploadFile = File(...)):
+        """AI-powered interview invite extraction using Ollama vision models."""
+        raw = await file.read()
+        mime = file.content_type or "image/jpeg"
+        trace_id = _invite_trace_id()
+        image_sha256 = hashlib.sha256(raw).hexdigest()
+        try:
+            from features.ollama_invite_extract import extract_interview_invite_with_ollama
+
+            # Bound the wait so this endpoint always answers with JSON. The
+            # extractor's own OLLAMA_TIMEOUT defaults to 900s, far beyond the
+            # 300s proxy read timeout, so a slow model used to let Nginx reply
+            # first with an HTML 504 that the browser could not parse as JSON.
+            result = await asyncio.wait_for(
+                asyncio.to_thread(extract_interview_invite_with_ollama, raw, mime),
+                timeout=invite_extraction_timeout_seconds(),
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "AI invite extraction exceeded %ss; returning manual-entry fallback",
+                invite_extraction_timeout_seconds(),
+            )
+            fallback = _invite_extraction_fallback(
+                "Invite reading took too long. Retry or enter the date and time manually.",
+                trace_id=trace_id,
+            )
+            _log_invite_extraction_trace(
+                trace_id=trace_id,
+                image_sha256=image_sha256,
+                result=fallback["data"],
+                outcome="timeout",
+            )
+            return fallback
+        except Exception as exc:
+            logger.exception("AI invite extraction failed")
+            fallback = _invite_extraction_fallback(
+                f"AI extraction failed: {exc}. Use manual entry.",
+                trace_id=trace_id,
+            )
+            _log_invite_extraction_trace(
+                trace_id=trace_id,
+                image_sha256=image_sha256,
+                result=fallback["data"],
+                outcome="error",
+            )
+            return fallback
+
+        _log_invite_extraction_trace(
+            trace_id=trace_id,
+            image_sha256=image_sha256,
+            result=result,
+        )
+
+        is_success = bool(result and result.get("confidence_score", 0) > 0)
+        if not result.get("auto_booking_safe"):
+            logger.warning(
+                "Invite extraction not safe stage=%s reason=%s method=%s warnings=%s",
+                result.get("failure_stage") or "unknown",
+                result.get("failure_reason") or "No exact failure reason supplied",
+                result.get("extraction_method") or result.get("extraction_source"),
+                result.get("warnings") or [],
+            )
+        return {
+            "status": "ok",
+            "success": is_success,
+            # Which engine actually read the file. Prefer the mode the
+            # extractor snapshotted at the start of this request over a fresh
+            # read, so an admin toggling the switch mid-extraction cannot make
+            # the response describe a mode this result was not produced under.
+            "processing_mode": result.get("processing_mode") or processing_mode(),
+            "extraction_source": result.get("extraction_source", "unknown"),
+            "primary_model": result.get("primary_model", ""),
+            "backup_model": result.get("backup_model", ""),
+            "data": result,
+        }
+
+    @app.post("/public/slots/extract-payment-ai")
+    async def public_slot_extract_payment_ai(
+        file: UploadFile = File(...),
+        candidate_name: str = Form(default=""),
+    ):
+        """AI-powered payment proof extraction using Ollama vision models.
+
+        Reads UPI/bank screenshots and extracts: amount, sender, UTR, date, status.
+        If candidate_name is provided, auto-verifies against their balance due.
+        """
+        raw = await file.read()
+        mime = file.content_type or "image/jpeg"
+        # Persist the bytes before anything else looks at them. This path used
+        # to record ledger evidence — checksum, extraction, UTR — while the
+        # image lived only in memory for the request, so payments ended up with
+        # complete metadata and no screenshot left to re-read.
+        stored_evidence: dict = {}
+        try:
+            from features import payment_evidence_store
+            stored_evidence = await asyncio.to_thread(
+                payment_evidence_store.store,
+                raw,
+                mime_type=mime,
+                original_filename=file.filename or "",
+                candidate_id=str(
+                    (
+                        cs._best_row_for_slot_name(candidate_name.strip())
+                        if candidate_name.strip()
+                        else {}
+                    ).get("id")
+                    or ""
+                ),
+                upload_source="public_slot_payment_proof",
+            )
+        except Exception:
+            logger.exception("Could not durably store public payment evidence")
+        try:
+            from features.payment_verification_engine import verify_payment_screenshot
+
+            amount_due = (
+                cs.merged_balance_due_for_name(candidate_name.strip())
+                if candidate_name.strip()
+                else 0
+            )
+            result = await asyncio.to_thread(
+                verify_payment_screenshot,
+                raw,
+                mime,
+                source_module="public_slot_payment_extract",
+                expected_amount=amount_due,
+                entity_id=str(
+                    (
+                        cs._best_row_for_slot_name(candidate_name.strip())
+                        if candidate_name.strip()
+                        else {}
+                    ).get("id")
+                    or ""
+                ),
+                entity_name=candidate_name.strip(),
+                candidate_id=str(
+                    (
+                        cs._best_row_for_slot_name(candidate_name.strip())
+                        if candidate_name.strip()
+                        else {}
+                    ).get("id")
+                    or ""
+                ),
+                referrer_hint=str(
+                    (
+                        cs._best_row_for_slot_name(candidate_name.strip())
+                        if candidate_name.strip()
+                        else {}
+                    ).get("reference")
+                    or ""
+                ),
+                purpose="candidate_payment",
+                payment_scope="PROFILE",
+                create_ledger=False,
+            )
+
+            if candidate_name.strip() and result.get("is_payment_screenshot"):
+                try:
+                    # Generate narrative
+                    from features.ollama_payment_extract import generate_payment_narrative
+                    result["narrative"] = await asyncio.to_thread(
+                        generate_payment_narrative,
+                        result,
+                        candidate_name=candidate_name.strip(),
+                        expected_amount=amount_due,
+                        received_amount=0,
+                    )
+                except Exception as vex:
+                    logger.warning("Payment verification failed: %s", vex)
+                    result["warnings"] = list(result.get("warnings") or [])
+                    result["warnings"].append(f"Auto-verify failed: {vex}")
+
+        except Exception as exc:
+            logger.exception("AI payment extraction failed")
+            return {
+                "status": "ok",
+                "success": False,
+                "extraction_source": "error",
+                "data": {
+                    "amount": 0,
+                    "is_payment_screenshot": False,
+                    "confidence_score": 0,
+                    "warnings": [f"AI extraction failed: {exc}"],
+                    "verified": False,
+                    "verification_result": "Extraction failed",
+                },
+            }
+
+        is_success = bool(
+            result
+            and result.get("is_payment_screenshot")
+            and result.get("amount", 0) > 0
+        )
+        return {
+            "status": "ok",
+            "success": is_success,
+            "extraction_source": result.get("extraction_source", "unknown"),
+            "primary_model": result.get("primary_model", ""),
+            "data": result,
+        }
+
+    @app.post("/public/slots/extract-resume-ai")
+    async def public_slot_extract_resume_ai(file: UploadFile = File(...)):
+        """AI-powered resume PDF extraction using Ollama.
+
+        Reads PDF resumes and extracts: name, phone, email, technology,
+        years of experience, skills, education, current company.
+        """
+        raw = await file.read()
+        mime = file.content_type or "application/pdf"
+        try:
+            from features.ollama_resume_extract import extract_resume_with_ollama
+
+            result = await asyncio.to_thread(extract_resume_with_ollama, raw, mime)
+        except Exception as exc:
+            logger.exception("AI resume extraction failed")
+            return {
+                "status": "ok",
+                "success": False,
+                "extraction_source": "error",
+                "data": {
+                    "candidate_name": "",
+                    "technology": "",
+                    "phone": "",
+                    "confidence_score": 0,
+                    "is_resume": False,
+                    "error": str(exc),
+                },
+            }
+
+        # Success if we have at least a name OR enough contact/skill signals.
+        # Regex fallback (no Ollama) is still useful if it found phone/email/tech.
+        has_name = bool(result.get("candidate_name"))
+        has_contact = bool(result.get("phone") or result.get("email"))
+        has_tech = bool(result.get("technology"))
+        is_success = bool(
+            result
+            and result.get("is_resume")
+            and (has_name or (has_contact and has_tech))
+        )
+        return {
+            "status": "ok",
+            "success": is_success,
+            "extraction_source": result.get("extraction_source", "unknown"),
+            "primary_model": result.get("primary_model", ""),
+            "data": result,
+        }
+
+    @app.post("/bookings/confirm")
+    async def confirm_public_slot_booking(
+        name: str = Form(...),
+        date: str = Form(default=""),
+        time: str = Form(default=""),
+        time_end: str = Form(default=""),
+        interview_round: str = Form(default=""),
+        technology: str = Form(default=""),
+        phone: str = Form(default=""),
+        candidate_id: str = Form(default=""),
+        service_type: str = Form(default="round_wise"),
+        notes: str = Form(default=""),
+        payment_proof_id: str = Form(default=""),
+        idempotency_key: str = Form(default=""),
+        invite_trace_id: str = Form(default=""),
+        invite_display_date: str = Form(default=""),
+        invite_display_time: str = Form(default=""),
+        invite_extracted_start_time: str = Form(default=""),
+        file: UploadFile | None = File(default=None),
+    ):
+        trace_id = _invite_trace_id(invite_trace_id)
+        normalized_service_type = service_type.strip() or "round_wise"
+        normalized_technology = technology.strip()
+        normalized_phone = phone.strip() if normalized_service_type == "round_wise" else ""
+        normalized_round = cs.normalise_interview_round(interview_round)
+        if not name.strip():
+            return _json_error("Client name is required.")
+        if not normalized_round:
+            return _json_error(
+                "Interview round is required. Select L1, L2, or another valid round."
+            )
+        if normalized_service_type == "round_wise" and not normalized_technology:
+            return _json_error(
+                "Technology is required for round-wise booking. "
+                "Select the technology and try again."
+            )
+        if normalized_service_type == "round_wise" and not cs.candidate_phone_identity(normalized_phone):
+            return _json_error(
+                "A valid phone number is required for round-wise booking. "
+                "Enter the candidate phone number and try again."
+            )
+
+        normalized_proof_id = payment_proof_id.strip()
+        pending_payment_proof = None
+        if normalized_proof_id:
+            from features.pending_slot_payment import get_verified_proof
+
+            pending_payment_proof = get_verified_proof(
+                normalized_proof_id,
+                name=name,
+                service_type=normalized_service_type,
+                phone=normalized_phone,
+                candidate_id=candidate_id.strip(),
+                technology=normalized_technology,
+                interview_round=normalized_round,
+            )
+        re_service_booking = cs.candidate_is_re_service_eligible(
+            name=name.strip(),
+            phone=normalized_phone,
+            interview_round=normalized_round,
+            candidate_id=candidate_id.strip(),
+        )
+        if normalized_service_type == "round_wise" and not pending_payment_proof and not re_service_booking:
+            return _json_error(
+                "Upload and verify the payment screenshot to continue.",
+                payment_due=True,
+                balance_due=cs.baseline_for_service("round_wise"),
+                name=name.strip(),
+            )
+
+        slot_image: bytes | None = None
+        slot_image_name = ""
+        slot_image_mime = ""
+        if not file or not file.filename:
+            return _json_error("Interview invite screenshot is required.")
+        if file and file.filename:
+            slot_image = await file.read()
+            slot_image_name = file.filename or "slot.jpg"
+            slot_image_mime = file.content_type or "image/jpeg"
+            # Validate: must look like an interview invite
+            try:
+                from features.payment_proof_validator import validate_interview_invite
+                is_valid, reason = validate_interview_invite(slot_image, slot_image_mime)
+                if not is_valid:
+                    return _json_error(reason)
+            except ValueError as exc:
+                return _json_error(str(exc))
+            except Exception as exc:
+                logger.exception("Interview invite validation failed")
+                return _json_error(
+                    "Interview invite verification failed. Upload the original screenshot again.",
+                    failure_reason=str(exc),
+                )
+
+        day = date.strip()
+        slot_time = time.strip()
+        slot_end = time_end.strip()
+        if not day or not slot_time:
+            return _json_error(
+                "Interview date and start time are required. "
+                "Automatic booking is allowed only after dual-source AI verification; "
+                "otherwise enter them manually."
+            )
+        image_sha256 = hashlib.sha256(slot_image or b"").hexdigest()
+        logger.warning(
+            "Invite booking trace phase=confirm_received trace_id=%s image_sha256=%s "
+            "extracted_start=%r displayed_date=%r displayed_time=%r "
+            "submitted_date=%r submitted_time=%r submitted_end=%r",
+            trace_id,
+            image_sha256,
+            _invite_trace_value(invite_extracted_start_time),
+            _invite_trace_value(invite_display_date),
+            _invite_trace_value(invite_display_time),
+            _invite_trace_value(day),
+            _invite_trace_value(slot_time),
+            _invite_trace_value(slot_end),
+        )
+        booking_key = hashlib.sha256(
+            "|".join(
+                [
+                    idempotency_key.strip(),
+                    name.strip().lower(),
+                    normalized_service_type,
+                    normalized_phone,
+                    day,
+                    slot_time,
+                    slot_end,
+                    normalized_round.lower(),
+                    normalized_proof_id,
+                ]
+            ).encode("utf-8")
+        ).hexdigest()
+        candidate_ids_before: set[str] = set()
+
+        def rollback_new_candidates() -> None:
+            current_ids = {
+                str(candidate.get("id") or "")
+                for candidate in cs.list_candidates(stage="all", month="all")
+                if str(candidate.get("id") or "")
+            }
+            for created_id in current_ids - candidate_ids_before:
+                cs.delete_candidate(created_id)
+
+        try:
+            with _booking_confirmation_lock:
+                candidate_ids_before = {
+                    str(candidate.get("id") or "")
+                    for candidate in cs.list_candidates(stage="all", month="all")
+                    if str(candidate.get("id") or "")
+                }
+                # A previous attempt only satisfies this one if it actually
+                # booked the slot. The key is stored on the candidate row before
+                # the slot is applied, so an attempt blocked after that point
+                # leaves the key behind on a row with no date and
+                # slot_confirmed false; matching on the key alone replayed that
+                # row as a success forever and made the slot unbookable.
+                existing_booking = next(
+                    (
+                        candidate
+                        for candidate in cs.list_candidates(stage="all", month="all")
+                        if str(candidate.get("booking_idempotency_key") or "").strip() == booking_key
+                        and cs.candidate_has_confirmed_slot(candidate)
+                    ),
+                    None,
+                )
+                if existing_booking:
+                    row, action = existing_booking, "skip_exists"
+                else:
+                    payment_reuse = {}
+                    if pending_payment_proof:
+                        from features.pending_slot_payment import validate_for_confirmation
+
+                        payment_reuse = validate_for_confirmation(
+                            pending_payment_proof,
+                            phone=normalized_phone,
+                            candidate_id=candidate_id.strip(),
+                        )
+                    row, action = cs.import_confirmed_interview_slot(
+                        name=name, date=day, time=slot_time, time_end=slot_end,
+                        interview_round=normalized_round, technology=normalized_technology,
+                        phone=normalized_phone, service_type=normalized_service_type,
+                        notes=notes, source="submit-slot form",
+                        payment_proof_id=normalized_proof_id or None,
+                        pending_payment_proof=pending_payment_proof,
+                        payment_reuse=payment_reuse,
+                        candidate_id=candidate_id.strip(),
+                        idempotency_key=booking_key, slot_image=slot_image,
+                        slot_image_name=slot_image_name, slot_image_mime=slot_image_mime,
+                    )
+                    row = cs.finalize_public_booking_payment(
+                        row, pending_payment_proof=pending_payment_proof,
+                        payment_reuse=payment_reuse,
+                        idempotency_key=booking_key,
+                    )
+        except cs.PaymentDueError as e:
+            rollback_new_candidates()
+            return _json_error(
+                str(e),
+                payment_due=True,
+                balance_due=e.balance_due,
+                name=e.name,
+            )
+        except cs.SlotBookedError as e:
+            rollback_new_candidates()
+            return _json_error(str(e), slot_conflict=True, conflicts=e.conflicts)
+        except ValueError as e:
+            rollback_new_candidates()
+            return _json_error(str(e))
+        except Exception as e:
+            rollback_new_candidates()
+            logger.exception("Booking confirmation failed")
+            return _json_error(
+                "Booking confirmation failed. No candidate or booking was created.",
+                status=500,
+                failure_reason=str(e),
+            )
+
+        # Success is reported only for a row that really carries the slot. A
+        # response of 200 with an unbooked row is what put "Slot confirmed" on
+        # screen while Confirmed slots stayed empty, so it is refused here
+        # rather than left to the caller to notice.
+        if not cs.candidate_has_confirmed_slot(row):
+            logger.error(
+                "Invite booking trace phase=confirm_unpersisted trace_id=%s "
+                "image_sha256=%s action=%s row_id=%r stored_date=%r stored_time=%r",
+                trace_id,
+                image_sha256,
+                _invite_trace_value(action),
+                str(row.get("id") or ""),
+                _invite_trace_value(row.get("date")),
+                _invite_trace_value(row.get("time")),
+            )
+            return _json_error(
+                "Booking did not complete. The interview slot was not saved — "
+                "try again, and if it repeats report this invite.",
+                status=500,
+                failure_reason=f"confirm_unpersisted action={action}",
+            )
+
+        logger.warning(
+            "Invite booking trace phase=confirm_stored trace_id=%s image_sha256=%s "
+            "stored_date=%r stored_time=%r stored_end=%r action=%s",
+            trace_id,
+            image_sha256,
+            _invite_trace_value(row.get("date")),
+            _invite_trace_value(row.get("time")),
+            _invite_trace_value(row.get("time_end")),
+            _invite_trace_value(action),
+        )
+
+        async def _notify() -> None:
+            try:
+                from services.slot_booking_notify import notify_slot_booked
+
+                await notify_slot_booked(row, action=action)
+            except Exception as exc:
+                logger.debug("slot booking notify failed: %s", exc)
+
+        asyncio.create_task(_notify())
+        return {"status": "ok", "action": action, "candidate": row}
+
+    @app.post("/public/slots/book")
+    async def retired_public_slot_book():
+        return _json_error(
+            "This booking endpoint is retired. Use POST /bookings/confirm.",
+            status=410,
+        )
+
+    @app.post("/public/slots/session-complete")
+    async def public_slot_session_complete(
+        name: str = Form(...),
+        date: str = Form(default=""),
+        time: str = Form(default=""),
+        file: UploadFile = File(...),
+    ):
+        try:
+            raw = await file.read()
+            row, action = cs.mark_session_complete_by_name(
+                name,
+                date=date,
+                time=time,
+                source="submit-slot",
+                slot_image=raw,
+                slot_image_name=file.filename or "session-complete.jpg",
+                slot_image_mime=file.content_type or "image/jpeg",
+            )
+        except ValueError as e:
+            return _json_error(str(e))
+        return {"status": "ok", "action": action, "candidate": row}

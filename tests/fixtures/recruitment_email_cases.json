@@ -1,0 +1,23 @@
+[
+  {"name":"interview invitation","subject":"Interview invitation","body":"We invite you to attend an interview.","relevant":true,"status":"INTERVIEW_UPDATE"},
+  {"name":"scheduled","subject":"Interview scheduled","body":"Your technical interview is scheduled for 14 July 2026 at 2 PM IST.","relevant":true,"status":"INTERVIEW_UPDATE"},
+  {"name":"rescheduled","subject":"Interview rescheduled","body":"Your interview has been moved to 15 July at 4 PM.","relevant":true,"status":"INTERVIEW_UPDATE"},
+  {"name":"cancelled","subject":"Interview cancelled","body":"The interview scheduled for today has been cancelled.","relevant":true,"status":"INTERVIEW_UPDATE"},
+  {"name":"assessment","subject":"Coding assessment","body":"Complete the online assessment using this link.","relevant":false,"status":"IGNORED_NOT_OFFER_RELATED"},
+  {"name":"shortlisted","subject":"Application update","body":"You have been shortlisted for the Data Engineer role.","relevant":true,"status":"INTERVIEW_SHORTLISTED"},
+  {"name":"technical round","subject":"Technical round","body":"Your technical round is confirmed.","relevant":true,"status":"INTERVIEW_UPDATE"},
+  {"name":"managerial round","subject":"Managerial interview","body":"Please attend the managerial round.","relevant":true,"status":"INTERVIEW_UPDATE"},
+  {"name":"hr round","subject":"HR round","body":"Your HR round is scheduled tomorrow.","relevant":true,"status":"INTERVIEW_UPDATE"},
+  {"name":"selected","subject":"Congratulations","body":"You have been selected for the position.","relevant":true,"status":"SELECTED"},
+  {"name":"offer indication","subject":"Offer update","body":"We are planning to release your offer.","relevant":true,"status":"OFFER_INDICATION"},
+  {"name":"offer letter","subject":"Employment offer","body":"Please find your offer letter attached.","filenames":["Offer_Letter.pdf"],"relevant":true,"status":"OFFER_LETTER_RECEIVED"},
+  {"name":"salary only","subject":"Compensation discussion","body":"We would like to discuss salary expectations.","relevant":false,"status":"IGNORED_NOT_OFFER_RELATED"},
+  {"name":"joining","subject":"Joining confirmation","body":"Your date of joining is confirmed as 10 August 2026.","relevant":true,"status":"JOINING_CONFIRMED"},
+  {"name":"joining changed","subject":"Joining date changed","body":"Your joining date has moved to 17 August 2026.","relevant":true,"status":"JOINING_DATE_UPDATED"},
+  {"name":"bgv","subject":"Background verification","body":"Please complete the background verification form.","relevant":true,"status":"BACKGROUND_VERIFICATION"},
+  {"name":"document verification","subject":"Document verification","body":"Upload documents for verification.","relevant":true,"status":"DOCUMENT_VERIFICATION"},
+  {"name":"rejected","subject":"Application update","body":"We regret to inform you that we will not be moving forward.","relevant":true,"status":"CANDIDATE_REJECTED"},
+  {"name":"marketing","subject":"Summer sale","body":"Save 30 percent on subscriptions.","relevant":false,"status":"NO_RELEVANT_STATUS"},
+  {"name":"job alert","subject":"LinkedIn job alert","body":"New jobs selected for you.","relevant":false,"status":"NO_RELEVANT_STATUS"},
+  {"name":"spam","subject":"You won","body":"Claim your prize now.","relevant":false,"status":"NO_RELEVANT_STATUS"}
+]

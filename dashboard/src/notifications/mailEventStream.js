@@ -1,0 +1,190 @@
+/**
+ * One mail-monitoring socket for the whole tab.
+ *
+ * Previously the notifications page and the header bell each opened their own
+ * WebSocket, which is why the alert sound needed an 8-second dedupe window to
+ * stop the same event sounding twice. Now there is a single connection with
+ * many subscribers: the global sound manager is one of them, the page and the
+ * bell are others, and a component mounting or unmounting cannot change whether
+ * an event is heard.
+ *
+ * Connect/retry/replay semantics are carried over unchanged, including the
+ * `last_event_id` replay cursor and the cross-tab BroadcastChannel mirror.
+ */
+
+import { API } from '../config.js'
+
+const CHANNEL_NAME = 'teleautomation-mail-monitoring'
+const LAST_EVENT_KEY = 'teleautomation-mail-last-event-id'
+const SEEN_LIMIT = 500
+
+const subscribers = new Set()
+const statusSubscribers = new Set()
+
+let socket = null
+let channel = null
+let retry = 0
+let reconnectTimer = null
+let heartbeat = null
+let stopped = true
+let status = 'Offline'
+const seen = new Set()
+
+function setStatus(next) {
+  if (status === next) return
+  status = next
+  for (const fn of statusSubscribers) {
+    try {
+      fn(status)
+    } catch {
+      /* a broken status listener must not kill the socket */
+    }
+  }
+}
+
+/**
+ * Fan an event out to every subscriber.
+ *
+ * `fromSocket` distinguishes an event this tab received from the server from
+ * one mirrored out of another tab. Only the former may make a noise — the same
+ * rule the old per-component socket followed.
+ */
+function emit(payload, fromSocket) {
+  for (const fn of subscribers) {
+    try {
+      fn(payload, { fromSocket })
+    } catch {
+      /* one bad subscriber must not stop the others */
+    }
+  }
+}
+
+function receive(payload) {
+  const id = payload?.event_id
+  if (id && seen.has(id)) return
+  if (id) {
+    seen.add(id)
+    if (seen.size > SEEN_LIMIT) seen.delete(seen.values().next().value)
+    try {
+      localStorage.setItem(LAST_EVENT_KEY, id)
+    } catch {
+      /* storage is optional */
+    }
+  }
+
+  emit(payload, true)
+
+  if (['slot_auto_booked', 'interview_rescheduled', 'interview_cancelled'].includes(payload?.event)) {
+    window.dispatchEvent(new CustomEvent('teleautomation:slot-booking-updated', { detail: payload }))
+  }
+  channel?.postMessage(payload)
+}
+
+function connect() {
+  if (stopped) return
+  setStatus(retry ? 'Reconnecting' : 'Offline')
+  const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws'
+  let last = ''
+  try {
+    last = localStorage.getItem(LAST_EVENT_KEY) || ''
+  } catch {
+    last = ''
+  }
+  socket = new WebSocket(
+    `${scheme}://${window.location.host}/ws/mail-monitoring?last_event_id=${encodeURIComponent(last)}`,
+  )
+  socket.onopen = () => {
+    retry = 0
+    setStatus('Live')
+    heartbeat = window.setInterval(
+      () => socket?.readyState === WebSocket.OPEN && socket.send(JSON.stringify({ type: 'ping' })),
+      20000,
+    )
+  }
+  socket.onmessage = (event) => {
+    try {
+      receive(JSON.parse(event.data))
+    } catch {
+      /* ignore malformed transport frames */
+    }
+  }
+  socket.onclose = () => {
+    window.clearInterval(heartbeat)
+    if (stopped) return
+    retry += 1
+    setStatus(retry > 1 ? 'Offline' : 'Reconnecting')
+    reconnectTimer = window.setTimeout(
+      connect,
+      Math.min(30000, 1000 * 2 ** Math.min(retry, 5)) + Math.random() * 500,
+    )
+  }
+  socket.onerror = () => socket.close()
+}
+
+function start() {
+  if (!stopped) return
+  stopped = false
+  channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel(CHANNEL_NAME) : null
+  if (channel) channel.onmessage = (event) => emit(event.data, false)
+
+  fetch(`${API}/api/ai-recruitment/config`, { credentials: 'include' })
+    .then((response) => (response.ok ? response.json() : null))
+    .then((data) => {
+      if (data?.enabled) connect()
+      else setStatus('Offline')
+    })
+    .catch(() => setStatus('Offline'))
+}
+
+function stop() {
+  stopped = true
+  window.clearTimeout(reconnectTimer)
+  window.clearInterval(heartbeat)
+  try {
+    channel?.close()
+  } catch {
+    /* ignore */
+  }
+  channel = null
+  try {
+    socket?.close()
+  } catch {
+    /* ignore */
+  }
+  socket = null
+  setStatus('Offline')
+}
+
+/**
+ * Subscribe to mail events. Returns an unsubscribe function.
+ *
+ * The connection opens on the first subscriber and closes when the last one
+ * leaves, so nothing is held open on the login screen.
+ */
+export function subscribeMailEvents(handler) {
+  subscribers.add(handler)
+  if (subscribers.size === 1) start()
+  return () => {
+    subscribers.delete(handler)
+    if (subscribers.size === 0) stop()
+  }
+}
+
+export function subscribeMailStatus(handler) {
+  statusSubscribers.add(handler)
+  handler(status)
+  return () => statusSubscribers.delete(handler)
+}
+
+export function getMailStatus() {
+  return status
+}
+
+/** Test seam: forget connection state between cases. */
+export function __resetMailEventStream() {
+  subscribers.clear()
+  statusSubscribers.clear()
+  seen.clear()
+  retry = 0
+  stop()
+}

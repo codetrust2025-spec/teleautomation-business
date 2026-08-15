@@ -1,0 +1,561 @@
+/* ═══════════════════════════════════════════
+   Earnings Breakdown — replaces Top Performers
+   ═══════════════════════════════════════════ */
+
+.earn-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+}
+
+/* Header */
+.earn-header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+.earn-header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.earn-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--text, #eef2f7);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.earn-scope {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #6366f12e;
+  color: #c7d2fe;
+  border: 1px solid rgba(99,102,241,.35);
+}
+.earn-sub {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted, #a8b4c4);
+  line-height: 1.5;
+}
+.earn-header-right {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+.earn-add-expense {
+  min-height: 34px;
+  white-space: nowrap;
+}
+.earn-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.earn-filter-label {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-dim, #7b8a9e);
+}
+.earn-empty {
+  font-size: 13px;
+  color: var(--text-dim, #7b8a9e);
+  text-align: center;
+  padding: 24px;
+}
+
+/* Table */
+.earn-table-wrap {
+  overflow-x: auto;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,.06);
+}
+.earn-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  min-width: 900px;
+  table-layout: fixed;
+}
+.earn-table thead th {
+  position: sticky;
+  top: 0;
+  background: #0f172af2;
+  padding: 10px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-dim, #7b8a9e);
+  border-bottom: 1px solid rgba(255,255,255,.08);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Column widths — must sum to 100% */
+.earn-th--name    { width: 13%; text-align: left; }
+.earn-th--num     { width: 4%;  text-align: center; }
+.earn-th--money   { width: 10%; text-align: right; }
+.earn-th--status  { width: 6%;  text-align: center; }
+.earn-th--action  { width: 8%;  text-align: right; }
+/* 13 + 4 + 4 + 10 + 10 + 10 + 10 + 10 + 10 + 6 + 8 = 95% — remaining 5% distributed */
+
+.earn-table tbody td {
+  padding: 10px 6px;
+  border-bottom: 1px solid rgba(255,255,255,.04);
+  vertical-align: middle;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.earn-td--num { text-align: center; font-variant-numeric: tabular-nums; }
+.earn-td--money { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.earn-td--status { text-align: center; }
+.earn-td--action { text-align: right; }
+.earn-td--name {
+  text-align: left;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.earn-expand-icon {
+  font-size: 10px;
+  color: var(--text-dim, #7b8a9e);
+  margin-right: 6px;
+}
+
+.earn-row { cursor: pointer; transition: background .12s; }
+.earn-row:hover { background: rgba(99,102,241,.06); }
+.earn-row--open { background: rgba(99,102,241,.08); }
+
+@media (max-width: 720px) {
+  .earn-header-right {
+    width: 100%;
+  }
+  .earn-filter {
+    flex: 1 1 140px;
+  }
+  .earn-add-expense {
+    flex: 1 1 130px;
+  }
+}
+
+/* Status badges */
+.earn-status {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+.earn-status--owe { color: #fbbf24; background: #f59e0b1f; border-color: #f59e0b4d; }
+.earn-status--over { color: #fca5a5; background: #f871711a; border-color: #f871714d; }
+.earn-status--settled { color: #86efac; background: #22c55e1a; border-color: #22c55e4d; }
+
+/* Colors */
+.earn-green { color: #4ade80; }
+.earn-red { color: #fca5a5; }
+.earn-blue { color: #7dd3fc; }
+.earn-settled { color: #86efac; }
+
+/* Detail row */
+.earn-detail-row td { padding: 0 !important; border-bottom: 1px solid rgba(99,102,241,.15); }
+.earn-detail {
+  padding: 12px 16px 14px 34px;
+  background: #6366f10a;
+  border-top: 1px solid rgba(99,102,241,.12);
+}
+.earn-detail-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.earn-detail-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #0f172ab3;
+  border: 1px solid rgba(255,255,255,.06);
+  min-width: 100px;
+}
+.earn-detail-label {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-dim, #7b8a9e);
+}
+.earn-detail-value {
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--text, #eef2f7);
+}
+.earn-detail-formula {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted, #a8b4c4);
+  line-height: 1.6;
+  padding: 8px 10px;
+  background: #0f172a80;
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,.04);
+}
+
+/* Sub-list for per-candidate breakdown */
+.earn-breakdown-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.earn-breakdown-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(255,255,255,.06);
+  font-size: 13px;
+  color: var(--text-muted, #a8b4c4);
+}
+.earn-breakdown-item:last-child { border-bottom: none; }
+.earn-breakdown-desc { flex: 1; min-width: 0; }
+.earn-breakdown-amount {
+  flex-shrink: 0;
+  margin-left: 16px;
+  font-size: 14px;
+  font-weight: 800;
+  color: #4ade80;
+  font-variant-numeric: tabular-nums;
+}
+.earn-breakdown-date {
+  color: var(--text-dim, #7b8a9e);
+  font-size: 11px;
+}
+.earn-breakdown-proof-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 8px;
+  padding: 2px 6px;
+  border: 1px solid rgba(99,102,241,.35);
+  border-radius: 4px;
+  background: rgba(99,102,241,.12);
+  color: #c7d2fe;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background .12s, border-color .12s;
+}
+.earn-breakdown-proof-btn:hover {
+  background: rgba(99,102,241,.25);
+  border-color: rgba(99,102,241,.6);
+}
+.earn-breakdown-proof-btn:focus-visible {
+  outline: 2px solid #93c5fd;
+  outline-offset: 2px;
+  background: rgba(99,102,241,.3);
+  border-color: #93c5fd;
+}
+.earn-breakdown-total {
+  border-top: 2px solid rgba(99,102,241,.3);
+  margin-top: 4px;
+  padding: 12px 14px;
+  background: rgba(99,102,241,.06);
+  gap: 18px;
+  white-space: normal;
+}
+.earn-breakdown-total-title {
+  color: var(--text, #eef2f7);
+}
+/* The Total row now carries the month's referral earnings on its right. */
+.earn-breakdown-total-earnings {
+  flex-shrink: 0;
+  margin-left: 16px;
+  color: var(--text-muted, #a8b4c4);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.earn-breakdown-total-earnings strong {
+  color: #4ade80;
+  font-size: 14px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+/* The old right-aligned summary strip is gone; only the complimentary tint
+   survives it, now applied to the opening-balance note in the calculation. */
+.earn-summary-note--complimentary {
+  color: #fbbf24;
+}
+.earn-breakdown-empty {
+  color: var(--text-dim, #7b8a9e);
+  font-style: italic;
+}
+.earn-detail-loading {
+  font-size: 12px;
+  color: var(--text-dim, #7b8a9e);
+  padding: 8px 0;
+  margin: 0;
+}
+
+/* Footer */
+.earn-foot td {
+  padding: 10px 6px;
+  font-weight: 700;
+  border-top: 2px solid rgba(99,102,241,.25);
+  background: #0f172af2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .earn-header { flex-direction: column; }
+  .earn-detail-grid { gap: 6px; }
+  .earn-detail-card { min-width: 80px; padding: 6px 8px; }
+  .earn-breakdown-total {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+  .earn-breakdown-total-earnings { margin-left: 0; }
+}
+
+/* Carry-forward indicator */
+.earn-carry-fwd {
+  display: block;
+  /* Was 9px as a "c/f" abbreviation nobody read. It now carries a full label,
+     so it needs to be legible rather than merely present. */
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-dim, #7b8a9e);
+  margin-top: 3px;
+  opacity: .95;
+  letter-spacing: .02em;
+  white-space: nowrap;
+}
+
+/* Info affordance next to "Closing balance"; the formula lives in the title. */
+.earn-info {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  margin-left: 5px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  font-size: 8px;
+  font-style: italic;
+  font-weight: 700;
+  line-height: 1;
+  opacity: .6;
+  cursor: help;
+  vertical-align: middle;
+}
+
+/* ── Per-handler calculation, directly under the Total row ───────────────
+   Full width and in normal flow. It was a narrow right-aligned card, which
+   left the rest of the expanded row empty from the Total row to the border. */
+.earn-ledger {
+  display: block;
+  width: 100%;
+  /* Explicit, so the padding and border cannot push it past its container if
+     the global reset is ever scoped away. */
+  box-sizing: border-box;
+  margin: 10px 0 0;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 255, 255, .09);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, .022);
+  font-variant-numeric: tabular-nums;
+}
+/* Desktop: one compact horizontal band across the full width. Every term gets
+   an identical column whatever the count, so the labels and amounts line up
+   down the band instead of drifting with their own text width. */
+.earn-ledger-rows {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 4px 18px;
+  align-items: start;
+}
+.earn-ledger-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 4px 0;
+}
+.earn-ledger-label {
+  color: var(--text-dim, #7b8a9e);
+  font-weight: 600;
+  font-size: 11px;
+  /* Fixed, so the info badge inside the closing-balance label cannot make that
+     one label taller and drop its amount below the rest of the band. */
+  line-height: 16px;
+}
+.earn-ledger-value {
+  font-weight: 700;
+  font-size: 14px;
+  /* Fixed, so the larger closing-balance figure still shares one line box with
+     the rest of the band and every amount sits on the same line. */
+  line-height: 20px;
+}
+.earn-ledger-note {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-dim, #7b8a9e);
+  line-height: 1.35;
+}
+/* The reason is generated as a sentence fragment ("unpaid from Jun 2026") so
+   it can also be used mid-sentence in tooltips. Capitalise it here rather than
+   in the data, so the one string stays correct in both places. */
+.earn-ledger-note::first-letter {
+  text-transform: uppercase;
+}
+/* Running subtotals read as results, not as further inputs. */
+.earn-ledger-row--subtotal .earn-ledger-label {
+  color: var(--text-muted, #a8b4c4);
+  font-weight: 700;
+}
+.earn-ledger-row--subtotal .earn-ledger-value {
+  color: var(--text, #eef2f7);
+  font-weight: 800;
+}
+
+/* The total's label keeps the same size as the others so every amount in the
+   band sits on one line; only the figure itself is emphasised. */
+.earn-ledger-row--total .earn-ledger-label {
+  color: var(--text, #eef2f7);
+  font-weight: 700;
+}
+.earn-ledger-row--total .earn-ledger-value {
+  font-size: 15px;
+  font-weight: 800;
+}
+.earn-ledger-row--total .earn-status {
+  margin-left: 8px;
+}
+/* The one line a reader acts on. It was the quietest thing in the card. */
+.earn-ledger-outcome {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 9px 12px;
+  border-left: 3px solid rgba(99, 102, 241, .75);
+  border-radius: 0 8px 8px 0;
+  background: rgba(99, 102, 241, .1);
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text, #eef2f7);
+  letter-spacing: .01em;
+}
+.earn-ledger-outcome::before {
+  content: "→";
+  flex-shrink: 0;
+  color: #a5b4fc;
+  font-weight: 800;
+}
+
+/* Between full width and mobile there are too many terms for one line. Wrap to
+   equal four-across rows rather than letting the columns shrink unevenly. */
+@media (max-width: 1180px) and (min-width: 769px) {
+  .earn-ledger-rows {
+    grid-auto-flow: row;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    row-gap: 10px;
+  }
+}
+
+/* Mobile: a stacked card — one item per row, label left, amount right, and
+   nothing wide enough to scroll sideways. */
+@media (max-width: 768px) {
+  .earn-ledger {
+    padding: 10px 12px;
+  }
+  .earn-ledger-rows {
+    grid-auto-flow: row;
+    grid-auto-columns: auto;
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+  .earn-ledger-row {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 7px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, .05);
+  }
+  .earn-ledger-row:last-child { border-bottom: none; }
+  .earn-ledger-label { font-size: 12px; }
+  .earn-ledger-value {
+    text-align: right;
+    white-space: nowrap;
+  }
+  /* The reason drops to its own full-width line under the label. */
+  .earn-ledger-note {
+    flex: 1 0 100%;
+    order: 3;
+    margin-top: 2px;
+  }
+  .earn-ledger-row--total {
+    margin-top: 4px;
+    padding-top: 9px;
+    border-top: 1px solid rgba(255, 255, 255, .14);
+  }
+  .earn-ledger-outcome {
+    align-items: flex-start;
+    font-size: 13px;
+  }
+}
+
+/* Carry-forward detail box (inside expanded row) */
+.earn-carry-fwd-detail {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  margin-bottom: 8px;
+  border-radius: 8px;
+  background: rgba(251, 191, 36, .08);
+  border: 1px solid rgba(251, 191, 36, .25);
+}
+.earn-carry-fwd-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+.earn-carry-fwd-text {
+  font-size: 13px;
+  color: #fbbf24;
+  line-height: 1.4;
+}
+.earn-carry-fwd-text strong {
+  color: #fcd34d;
+}
+.earn-carry-fwd-sub {
+  color: var(--text-muted, #a8b4c4);
+  font-size: 12px;
+}

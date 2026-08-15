@@ -1,0 +1,1950 @@
+[
+  {
+    "endpoint": "serve_index",
+    "methods": [
+      "GET"
+    ],
+    "name": "serve_index",
+    "path": "/"
+  },
+  {
+    "endpoint": "refresh_joined_counts",
+    "methods": [
+      "POST"
+    ],
+    "name": "refresh_joined_counts",
+    "path": "/account/refresh-joined"
+  },
+  {
+    "endpoint": "clear_all_shutdowns_route",
+    "methods": [
+      "POST"
+    ],
+    "name": "clear_all_shutdowns_route",
+    "path": "/account/shutdown/clear-all"
+  },
+  {
+    "endpoint": "account_status",
+    "methods": [
+      "GET"
+    ],
+    "name": "account_status",
+    "path": "/account/status"
+  },
+  {
+    "endpoint": "switch_account",
+    "methods": [
+      "POST"
+    ],
+    "name": "switch_account",
+    "path": "/account/switch"
+  },
+  {
+    "endpoint": "clear_account_logs",
+    "methods": [
+      "POST"
+    ],
+    "name": "clear_account_logs",
+    "path": "/account/{slot}/clear-logs"
+  },
+  {
+    "endpoint": "set_account_display_name",
+    "methods": [
+      "POST"
+    ],
+    "name": "set_account_display_name",
+    "path": "/account/{slot}/display-name"
+  },
+  {
+    "endpoint": "forward_cycle_selection_get",
+    "methods": [
+      "GET"
+    ],
+    "name": "forward_cycle_selection_get",
+    "path": "/account/{slot}/forward-cycle/selection"
+  },
+  {
+    "endpoint": "forward_cycle_selection_save",
+    "methods": [
+      "POST"
+    ],
+    "name": "forward_cycle_selection_save",
+    "path": "/account/{slot}/forward-cycle/selection"
+  },
+  {
+    "endpoint": "forward_intelligence_stats",
+    "methods": [
+      "GET"
+    ],
+    "name": "forward_intelligence_stats",
+    "path": "/account/{slot}/forward-intelligence"
+  },
+  {
+    "endpoint": "forward_message_cancel",
+    "methods": [
+      "POST"
+    ],
+    "name": "forward_message_cancel",
+    "path": "/account/{slot}/forward-message/cancel"
+  },
+  {
+    "endpoint": "forward_message_groups",
+    "methods": [
+      "GET"
+    ],
+    "name": "forward_message_groups",
+    "path": "/account/{slot}/forward-message/groups"
+  },
+  {
+    "endpoint": "forward_message_job_status",
+    "methods": [
+      "GET"
+    ],
+    "name": "forward_message_job_status",
+    "path": "/account/{slot}/forward-message/job"
+  },
+  {
+    "endpoint": "forward_message_preview",
+    "methods": [
+      "POST"
+    ],
+    "name": "forward_message_preview",
+    "path": "/account/{slot}/forward-message/preview"
+  },
+  {
+    "endpoint": "forward_message_start",
+    "methods": [
+      "POST"
+    ],
+    "name": "forward_message_start",
+    "path": "/account/{slot}/forward-message/start"
+  },
+  {
+    "endpoint": "set_forwarding_source_endpoint",
+    "methods": [
+      "POST"
+    ],
+    "name": "set_forwarding_source_endpoint",
+    "path": "/account/{slot}/forwarding/source"
+  },
+  {
+    "endpoint": "get_posting_mode",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_posting_mode",
+    "path": "/account/{slot}/posting-mode"
+  },
+  {
+    "endpoint": "set_posting_mode_endpoint",
+    "methods": [
+      "POST"
+    ],
+    "name": "set_posting_mode_endpoint",
+    "path": "/account/{slot}/posting-mode"
+  },
+  {
+    "endpoint": "restart_account",
+    "methods": [
+      "POST"
+    ],
+    "name": "restart_account",
+    "path": "/account/{slot}/restart"
+  },
+  {
+    "endpoint": "put_account_shutdown",
+    "methods": [
+      "POST"
+    ],
+    "name": "put_account_shutdown",
+    "path": "/account/{slot}/shutdown"
+  },
+  {
+    "endpoint": "clear_account_shutdown",
+    "methods": [
+      "POST"
+    ],
+    "name": "clear_account_shutdown",
+    "path": "/account/{slot}/shutdown/clear"
+  },
+  {
+    "endpoint": "start_account",
+    "methods": [
+      "POST"
+    ],
+    "name": "start_account",
+    "path": "/account/{slot}/start"
+  },
+  {
+    "endpoint": "account_status",
+    "methods": [
+      "GET"
+    ],
+    "name": "account_status",
+    "path": "/account/{slot}/status"
+  },
+  {
+    "endpoint": "stop_account",
+    "methods": [
+      "POST"
+    ],
+    "name": "stop_account",
+    "path": "/account/{slot}/stop"
+  },
+  {
+    "endpoint": "list_accounts",
+    "methods": [
+      "GET"
+    ],
+    "name": "list_accounts",
+    "path": "/accounts"
+  },
+  {
+    "endpoint": "provision_account_slot",
+    "methods": [
+      "POST"
+    ],
+    "name": "provision_account_slot",
+    "path": "/accounts/provision-slot"
+  },
+  {
+    "endpoint": "restore_sessions",
+    "methods": [
+      "POST"
+    ],
+    "name": "restore_sessions",
+    "path": "/accounts/restore-sessions"
+  },
+  {
+    "endpoint": "admin_dashboard_api",
+    "methods": [
+      "GET"
+    ],
+    "name": "admin_dashboard_api",
+    "path": "/admin/dashboard"
+  },
+  {
+    "endpoint": "daily_ai_briefing_get",
+    "methods": [
+      "GET"
+    ],
+    "name": "daily_ai_briefing_get",
+    "path": "/ai/daily-briefing"
+  },
+  {
+    "endpoint": "daily_ai_briefing_refresh",
+    "methods": [
+      "POST"
+    ],
+    "name": "daily_ai_briefing_refresh",
+    "path": "/ai/daily-briefing/refresh"
+  },
+  {
+    "endpoint": "knowledge_assistant_query",
+    "methods": [
+      "POST"
+    ],
+    "name": "knowledge_assistant_query",
+    "path": "/ai/knowledge/query"
+  },
+  {
+    "endpoint": "knowledge_assistant_session_end",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "knowledge_assistant_session_end",
+    "path": "/ai/knowledge/session/{session_id}"
+  },
+  {
+    "endpoint": "ai_smart_reply_assess",
+    "methods": [
+      "POST"
+    ],
+    "name": "ai_smart_reply_assess",
+    "path": "/ai/smart-reply/assess"
+  },
+  {
+    "endpoint": "ai_smart_reply_get_assessment",
+    "methods": [
+      "GET"
+    ],
+    "name": "ai_smart_reply_get_assessment",
+    "path": "/ai/smart-reply/assessment"
+  },
+  {
+    "endpoint": "ai_smart_reply_catch_up",
+    "methods": [
+      "POST"
+    ],
+    "name": "ai_smart_reply_catch_up",
+    "path": "/ai/smart-reply/catch-up"
+  },
+  {
+    "endpoint": "ai_smart_reply_get_config",
+    "methods": [
+      "GET"
+    ],
+    "name": "ai_smart_reply_get_config",
+    "path": "/ai/smart-reply/config"
+  },
+  {
+    "endpoint": "ai_smart_reply_update_config",
+    "methods": [
+      "POST"
+    ],
+    "name": "ai_smart_reply_update_config",
+    "path": "/ai/smart-reply/config"
+  },
+  {
+    "endpoint": "ai_smart_reply_lead_state",
+    "methods": [
+      "GET"
+    ],
+    "name": "ai_smart_reply_lead_state",
+    "path": "/ai/smart-reply/leads/{slot}/{user_id}"
+  },
+  {
+    "endpoint": "ai_smart_reply_lead_toggle",
+    "methods": [
+      "POST"
+    ],
+    "name": "ai_smart_reply_lead_toggle",
+    "path": "/ai/smart-reply/leads/{slot}/{user_id}/toggle"
+  },
+  {
+    "endpoint": "ai_smart_reply_set_manual_approval",
+    "methods": [
+      "POST"
+    ],
+    "name": "ai_smart_reply_set_manual_approval",
+    "path": "/ai/smart-reply/manual-approval"
+  },
+  {
+    "endpoint": "ai_smart_reply_economy_preset_preview",
+    "methods": [
+      "GET"
+    ],
+    "name": "ai_smart_reply_economy_preset_preview",
+    "path": "/ai/smart-reply/preset/economy"
+  },
+  {
+    "endpoint": "ai_smart_reply_apply_economy_preset",
+    "methods": [
+      "POST"
+    ],
+    "name": "ai_smart_reply_apply_economy_preset",
+    "path": "/ai/smart-reply/preset/economy"
+  },
+  {
+    "endpoint": "ai_smart_reply_apply_standard_caps_preset",
+    "methods": [
+      "POST"
+    ],
+    "name": "ai_smart_reply_apply_standard_caps_preset",
+    "path": "/ai/smart-reply/preset/standard-caps"
+  },
+  {
+    "endpoint": "fleet_alerts",
+    "methods": [
+      "GET"
+    ],
+    "name": "fleet_alerts",
+    "path": "/alerts"
+  },
+  {
+    "endpoint": "feature_config",
+    "methods": [
+      "GET"
+    ],
+    "name": "feature_config",
+    "path": "/api/ai-recruitment/config"
+  },
+  {
+    "endpoint": "dashboard",
+    "methods": [
+      "GET"
+    ],
+    "name": "dashboard",
+    "path": "/api/ai-recruitment/dashboard"
+  },
+  {
+    "endpoint": "event_get",
+    "methods": [
+      "GET"
+    ],
+    "name": "event_get",
+    "path": "/api/ai-recruitment/events/{event_id}"
+  },
+  {
+    "endpoint": "event_edit",
+    "methods": [
+      "PATCH"
+    ],
+    "name": "event_edit",
+    "path": "/api/ai-recruitment/events/{event_id}"
+  },
+  {
+    "endpoint": "review_action",
+    "methods": [
+      "POST"
+    ],
+    "name": "review_action",
+    "path": "/api/ai-recruitment/events/{event_id}/{action}"
+  },
+  {
+    "endpoint": "recruitment_metrics",
+    "methods": [
+      "GET"
+    ],
+    "name": "recruitment_metrics",
+    "path": "/api/ai-recruitment/metrics"
+  },
+  {
+    "endpoint": "ollama_status",
+    "methods": [
+      "GET"
+    ],
+    "name": "ollama_status",
+    "path": "/api/ai-recruitment/ollama/status"
+  },
+  {
+    "endpoint": "ollama_test_connection",
+    "methods": [
+      "POST"
+    ],
+    "name": "ollama_test_connection",
+    "path": "/api/ai-recruitment/ollama/test-connection"
+  },
+  {
+    "endpoint": "ollama_test_model",
+    "methods": [
+      "POST"
+    ],
+    "name": "ollama_test_model",
+    "path": "/api/ai-recruitment/ollama/test-model"
+  },
+  {
+    "endpoint": "review_list",
+    "methods": [
+      "GET"
+    ],
+    "name": "review_list",
+    "path": "/api/ai-recruitment/review"
+  },
+  {
+    "endpoint": "bulk_import",
+    "methods": [
+      "POST"
+    ],
+    "name": "bulk_import",
+    "path": "/api/candidate-mailboxes/bulk-import"
+  },
+  {
+    "endpoint": "callback",
+    "methods": [
+      "GET"
+    ],
+    "name": "callback",
+    "path": "/api/candidate-mailboxes/oauth/google/callback"
+  },
+  {
+    "endpoint": "disconnect",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "disconnect",
+    "path": "/api/candidates/{candidate_id}/mailbox"
+  },
+  {
+    "endpoint": "mailbox",
+    "methods": [
+      "GET"
+    ],
+    "name": "mailbox",
+    "path": "/api/candidates/{candidate_id}/mailbox"
+  },
+  {
+    "endpoint": "connect",
+    "methods": [
+      "POST"
+    ],
+    "name": "connect",
+    "path": "/api/candidates/{candidate_id}/mailbox/connect"
+  },
+  {
+    "endpoint": "renew_watch",
+    "methods": [
+      "POST"
+    ],
+    "name": "renew_watch",
+    "path": "/api/candidates/{candidate_id}/mailbox/renew-watch"
+  },
+  {
+    "endpoint": "historical_rescan",
+    "methods": [
+      "POST"
+    ],
+    "name": "historical_rescan",
+    "path": "/api/candidates/{candidate_id}/mailbox/rescan"
+  },
+  {
+    "endpoint": "settings",
+    "methods": [
+      "PATCH"
+    ],
+    "name": "settings",
+    "path": "/api/candidates/{candidate_id}/mailbox/settings"
+  },
+  {
+    "endpoint": "sync",
+    "methods": [
+      "POST"
+    ],
+    "name": "sync",
+    "path": "/api/candidates/{candidate_id}/mailbox/sync"
+  },
+  {
+    "endpoint": "verify",
+    "methods": [
+      "POST"
+    ],
+    "name": "verify",
+    "path": "/api/candidates/{candidate_id}/mailbox/verify"
+  },
+  {
+    "endpoint": "recruitment_events",
+    "methods": [
+      "GET"
+    ],
+    "name": "recruitment_events",
+    "path": "/api/candidates/{candidate_id}/recruitment-events"
+  },
+  {
+    "endpoint": "timeline",
+    "methods": [
+      "GET"
+    ],
+    "name": "timeline",
+    "path": "/api/candidates/{candidate_id}/recruitment-timeline"
+  },
+  {
+    "endpoint": "gmail_pubsub_push",
+    "methods": [
+      "POST"
+    ],
+    "name": "gmail_pubsub_push",
+    "path": "/api/gmail/pubsub/push"
+  },
+  {
+    "endpoint": "booking_audit",
+    "methods": [
+      "GET"
+    ],
+    "name": "booking_audit",
+    "path": "/api/mail-monitoring/booking-audit"
+  },
+  {
+    "endpoint": "mail_missed_events",
+    "methods": [
+      "GET"
+    ],
+    "name": "mail_missed_events",
+    "path": "/api/mail-monitoring/events"
+  },
+  {
+    "endpoint": "mail_notifications",
+    "methods": [
+      "GET"
+    ],
+    "name": "mail_notifications",
+    "path": "/api/mail-monitoring/notifications"
+  },
+  {
+    "endpoint": "mail_notification_action",
+    "methods": [
+      "POST"
+    ],
+    "name": "mail_notification_action",
+    "path": "/api/mail-monitoring/notifications/{notification_id}/{action}"
+  },
+  {
+    "endpoint": "mail_notification_summary",
+    "methods": [
+      "GET"
+    ],
+    "name": "mail_notification_summary",
+    "path": "/api/mail-monitoring/summary"
+  },
+  {
+    "endpoint": "offer_list",
+    "methods": [
+      "GET"
+    ],
+    "name": "offer_list",
+    "path": "/api/offer-verification"
+  },
+  {
+    "endpoint": "offer_get",
+    "methods": [
+      "GET"
+    ],
+    "name": "offer_get",
+    "path": "/api/offer-verification/{case_id}"
+  },
+  {
+    "endpoint": "offer_review",
+    "methods": [
+      "POST"
+    ],
+    "name": "offer_review",
+    "path": "/api/offer-verification/{case_id}/{action}"
+  },
+  {
+    "endpoint": "selection_tracking_stats",
+    "methods": [
+      "GET"
+    ],
+    "name": "selection_tracking_stats",
+    "path": "/api/selection-tracking/stats"
+  },
+  {
+    "endpoint": "",
+    "methods": [],
+    "name": "assets",
+    "path": "/assets"
+  },
+  {
+    "endpoint": "auth_change_password",
+    "methods": [
+      "POST"
+    ],
+    "name": "auth_change_password",
+    "path": "/auth/change-password"
+  },
+  {
+    "endpoint": "auth_handler_kit",
+    "methods": [
+      "GET"
+    ],
+    "name": "auth_handler_kit",
+    "path": "/auth/handler-kit"
+  },
+  {
+    "endpoint": "auth_login",
+    "methods": [
+      "POST"
+    ],
+    "name": "auth_login",
+    "path": "/auth/login"
+  },
+  {
+    "endpoint": "auth_logout",
+    "methods": [
+      "POST"
+    ],
+    "name": "auth_logout",
+    "path": "/auth/logout"
+  },
+  {
+    "endpoint": "auth_reset_password",
+    "methods": [
+      "POST"
+    ],
+    "name": "auth_reset_password",
+    "path": "/auth/reset-password"
+  },
+  {
+    "endpoint": "auth_status",
+    "methods": [
+      "GET"
+    ],
+    "name": "auth_status",
+    "path": "/auth/status"
+  },
+  {
+    "endpoint": "auth_verify_admin",
+    "methods": [
+      "POST"
+    ],
+    "name": "auth_verify_admin",
+    "path": "/auth/verify-admin"
+  },
+  {
+    "endpoint": "call_join_info",
+    "methods": [
+      "GET"
+    ],
+    "name": "call_join_info",
+    "path": "/call/join/{join_token}"
+  },
+  {
+    "endpoint": "candidates_list",
+    "methods": [
+      "GET"
+    ],
+    "name": "candidates_list",
+    "path": "/candidates"
+  },
+  {
+    "endpoint": "candidates_create",
+    "methods": [
+      "POST"
+    ],
+    "name": "candidates_create",
+    "path": "/candidates"
+  },
+  {
+    "endpoint": "candidates_bootstrap",
+    "methods": [
+      "GET"
+    ],
+    "name": "candidates_bootstrap",
+    "path": "/candidates/bootstrap"
+  },
+  {
+    "endpoint": "candidates_interviews_daily",
+    "methods": [
+      "GET"
+    ],
+    "name": "candidates_interviews_daily",
+    "path": "/candidates/interviews/daily"
+  },
+  {
+    "endpoint": "candidates_interviews_filter_options",
+    "methods": [
+      "GET"
+    ],
+    "name": "candidates_interviews_filter_options",
+    "path": "/candidates/interviews/filter-options"
+  },
+  {
+    "endpoint": "candidates_interviews_global",
+    "methods": [
+      "GET"
+    ],
+    "name": "candidates_interviews_global",
+    "path": "/candidates/interviews/global"
+  },
+  {
+    "endpoint": "candidates_interviews_monitor",
+    "methods": [
+      "GET"
+    ],
+    "name": "candidates_interviews_monitor",
+    "path": "/candidates/interviews/monitor"
+  },
+  {
+    "endpoint": "candidates_interviews_slots_create",
+    "methods": [
+      "POST"
+    ],
+    "name": "candidates_interviews_slots_create",
+    "path": "/candidates/interviews/slots"
+  },
+  {
+    "endpoint": "candidates_interviews_slots_delete",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "candidates_interviews_slots_delete",
+    "path": "/candidates/interviews/slots/{cid}"
+  },
+  {
+    "endpoint": "candidates_interviews_slots_update",
+    "methods": [
+      "PATCH"
+    ],
+    "name": "candidates_interviews_slots_update",
+    "path": "/candidates/interviews/slots/{cid}"
+  },
+  {
+    "endpoint": "candidates_interviews_upcoming",
+    "methods": [
+      "GET"
+    ],
+    "name": "candidates_interviews_upcoming",
+    "path": "/candidates/interviews/upcoming"
+  },
+  {
+    "endpoint": "candidates_pending_works",
+    "methods": [
+      "GET"
+    ],
+    "name": "candidates_pending_works",
+    "path": "/candidates/pending-works"
+  },
+  {
+    "endpoint": "candidates_active_roster",
+    "methods": [
+      "GET"
+    ],
+    "name": "candidates_active_roster",
+    "path": "/candidates/roster"
+  },
+  {
+    "endpoint": "candidates_active_roster_csv",
+    "methods": [
+      "GET"
+    ],
+    "name": "candidates_active_roster_csv",
+    "path": "/candidates/roster.csv"
+  },
+  {
+    "endpoint": "candidates_stats",
+    "methods": [
+      "GET"
+    ],
+    "name": "candidates_stats",
+    "path": "/candidates/stats"
+  },
+  {
+    "endpoint": "candidates_delete",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "candidates_delete",
+    "path": "/candidates/{cid}"
+  },
+  {
+    "endpoint": "candidates_get",
+    "methods": [
+      "GET"
+    ],
+    "name": "candidates_get",
+    "path": "/candidates/{cid}"
+  },
+  {
+    "endpoint": "candidates_update",
+    "methods": [
+      "PATCH"
+    ],
+    "name": "candidates_update",
+    "path": "/candidates/{cid}"
+  },
+  {
+    "endpoint": "candidates_interview_attendance",
+    "methods": [
+      "POST"
+    ],
+    "name": "candidates_interview_attendance",
+    "path": "/candidates/{cid}/interview-attendance"
+  },
+  {
+    "endpoint": "candidates_interview_attendee",
+    "methods": [
+      "PATCH"
+    ],
+    "name": "candidates_interview_attendee",
+    "path": "/candidates/{cid}/interview-attendee"
+  },
+  {
+    "endpoint": "candidates_upload_proof",
+    "methods": [
+      "POST"
+    ],
+    "name": "candidates_upload_proof",
+    "path": "/candidates/{cid}/proofs"
+  },
+  {
+    "endpoint": "candidates_delete_proof",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "candidates_delete_proof",
+    "path": "/candidates/{cid}/proofs/{pid}"
+  },
+  {
+    "endpoint": "candidates_serve_proof",
+    "methods": [
+      "GET"
+    ],
+    "name": "candidates_serve_proof",
+    "path": "/candidates/{cid}/proofs/{pid}"
+  },
+  {
+    "endpoint": "candidates_update_proof_note",
+    "methods": [
+      "PATCH"
+    ],
+    "name": "candidates_update_proof_note",
+    "path": "/candidates/{cid}/proofs/{pid}"
+  },
+  {
+    "endpoint": "candidates_upload_resume",
+    "methods": [
+      "POST"
+    ],
+    "name": "candidates_upload_resume",
+    "path": "/candidates/{cid}/resumes"
+  },
+  {
+    "endpoint": "candidates_delete_resume",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "candidates_delete_resume",
+    "path": "/candidates/{cid}/resumes/{rid}"
+  },
+  {
+    "endpoint": "candidates_serve_resume",
+    "methods": [
+      "GET"
+    ],
+    "name": "candidates_serve_resume",
+    "path": "/candidates/{cid}/resumes/{rid}"
+  },
+  {
+    "endpoint": "candidates_update_resume_note",
+    "methods": [
+      "PATCH"
+    ],
+    "name": "candidates_update_resume_note",
+    "path": "/candidates/{cid}/resumes/{rid}"
+  },
+  {
+    "endpoint": "candidates_serve_resume_preview",
+    "methods": [
+      "GET"
+    ],
+    "name": "candidates_serve_resume_preview",
+    "path": "/candidates/{cid}/resumes/{rid}/preview"
+  },
+  {
+    "endpoint": "candidates_slot_screenshot",
+    "methods": [
+      "POST"
+    ],
+    "name": "candidates_slot_screenshot",
+    "path": "/candidates/{cid}/slot-screenshot"
+  },
+  {
+    "endpoint": "company_expenses_list",
+    "methods": [
+      "GET"
+    ],
+    "name": "company_expenses_list",
+    "path": "/company-expenses"
+  },
+  {
+    "endpoint": "company_expenses_create",
+    "methods": [
+      "POST"
+    ],
+    "name": "company_expenses_create",
+    "path": "/company-expenses"
+  },
+  {
+    "endpoint": "company_expenses_total",
+    "methods": [
+      "GET"
+    ],
+    "name": "company_expenses_total",
+    "path": "/company-expenses/total"
+  },
+  {
+    "endpoint": "company_expenses_delete",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "company_expenses_delete",
+    "path": "/company-expenses/{eid}"
+  },
+  {
+    "endpoint": "company_expenses_update",
+    "methods": [
+      "PATCH"
+    ],
+    "name": "company_expenses_update",
+    "path": "/company-expenses/{eid}"
+  },
+  {
+    "endpoint": "crm_call_now",
+    "methods": [
+      "POST"
+    ],
+    "name": "crm_call_now",
+    "path": "/crm/call-now"
+  },
+  {
+    "endpoint": "crm_call_now_options",
+    "methods": [
+      "GET"
+    ],
+    "name": "crm_call_now_options",
+    "path": "/crm/call-now/options"
+  },
+  {
+    "endpoint": "crm_karthik_block_spam_chats",
+    "methods": [
+      "POST"
+    ],
+    "name": "crm_karthik_block_spam_chats",
+    "path": "/crm/karthik/block-spam-chats"
+  },
+  {
+    "endpoint": "crm_get_lead",
+    "methods": [
+      "GET"
+    ],
+    "name": "crm_get_lead",
+    "path": "/crm/leads/{slot}/{user_id}"
+  },
+  {
+    "endpoint": "crm_patch_lead",
+    "methods": [
+      "PATCH"
+    ],
+    "name": "crm_patch_lead",
+    "path": "/crm/leads/{slot}/{user_id}"
+  },
+  {
+    "endpoint": "crm_schedule_call",
+    "methods": [
+      "POST"
+    ],
+    "name": "crm_schedule_call",
+    "path": "/crm/leads/{slot}/{user_id}/calls"
+  },
+  {
+    "endpoint": "crm_complete_call",
+    "methods": [
+      "POST"
+    ],
+    "name": "crm_complete_call",
+    "path": "/crm/leads/{slot}/{user_id}/calls/complete"
+  },
+  {
+    "endpoint": "crm_follow_up",
+    "methods": [
+      "POST"
+    ],
+    "name": "crm_follow_up",
+    "path": "/crm/leads/{slot}/{user_id}/follow-up"
+  },
+  {
+    "endpoint": "crm_link_phone",
+    "methods": [
+      "POST"
+    ],
+    "name": "crm_link_phone",
+    "path": "/crm/leads/{slot}/{user_id}/link-phone"
+  },
+  {
+    "endpoint": "crm_mark_handled",
+    "methods": [
+      "POST"
+    ],
+    "name": "crm_mark_handled",
+    "path": "/crm/leads/{slot}/{user_id}/mark-handled"
+  },
+  {
+    "endpoint": "crm_schedule_call_body",
+    "methods": [
+      "POST"
+    ],
+    "name": "crm_schedule_call_body",
+    "path": "/crm/schedule-call"
+  },
+  {
+    "endpoint": "crm_state",
+    "methods": [
+      "GET"
+    ],
+    "name": "crm_state",
+    "path": "/crm/state"
+  },
+  {
+    "endpoint": "crm_unblock",
+    "methods": [
+      "POST"
+    ],
+    "name": "crm_unblock",
+    "path": "/crm/unblock"
+  },
+  {
+    "endpoint": "data_room_list",
+    "methods": [
+      "GET"
+    ],
+    "name": "data_room_list",
+    "path": "/data-room"
+  },
+  {
+    "endpoint": "data_room_create",
+    "methods": [
+      "POST"
+    ],
+    "name": "data_room_create",
+    "path": "/data-room"
+  },
+  {
+    "endpoint": "data_room_credentials",
+    "methods": [
+      "GET"
+    ],
+    "name": "data_room_credentials",
+    "path": "/data-room/credentials"
+  },
+  {
+    "endpoint": "data_room_update_admin",
+    "methods": [
+      "PATCH"
+    ],
+    "name": "data_room_update_admin",
+    "path": "/data-room/credentials/admin"
+  },
+  {
+    "endpoint": "data_room_create_handler",
+    "methods": [
+      "POST"
+    ],
+    "name": "data_room_create_handler",
+    "path": "/data-room/credentials/handlers"
+  },
+  {
+    "endpoint": "data_room_delete_handler",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "data_room_delete_handler",
+    "path": "/data-room/credentials/handlers/{username}"
+  },
+  {
+    "endpoint": "data_room_update_handler",
+    "methods": [
+      "PATCH"
+    ],
+    "name": "data_room_update_handler",
+    "path": "/data-room/credentials/handlers/{username}"
+  },
+  {
+    "endpoint": "data_room_create_vault_item",
+    "methods": [
+      "POST"
+    ],
+    "name": "data_room_create_vault_item",
+    "path": "/data-room/credentials/vault/{section}"
+  },
+  {
+    "endpoint": "data_room_delete_vault_item",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "data_room_delete_vault_item",
+    "path": "/data-room/credentials/vault/{section}/{item_id}"
+  },
+  {
+    "endpoint": "data_room_update_vault_item",
+    "methods": [
+      "PATCH"
+    ],
+    "name": "data_room_update_vault_item",
+    "path": "/data-room/credentials/vault/{section}/{item_id}"
+  },
+  {
+    "endpoint": "data_room_offer_letter_download",
+    "methods": [
+      "GET"
+    ],
+    "name": "data_room_offer_letter_download",
+    "path": "/data-room/offer-letters/{item_id}/download"
+  },
+  {
+    "endpoint": "data_room_offer_letter_preview",
+    "methods": [
+      "GET"
+    ],
+    "name": "data_room_offer_letter_preview",
+    "path": "/data-room/offer-letters/{item_id}/preview"
+  },
+  {
+    "endpoint": "data_room_offer_letter_upload",
+    "methods": [
+      "POST"
+    ],
+    "name": "data_room_offer_letter_upload",
+    "path": "/data-room/offer-letters/{item_id}/upload"
+  },
+  {
+    "endpoint": "data_room_stats",
+    "methods": [
+      "GET"
+    ],
+    "name": "data_room_stats",
+    "path": "/data-room/stats"
+  },
+  {
+    "endpoint": "data_room_delete",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "data_room_delete",
+    "path": "/data-room/{oid}"
+  },
+  {
+    "endpoint": "data_room_get",
+    "methods": [
+      "GET"
+    ],
+    "name": "data_room_get",
+    "path": "/data-room/{oid}"
+  },
+  {
+    "endpoint": "data_room_update",
+    "methods": [
+      "PATCH"
+    ],
+    "name": "data_room_update",
+    "path": "/data-room/{oid}"
+  },
+  {
+    "endpoint": "demo_tools_catalog",
+    "methods": [
+      "GET"
+    ],
+    "name": "demo_tools_catalog",
+    "path": "/demo-tools"
+  },
+  {
+    "endpoint": "swagger_ui_html",
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "swagger_ui_html",
+    "path": "/docs"
+  },
+  {
+    "endpoint": "swagger_ui_redirect",
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "swagger_ui_redirect",
+    "path": "/docs/oauth2-redirect"
+  },
+  {
+    "endpoint": "fleet_apply_campaign",
+    "methods": [
+      "POST"
+    ],
+    "name": "fleet_apply_campaign",
+    "path": "/fleet/apply-campaign"
+  },
+  {
+    "endpoint": "fleet_apply_forwarding",
+    "methods": [
+      "POST"
+    ],
+    "name": "fleet_apply_forwarding",
+    "path": "/fleet/apply-forwarding"
+  },
+  {
+    "endpoint": "fleet_apply_source_url",
+    "methods": [
+      "POST"
+    ],
+    "name": "fleet_apply_source_url",
+    "path": "/fleet/apply-source-url"
+  },
+  {
+    "endpoint": "fleet_defaults_get",
+    "methods": [
+      "GET"
+    ],
+    "name": "fleet_defaults_get",
+    "path": "/fleet/defaults"
+  },
+  {
+    "endpoint": "fleet_defaults_post",
+    "methods": [
+      "POST"
+    ],
+    "name": "fleet_defaults_post",
+    "path": "/fleet/defaults"
+  },
+  {
+    "endpoint": "forward_message_settings_get",
+    "methods": [
+      "GET"
+    ],
+    "name": "forward_message_settings_get",
+    "path": "/forward-message/settings"
+  },
+  {
+    "endpoint": "forward_message_settings_post",
+    "methods": [
+      "POST"
+    ],
+    "name": "forward_message_settings_post",
+    "path": "/forward-message/settings"
+  },
+  {
+    "endpoint": "get_groups",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_groups",
+    "path": "/groups"
+  },
+  {
+    "endpoint": "get_group_health",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_group_health",
+    "path": "/groups/health"
+  },
+  {
+    "endpoint": "get_group_health_summary",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_group_health_summary",
+    "path": "/groups/health-summary"
+  },
+  {
+    "endpoint": "get_group_lists",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_group_lists",
+    "path": "/groups/lists"
+  },
+  {
+    "endpoint": "get_removed_groups",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_removed_groups",
+    "path": "/groups/removed"
+  },
+  {
+    "endpoint": "get_total_joined_list",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_total_joined_list",
+    "path": "/groups/total-list"
+  },
+  {
+    "endpoint": "update_groups",
+    "methods": [
+      "POST"
+    ],
+    "name": "update_groups",
+    "path": "/groups/update"
+  },
+  {
+    "endpoint": "handler_expenses_list",
+    "methods": [
+      "GET"
+    ],
+    "name": "handler_expenses_list",
+    "path": "/handler-expenses"
+  },
+  {
+    "endpoint": "handler_expenses_create",
+    "methods": [
+      "POST"
+    ],
+    "name": "handler_expenses_create",
+    "path": "/handler-expenses"
+  },
+  {
+    "endpoint": "handler_expenses_summary",
+    "methods": [
+      "GET"
+    ],
+    "name": "handler_expenses_summary",
+    "path": "/handler-expenses/summary"
+  },
+  {
+    "endpoint": "handler_expenses_delete",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "handler_expenses_delete",
+    "path": "/handler-expenses/{eid}"
+  },
+  {
+    "endpoint": "handler_expenses_update",
+    "methods": [
+      "PATCH"
+    ],
+    "name": "handler_expenses_update",
+    "path": "/handler-expenses/{eid}"
+  },
+  {
+    "endpoint": "handler_expense_upload_proof",
+    "methods": [
+      "POST"
+    ],
+    "name": "handler_expense_upload_proof",
+    "path": "/handler-expenses/{eid}/proofs"
+  },
+  {
+    "endpoint": "handler_expense_delete_proof",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "handler_expense_delete_proof",
+    "path": "/handler-expenses/{eid}/proofs/{pid}"
+  },
+  {
+    "endpoint": "handler_expense_serve_proof",
+    "methods": [
+      "GET"
+    ],
+    "name": "handler_expense_serve_proof",
+    "path": "/handler-expenses/{eid}/proofs/{pid}"
+  },
+  {
+    "endpoint": "handler_salaries_list",
+    "methods": [
+      "GET"
+    ],
+    "name": "handler_salaries_list",
+    "path": "/handler-salaries"
+  },
+  {
+    "endpoint": "handler_salaries_upsert",
+    "methods": [
+      "POST"
+    ],
+    "name": "handler_salaries_upsert",
+    "path": "/handler-salaries"
+  },
+  {
+    "endpoint": "handler_salaries_delete",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "handler_salaries_delete",
+    "path": "/handler-salaries/{reference}"
+  },
+  {
+    "endpoint": "health",
+    "methods": [
+      "GET"
+    ],
+    "name": "health",
+    "path": "/health"
+  },
+  {
+    "endpoint": "inbox_all",
+    "methods": [
+      "GET"
+    ],
+    "name": "inbox_all",
+    "path": "/inbox"
+  },
+  {
+    "endpoint": "inbox_delete_config",
+    "methods": [
+      "GET"
+    ],
+    "name": "inbox_delete_config",
+    "path": "/inbox/delete-config"
+  },
+  {
+    "endpoint": "inbox_ensure_listeners",
+    "methods": [
+      "POST"
+    ],
+    "name": "inbox_ensure_listeners",
+    "path": "/inbox/listeners/refresh"
+  },
+  {
+    "endpoint": "inbox_ai_suggestion",
+    "methods": [
+      "POST"
+    ],
+    "name": "inbox_ai_suggestion",
+    "path": "/inbox/{slot}/ai-reply"
+  },
+  {
+    "endpoint": "inbox_ai_suggestion",
+    "methods": [
+      "POST"
+    ],
+    "name": "inbox_ai_suggestion",
+    "path": "/inbox/{slot}/ai-suggestion"
+  },
+  {
+    "endpoint": "inbox_delete_conversation",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "inbox_delete_conversation",
+    "path": "/inbox/{slot}/conversation/{user_id}"
+  },
+  {
+    "endpoint": "inbox_karthik_block_spam",
+    "methods": [
+      "POST"
+    ],
+    "name": "inbox_karthik_block_spam",
+    "path": "/inbox/{slot}/karthik/block-spam/{user_id}"
+  },
+  {
+    "endpoint": "inbox_karthik_spam_check",
+    "methods": [
+      "GET"
+    ],
+    "name": "inbox_karthik_spam_check",
+    "path": "/inbox/{slot}/karthik/spam-check/{user_id}"
+  },
+  {
+    "endpoint": "inbox_media",
+    "methods": [
+      "GET"
+    ],
+    "name": "inbox_media",
+    "path": "/inbox/{slot}/media/{user_id}/{message_id}"
+  },
+  {
+    "endpoint": "inbox_messages",
+    "methods": [
+      "GET"
+    ],
+    "name": "inbox_messages",
+    "path": "/inbox/{slot}/messages/{user_id}"
+  },
+  {
+    "endpoint": "inbox_export_chat",
+    "methods": [
+      "GET"
+    ],
+    "name": "inbox_export_chat",
+    "path": "/inbox/{slot}/messages/{user_id}/export"
+  },
+  {
+    "endpoint": "inbox_messages_older",
+    "methods": [
+      "POST"
+    ],
+    "name": "inbox_messages_older",
+    "path": "/inbox/{slot}/messages/{user_id}/older"
+  },
+  {
+    "endpoint": "inbox_delete_message",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "inbox_delete_message",
+    "path": "/inbox/{slot}/messages/{user_id}/{message_id}"
+  },
+  {
+    "endpoint": "inbox_edit_message",
+    "methods": [
+      "PATCH"
+    ],
+    "name": "inbox_edit_message",
+    "path": "/inbox/{slot}/messages/{user_id}/{message_id}"
+  },
+  {
+    "endpoint": "inbox_mark_read",
+    "methods": [
+      "POST"
+    ],
+    "name": "inbox_mark_read",
+    "path": "/inbox/{slot}/read/{user_id}"
+  },
+  {
+    "endpoint": "inbox_reply",
+    "methods": [
+      "POST"
+    ],
+    "name": "inbox_reply",
+    "path": "/inbox/{slot}/reply"
+  },
+  {
+    "endpoint": "inbox_reply_media",
+    "methods": [
+      "POST"
+    ],
+    "name": "inbox_reply_media",
+    "path": "/inbox/{slot}/reply-media"
+  },
+  {
+    "endpoint": "inbox_send_demo_tools",
+    "methods": [
+      "POST"
+    ],
+    "name": "inbox_send_demo_tools",
+    "path": "/inbox/{slot}/send-demo-tools"
+  },
+  {
+    "endpoint": "inbox_send_location",
+    "methods": [
+      "POST"
+    ],
+    "name": "inbox_send_location",
+    "path": "/inbox/{slot}/send-location"
+  },
+  {
+    "endpoint": "inbox_force_sync",
+    "methods": [
+      "POST"
+    ],
+    "name": "inbox_force_sync",
+    "path": "/inbox/{slot}/sync/{user_id}"
+  },
+  {
+    "endpoint": "inbox_wa_media",
+    "methods": [
+      "GET"
+    ],
+    "name": "inbox_wa_media",
+    "path": "/inbox/{slot}/wa-media/{user_id}/{message_id}"
+  },
+  {
+    "endpoint": "logout",
+    "methods": [
+      "POST"
+    ],
+    "name": "logout",
+    "path": "/login/logout"
+  },
+  {
+    "endpoint": "send_otp",
+    "methods": [
+      "POST"
+    ],
+    "name": "send_otp",
+    "path": "/login/send-otp"
+  },
+  {
+    "endpoint": "login_status",
+    "methods": [
+      "GET"
+    ],
+    "name": "login_status",
+    "path": "/login/status"
+  },
+  {
+    "endpoint": "verify_otp",
+    "methods": [
+      "POST"
+    ],
+    "name": "verify_otp",
+    "path": "/login/verify-otp"
+  },
+  {
+    "endpoint": "get_message",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_message",
+    "path": "/message"
+  },
+  {
+    "endpoint": "update_message",
+    "methods": [
+      "POST"
+    ],
+    "name": "update_message",
+    "path": "/message"
+  },
+  {
+    "endpoint": "message_preview",
+    "methods": [
+      "GET"
+    ],
+    "name": "message_preview",
+    "path": "/message/preview"
+  },
+  {
+    "endpoint": "fleet_metrics",
+    "methods": [
+      "GET"
+    ],
+    "name": "fleet_metrics",
+    "path": "/metrics"
+  },
+  {
+    "endpoint": "account_metrics",
+    "methods": [
+      "GET"
+    ],
+    "name": "account_metrics",
+    "path": "/metrics/{slot}"
+  },
+  {
+    "endpoint": "openapi",
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "openapi",
+    "path": "/openapi.json"
+  },
+  {
+    "endpoint": "public_slot_book",
+    "methods": [
+      "POST"
+    ],
+    "name": "public_slot_book",
+    "path": "/public/slots/book"
+  },
+  {
+    "endpoint": "public_slot_booked",
+    "methods": [
+      "GET"
+    ],
+    "name": "public_slot_booked",
+    "path": "/public/slots/booked"
+  },
+  {
+    "endpoint": "public_slot_candidates",
+    "methods": [
+      "GET"
+    ],
+    "name": "public_slot_candidates",
+    "path": "/public/slots/candidates"
+  },
+  {
+    "endpoint": "public_slot_extract_invite_ai",
+    "methods": [
+      "POST"
+    ],
+    "name": "public_slot_extract_invite_ai",
+    "path": "/public/slots/extract-invite-ai"
+  },
+  {
+    "endpoint": "public_slot_extract_payment_ai",
+    "methods": [
+      "POST"
+    ],
+    "name": "public_slot_extract_payment_ai",
+    "path": "/public/slots/extract-payment-ai"
+  },
+  {
+    "endpoint": "public_slot_extract_resume_ai",
+    "methods": [
+      "POST"
+    ],
+    "name": "public_slot_extract_resume_ai",
+    "path": "/public/slots/extract-resume-ai"
+  },
+  {
+    "endpoint": "public_slot_parse_screenshot",
+    "methods": [
+      "POST"
+    ],
+    "name": "public_slot_parse_screenshot",
+    "path": "/public/slots/parse-screenshot"
+  },
+  {
+    "endpoint": "public_slot_payment_proof",
+    "methods": [
+      "POST"
+    ],
+    "name": "public_slot_payment_proof",
+    "path": "/public/slots/payment-proof"
+  },
+  {
+    "endpoint": "public_slot_session_complete",
+    "methods": [
+      "POST"
+    ],
+    "name": "public_slot_session_complete",
+    "path": "/public/slots/session-complete"
+  },
+  {
+    "endpoint": "push_unsubscribe",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "push_unsubscribe",
+    "path": "/push/subscribe"
+  },
+  {
+    "endpoint": "push_subscribe",
+    "methods": [
+      "POST"
+    ],
+    "name": "push_subscribe",
+    "path": "/push/subscribe"
+  },
+  {
+    "endpoint": "push_vapid_public_key",
+    "methods": [
+      "GET"
+    ],
+    "name": "push_vapid_public_key",
+    "path": "/push/vapid-public-key"
+  },
+  {
+    "endpoint": "redoc_html",
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "redoc_html",
+    "path": "/redoc"
+  },
+  {
+    "endpoint": "clear_all_shutdowns_route",
+    "methods": [
+      "POST"
+    ],
+    "name": "clear_all_shutdowns_route",
+    "path": "/shutdown/clear-all"
+  },
+  {
+    "endpoint": "start_all",
+    "methods": [
+      "POST"
+    ],
+    "name": "start_all",
+    "path": "/start"
+  },
+  {
+    "endpoint": "start_test_all",
+    "methods": [
+      "POST"
+    ],
+    "name": "start_test_all",
+    "path": "/start-test"
+  },
+  {
+    "endpoint": "get_state",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_state",
+    "path": "/state"
+  },
+  {
+    "endpoint": "get_daily_stats",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_daily_stats",
+    "path": "/stats/daily"
+  },
+  {
+    "endpoint": "reset_stats",
+    "methods": [
+      "POST"
+    ],
+    "name": "reset_stats",
+    "path": "/stats/reset"
+  },
+  {
+    "endpoint": "reset_daily_stats_24h",
+    "methods": [
+      "POST"
+    ],
+    "name": "reset_daily_stats_24h",
+    "path": "/stats/reset-24h"
+  },
+  {
+    "endpoint": "stop_all",
+    "methods": [
+      "POST"
+    ],
+    "name": "stop_all",
+    "path": "/stop"
+  },
+  {
+    "endpoint": "voice_analytics",
+    "methods": [
+      "GET"
+    ],
+    "name": "voice_analytics",
+    "path": "/voice/analytics"
+  },
+  {
+    "endpoint": "voice_calls_start",
+    "methods": [
+      "POST"
+    ],
+    "name": "voice_calls_start",
+    "path": "/voice/calls/start"
+  },
+  {
+    "endpoint": "voice_calls_end",
+    "methods": [
+      "POST"
+    ],
+    "name": "voice_calls_end",
+    "path": "/voice/calls/{session_id}/end"
+  },
+  {
+    "endpoint": "voice_calls_outcome",
+    "methods": [
+      "POST"
+    ],
+    "name": "voice_calls_outcome",
+    "path": "/voice/calls/{session_id}/outcome"
+  },
+  {
+    "endpoint": "voice_join_alias",
+    "methods": [
+      "GET"
+    ],
+    "name": "voice_join_alias",
+    "path": "/voice/join/{join_token}"
+  },
+  {
+    "endpoint": "voice_client_ws",
+    "methods": [],
+    "name": "voice_client_ws",
+    "path": "/voice/ws/{join_token}"
+  },
+  {
+    "endpoint": "whatsapp_webhook_verify",
+    "methods": [
+      "GET"
+    ],
+    "name": "whatsapp_webhook_verify",
+    "path": "/webhooks/whatsapp"
+  },
+  {
+    "endpoint": "whatsapp_webhook_ingest",
+    "methods": [
+      "POST"
+    ],
+    "name": "whatsapp_webhook_ingest",
+    "path": "/webhooks/whatsapp"
+  },
+  {
+    "endpoint": "whatsapp_send_template",
+    "methods": [
+      "POST"
+    ],
+    "name": "whatsapp_send_template",
+    "path": "/whatsapp/send-template"
+  },
+  {
+    "endpoint": "whatsapp_status",
+    "methods": [
+      "GET"
+    ],
+    "name": "whatsapp_status",
+    "path": "/whatsapp/status"
+  },
+  {
+    "endpoint": "websocket_endpoint",
+    "methods": [],
+    "name": "websocket_endpoint",
+    "path": "/ws"
+  },
+  {
+    "endpoint": "mail_monitoring_websocket",
+    "methods": [],
+    "name": "mail_monitoring_websocket",
+    "path": "/ws/mail-monitoring"
+  },
+  {
+    "endpoint": "serve_spa",
+    "methods": [
+      "GET"
+    ],
+    "name": "serve_spa",
+    "path": "/{full_path:path}"
+  }
+]
