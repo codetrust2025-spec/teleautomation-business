@@ -1,4 +1,36 @@
 services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: operations
+      POSTGRES_PASSWORD: operations
+      POSTGRES_DB: operations
+    volumes:
+      - operations_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U operations -d operations"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  # One-shot: the API image only runs uvicorn, so the 27-migration chain is
+  # applied here rather than on every worker start.
+  migrate:
+    build:
+      context: .
+      args:
+        VITE_OPERATIONS_PUBLIC_URL: ${OPERATIONS_PUBLIC_URL:-}
+        VITE_MARKETING_PUBLIC_URL: ${MARKETING_PUBLIC_URL:-}
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://operations:operations@db:5432/operations
+    command: ["python", "-m", "core.migrations.runner"]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
   api:
     build:
       context: .
@@ -8,9 +40,19 @@ services:
     env_file: .env
     environment:
       TELEAUTOMATION_SAFE_UI_MODE: ${TELEAUTOMATION_SAFE_UI_MODE:-false}
+      DATABASE_URL: postgresql://operations:operations@db:5432/operations
+      OPERATIONS_DATA_DIR: /var/lib/teleautomation-operations
+      # Service discovery, never a container-local loopback address. Overridden
+      # by the dual-service stack to point at the real Marketing container.
+      MESSAGING_INTERNAL_URL: ${MESSAGING_INTERNAL_URL:-http://marketing-api:8000}
     ports: ["127.0.0.1:8200:8000"]
     volumes:
       - operations_data:/var/lib/teleautomation-operations
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
@@ -20,3 +62,4 @@ services:
 
 volumes:
   operations_data:
+  operations_db:

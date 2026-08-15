@@ -9,6 +9,7 @@ import { HandlerKitPanel } from './components/HandlerKitPanel.jsx'
 import OutcomeAuditPanel from './components/OutcomeAuditPanel.jsx'
 import PaymentReconciliationPanel from './components/PaymentReconciliationPanel.jsx'
 import BgvRegisterPanel from './components/BgvRegisterPanel.jsx'
+import { OcrPolicyPanel } from './components/OcrPolicyPanel.jsx'
 import GlobalNotificationSounds from './notifications/GlobalNotificationSounds.jsx'
 import {
   PendingWorksProvider,
@@ -27,6 +28,7 @@ const VIEWS = [
   { id: 'bgv-register', label: 'BGV register', icon: '✓' },
   { id: 'data-room', label: 'Data room', icon: '▥' },
   { id: 'handler-kit', label: 'Handler kit', icon: '◆' },
+  { id: 'settings', label: 'Settings', icon: '⚙' },
   { id: 'slot-booking', label: 'Slot booking', icon: '▦', external: '/submit-slot' },
 ]
 
@@ -224,6 +226,7 @@ function OperationsShell({ view, onNavigate }) {
           {view === 'bgv-register' && <BgvRegisterPanel />}
           {view === 'data-room' && <DataRoomPanel />}
           {view === 'handler-kit' && <HandlerKitPanel username={auth.username} reference={auth.reference} />}
+          {view === 'settings' && <OcrPolicyPanel />}
         </main>
       </div>
     </div>

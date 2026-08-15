@@ -12,7 +12,6 @@ jobs:
           --health-cmd "pg_isready -U business_ci" --health-interval 10s
           --health-timeout 5s --health-retries 5
     env:
-      DATABASE_URL: postgresql://business_ci:business_ci@localhost:5432/business_ci
       DASHBOARD_PASSWORD: ""
     steps:
       - uses: actions/checkout@v4
@@ -22,10 +21,18 @@ jobs:
       - run: pip check
       - run: sudo apt-get update && sudo apt-get install -y postgresql-client
       - run: python -m core.migrations.runner
+        env: {DATABASE_URL: "postgresql://business_ci:business_ci@localhost:5432/business_ci"}
       - name: Verify migrations are idempotent
         run: test -z "$(python -m core.migrations.runner)"
+        env: {DATABASE_URL: "postgresql://business_ci:business_ci@localhost:5432/business_ci"}
       - run: python -m compileall -q core services workers features main.py
-      - run: pytest -q
+      # DATABASE_URL is deliberately NOT set for the suite. The candidate store
+      # has a file backend and a PostgreSQL backend, and the tests isolate by
+      # monkeypatching the file path. With DATABASE_URL exported job-wide every
+      # test shares one candidates_store table, so unrelated tests collide with
+      # "An active profile already exists for phone ...". Scoping the variable
+      # to the migration steps restores the isolation the tests are built on.
+      - run: python -m pytest -q
       - uses: actions/setup-node@v4
         with: {node-version: "22", cache: npm, cache-dependency-path: dashboard/package-lock.json}
       - run: npm ci
@@ -40,6 +47,20 @@ jobs:
       - run: docker compose build
       - run: docker compose up -d
         env: {TELEAUTOMATION_SAFE_UI_MODE: "true"}
-      - run: curl --fail --retry 12 --retry-delay 2 http://127.0.0.1:8200/health
+      - name: Health check
+        run: curl --fail --retry 24 --retry-delay 5 --retry-all-errors http://127.0.0.1:8200/health
+      - name: Migrations ran inside the container and are idempotent
+        run: |
+          docker compose run --rm -T migrate | tee /tmp/second-run.txt
+          test ! -s /tmp/second-run.txt
+      - name: Persistence survives a container restart
+        run: |
+          docker compose exec -T db psql -U operations -d operations -c \
+            "CREATE TABLE IF NOT EXISTS ci_persistence_probe(id int primary key); \
+             INSERT INTO ci_persistence_probe VALUES (1) ON CONFLICT DO NOTHING;"
+          docker compose restart
+          curl --fail --retry 24 --retry-delay 5 --retry-all-errors http://127.0.0.1:8200/health
+          test "$(docker compose exec -T db psql -U operations -d operations -tAc \
+            'SELECT count(*) FROM ci_persistence_probe' | tr -d '[:space:]')" = "1"
       - if: always()
         run: docker compose down -v
