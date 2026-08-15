@@ -233,6 +233,7 @@ export function SubmitSlotPage() {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [name, setName] = useState('')
+  const [roundWisePhone, setRoundWisePhone] = useState('')
   const [parsedSlot, setParsedSlot] = useState(null)
   const [slotFile, setSlotFile] = useState(null)
   const [slotPreview, setSlotPreview] = useState('')
@@ -407,7 +408,8 @@ export function SubmitSlotPage() {
       setError('Please wait until invite reading is complete.')
       return
     }
-    if (!effectiveName || !slotFile || !interviewRound || needsPaymentProof) {
+    if (!effectiveName || !slotFile || !interviewRound || needsPaymentProof
+        || (serviceType === 'round_wise' && !roundWisePhone.trim())) {
       setTriedSubmit(true)
       setError('')
       return
@@ -426,14 +428,33 @@ export function SubmitSlotPage() {
       if (bookingSlot?.time_end) fd.append('time_end', bookingSlot.time_end)
       if (bookingSlot?.interview_round) fd.append('interview_round', bookingSlot.interview_round)
       if (bookingSlot?.technology) fd.append('technology', bookingSlot.technology)
+      if (serviceType === 'round_wise') fd.append('phone', roundWisePhone.trim())
+      fd.append('candidate_id', selected?.id || '')
       if (paymentProofId) fd.append('payment_proof_id', paymentProofId)
+      // Confirmation must be idempotent: a retry or double submit has to resolve
+      // to the same booking rather than creating a second one.
+      fd.append(
+        'idempotency_key',
+        [
+          effectiveName.trim().toLowerCase(),
+          serviceType,
+          roundWisePhone.trim(),
+          bookingSlot?.date || '',
+          bookingSlot?.time || '',
+          bookingSlot?.time_end || '',
+          bookingSlot?.interview_round || '',
+          paymentProofId,
+        ].join('|'),
+      )
       fd.append('file', slotFile)
-      const res = await fetch(`${API_BASE}/public/slots/book`, { method: 'POST', body: fd })
+      // /public/slots/book is retired and answers 410. /bookings/confirm is the
+      // only public booking creation boundary.
+      const res = await fetch(`${API_BASE}/bookings/confirm`, { method: 'POST', body: fd })
       const data = await res.json()
       if (!res.ok) { setError(data.payment_due ? (data.message || 'Payment required.') : (data.message || 'Could not book slot')); return }
       if (slotPreview) URL.revokeObjectURL(slotPreview)
       setSlotFile(null); setSlotPreview(''); setParsedSlot(null); setManualDate(''); setManualTime(''); setInterviewRound(''); setServiceType('profile_service'); setPaymentProofId('')
-      setName('')
+      setName(''); setRoundWisePhone('')
       setTriedSubmit(false)
       setSuccess(`Slot confirmed for ${data.candidate?.name || effectiveName}.`)
       // Refresh data first, then switch to confirmed tab after 2 seconds
@@ -585,6 +606,26 @@ export function SubmitSlotPage() {
                   ? <span className="sbs-hint sbs-hint--warn">Enter client name to confirm.</span>
                   : <span className="sbs-hint">{serviceType === "round_wise" ? "Type the client name for this round." : "Pick from the list or type a new client name."}</span>}
               </label>
+
+              {serviceType === "round_wise" && (
+                // /bookings/confirm rejects a round-wise booking without a valid
+                // phone identity, so it has to be collected here.
+                <label className="sbs-field">
+                  <span className="sbs-label">Candidate phone <span className="sbs-required" aria-hidden="true">*</span></span>
+                  <input
+                    className="sbs-input"
+                    type="tel"
+                    inputMode="tel"
+                    value={roundWisePhone}
+                    onChange={e => setRoundWisePhone(e.target.value)}
+                    placeholder="10-digit phone number"
+                    disabled={busy || parsing}
+                  />
+                  {triedSubmit && !roundWisePhone.trim()
+                    ? <span className="sbs-hint sbs-hint--warn">Required — round-wise booking needs the candidate phone.</span>
+                    : <span className="sbs-hint">Identifies the candidate across rounds.</span>}
+                </label>
+              )}
 
               <label className="sbs-field">
                 <span className="sbs-label">Interview round <span className="sbs-required" aria-hidden="true">*</span></span>
