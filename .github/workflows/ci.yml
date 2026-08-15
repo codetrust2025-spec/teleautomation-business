@@ -40,6 +40,20 @@ jobs:
       - run: docker compose build
       - run: docker compose up -d
         env: {TELEAUTOMATION_SAFE_UI_MODE: "true"}
-      - run: curl --fail --retry 12 --retry-delay 2 http://127.0.0.1:8200/health
+      - name: Health check
+        run: curl --fail --retry 24 --retry-delay 5 --retry-all-errors http://127.0.0.1:8200/health
+      - name: Migrations ran inside the container and are idempotent
+        run: |
+          docker compose run --rm -T migrate | tee /tmp/second-run.txt
+          test ! -s /tmp/second-run.txt
+      - name: Persistence survives a container restart
+        run: |
+          docker compose exec -T db psql -U operations -d operations -c \
+            "CREATE TABLE IF NOT EXISTS ci_persistence_probe(id int primary key); \
+             INSERT INTO ci_persistence_probe VALUES (1) ON CONFLICT DO NOTHING;"
+          docker compose restart
+          curl --fail --retry 24 --retry-delay 5 --retry-all-errors http://127.0.0.1:8200/health
+          test "$(docker compose exec -T db psql -U operations -d operations -tAc \
+            'SELECT count(*) FROM ci_persistence_probe' | tr -d '[:space:]')" = "1"
       - if: always()
         run: docker compose down -v

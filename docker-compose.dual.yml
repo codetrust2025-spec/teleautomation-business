@@ -1,0 +1,128 @@
+# Dual-service isolated test stack: both split services, each with its own
+# PostgreSQL and its own persistent volumes, on one user-defined network.
+#
+# Peers address each other by Docker service name. There is deliberately no
+# 127.0.0.1 peer address anywhere: inside separate containers loopback is the
+# container itself, so a loopback peer URL is always a bug.
+#
+# Run from either repository root; both must be checked out side by side:
+#   docker compose -f docker-compose.dual.yml up -d --build
+#
+# Isolated test infrastructure only. Never point this at production.
+
+name: teleautomation-split-test
+
+services:
+  marketing-db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: marketing
+      POSTGRES_PASSWORD: marketing
+      POSTGRES_DB: marketing
+    volumes:
+      - marketing_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U marketing -d marketing"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  operations-db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: operations
+      POSTGRES_PASSWORD: operations
+      POSTGRES_DB: operations
+    volumes:
+      - operations_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U operations -d operations"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  marketing-migrate:
+    build:
+      context: ../teleautomation-messaging
+    environment:
+      DATABASE_URL: postgresql://marketing:marketing@marketing-db:5432/marketing
+      DASHBOARD_PASSWORD: ""
+    command: ["python", "-m", "core.migrations.runner"]
+    depends_on:
+      marketing-db:
+        condition: service_healthy
+    restart: "no"
+
+  operations-migrate:
+    build:
+      context: ../teleautomation-business
+    environment:
+      DATABASE_URL: postgresql://operations:operations@operations-db:5432/operations
+      DASHBOARD_PASSWORD: ""
+    command: ["python", "-m", "core.migrations.runner"]
+    depends_on:
+      operations-db:
+        condition: service_healthy
+    restart: "no"
+
+  marketing-api:
+    build:
+      context: ../teleautomation-messaging
+    environment:
+      SERVICE_NAME: teleautomation-messaging
+      TELEAUTOMATION_SAFE_UI_MODE: "true"
+      DATABASE_URL: postgresql://marketing:marketing@marketing-db:5432/marketing
+      MARKETING_DATA_DIR: /var/lib/teleautomation-marketing
+      OPERATIONS_INTERNAL_URL: http://operations-api:8000
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-split-test-shared-token}
+      DASHBOARD_USERNAME: admin
+      DASHBOARD_PASSWORD: ${TEST_DASHBOARD_PASSWORD:-split-test-password}
+      DASHBOARD_COOKIE_SECURE: "false"
+    ports: ["127.0.0.1:8100:8000"]
+    volumes:
+      - marketing_data:/var/lib/teleautomation-marketing
+    depends_on:
+      marketing-db:
+        condition: service_healthy
+      marketing-migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  operations-api:
+    build:
+      context: ../teleautomation-business
+    environment:
+      SERVICE_NAME: teleautomation-operations
+      TELEAUTOMATION_SAFE_UI_MODE: "true"
+      DATABASE_URL: postgresql://operations:operations@operations-db:5432/operations
+      OPERATIONS_DATA_DIR: /var/lib/teleautomation-operations
+      MESSAGING_INTERNAL_URL: http://marketing-api:8000
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-split-test-shared-token}
+      DASHBOARD_USERNAME: admin
+      DASHBOARD_PASSWORD: ${TEST_DASHBOARD_PASSWORD:-split-test-password}
+      DASHBOARD_COOKIE_SECURE: "false"
+    ports: ["127.0.0.1:8200:8000"]
+    volumes:
+      - operations_data:/var/lib/teleautomation-operations
+    depends_on:
+      operations-db:
+        condition: service_healthy
+      operations-migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  marketing_data:
+  marketing_db:
+  operations_data:
+  operations_db:
