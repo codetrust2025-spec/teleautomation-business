@@ -66,6 +66,7 @@ const REQUIRED_MODULES = {
   'BGV register': 'components/BgvRegisterPanel.jsx',
   'daily briefing': 'components/DailyBriefingCard.jsx',
   'notification sounds': 'notifications/GlobalNotificationSounds.jsx',
+  'OCR policy admin': 'components/OcrPolicyPanel.jsx',
 }
 
 describe('operations feature reachability', () => {
@@ -145,8 +146,9 @@ describe('operations backend routes are reachable from the UI', () => {
   })
 })
 
-// Measured 2026-08-15 after the parity pass. Of these, only /ai/ocr-policy is
-// reachable in the monolith but not here: an admin OCR-config screen that lived
-// inside Marketing's AI-settings overlay. Every other entry is unreachable in
-// the monolith too. See docs/feature-parity-matrix.md.
-const BASELINE_UNREFERENCED = 38
+// Measured 2026-08-15 after the parity pass, then lowered when the OCR policy
+// admin screen was rebuilt here (it had lived inside Marketing's AI-settings
+// overlay in the monolith, which is why the split lost it). Every remaining
+// entry is unreachable in the monolith too, so no unexplained loss survives.
+// See docs/feature-parity-matrix.md.
+const BASELINE_UNREFERENCED = 36
