@@ -73,6 +73,17 @@ wait_healthy() {
 
 OPP='{"slot":"account1","user_id":900001,"opportunity_type":"partnership","name":"Split Test","summary":"dual-service verification"}'
 
+# opportunity_event_producer enqueues and dispatches this exact event type.
+# Anything else is enqueued but never becomes due, so the queue would silently
+# never drain and the outbox assertions would be meaningless.
+EVENT='operations.opportunity.v1'
+
+pending_count() {
+  inpy marketing-api "
+from services import cross_project_outbox as o
+print(sum(1 for r in o._load() if r.get('delivered_at') is None))" 2>/dev/null | tr -d '[:space:]'
+}
+
 step "Bring up the isolated dual-service stack"
 $COMPOSE up -d --build || { echo "compose up failed"; exit 1; }
 
@@ -132,23 +143,21 @@ r=$(incurl marketing-api POST http://operations-api:8000/internal/v1/opportuniti
 case "$r" in *duplicate*) ok "Replayed key answered duplicate ($r)";; *) bad "Duplicate replay idempotent" "got $r";; esac
 
 step "13. Durable outbox delivers while the peer is up"
+# The dispatcher only collects this event type; anything else is never due.
 inpy marketing-api "
 from services import cross_project_outbox as o
-o.enqueue(event_type='opportunity', idempotency_key='dst-out-1', payload=$OPP)
-print('enqueued')" >/dev/null 2>&1
+o.enqueue(event_type='$EVENT', idempotency_key='dst-out-1', payload=$OPP)" >/dev/null 2>&1
 d=$(inpy marketing-api "
 from services.opportunity_event_producer import dispatch_opportunities_once as d
 print(d())" 2>/dev/null)
-pend=$(inpy marketing-api "
-from services import cross_project_outbox as o
-print(sum(1 for r in o._load() if r.get('delivered_at') is None))" 2>/dev/null | tr -d '[:space:]')
+pend=$(pending_count)
 [ "${pend:-1}" = "0" ] && ok "Outbox drained (pending=0)" || bad "Outbox drained" "pending=${pend:-unknown} dispatch=$d"
 
 step "14-16. Operations outage: Marketing survives, work queues, then recovers"
 $COMPOSE stop operations-api >/dev/null 2>&1
 inpy marketing-api "
 from services import cross_project_outbox as o
-o.enqueue(event_type='opportunity', idempotency_key='dst-outage-1', payload=$OPP)
+o.enqueue(event_type='$EVENT', idempotency_key='dst-outage-1', payload=$OPP)
 from services.opportunity_event_producer import dispatch_opportunities_once as d
 d()" >/dev/null 2>&1
 h=$(inpy marketing-api "
@@ -158,15 +167,26 @@ pend=$(inpy marketing-api "
 from services import cross_project_outbox as o
 print(sum(1 for r in o._load() if r.get('idempotency_key')=='dst-outage-1' and r.get('delivered_at') is None))" 2>/dev/null | tr -d '[:space:]')
 [ "${pend:-0}" = "1" ] && ok "Undelivered work retained for retry" || bad "Outbox retains undelivered work" "pending=${pend:-unknown}"
+att=$(inpy marketing-api "
+from services import cross_project_outbox as o
+print(next((r.get('attempts',0) for r in o._load() if r.get('idempotency_key')=='dst-outage-1'), 0))" 2>/dev/null | tr -d '[:space:]')
+[ "${att:-0}" -ge 1 ] && ok "Failed delivery recorded an attempt and backed off (attempts=$att)" \
+  || bad "Retry backoff recorded" "attempts=${att:-unknown}"
 
 $COMPOSE start operations-api >/dev/null 2>&1
 wait_healthy operations-api && ok "Operations recovered" || bad "Operations recovered"
-inpy marketing-api "
+# A failed attempt schedules the next one 2^attempts seconds out, so the row is
+# legitimately not due the instant the peer returns. Poll the real dispatcher
+# until the backoff elapses rather than asserting on the first call.
+pend=1
+for _ in $(seq 1 20); do
+  inpy marketing-api "
 from services.opportunity_event_producer import dispatch_opportunities_once as d
 d()" >/dev/null 2>&1
-pend=$(inpy marketing-api "
-from services import cross_project_outbox as o
-print(sum(1 for r in o._load() if r.get('delivered_at') is None))" 2>/dev/null | tr -d '[:space:]')
+  pend=$(pending_count)
+  [ "${pend:-1}" = "0" ] && break
+  sleep 3
+done
 [ "${pend:-1}" = "0" ] && ok "Queued delivery recovered after peer restart" || bad "Delivery recovers" "pending=${pend:-unknown}"
 
 step "17. Recovery caused no duplicate side effect"
