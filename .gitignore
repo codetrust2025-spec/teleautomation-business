@@ -10,3 +10,4 @@ data/
 *.session-journal
 logs/
 local-preview.*.log
+.env.*

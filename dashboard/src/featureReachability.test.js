@@ -118,8 +118,8 @@ function backendRoutes() {
 
 describe('operations backend routes are reachable from the UI', () => {
   const NON_UI = [
-    /^\/internal\//, /^\/health$/, /^\/$/, /^\/ws/, /^\/openapi/, /^\/docs/,
-    /^\/webhook/, /^\/static/, /^\/favicon/, /^\/login$/, /^\/logout$/,
+    /^\/internal\//, /^\/health$/, /^\/version$/, /^\/$/, /^\/ws/, /^\/openapi/,
+    /^\/docs/, /^\/webhook/, /^\/static/, /^\/favicon/, /^\/login$/, /^\/logout$/,
     /^\/auth\/login/, /^\/auth\/logout/, /\{full_path/,
     /oauth\/google\/callback/,   // provider redirect target, not fetched
     /pubsub/,                    // Gmail push delivery endpoint
