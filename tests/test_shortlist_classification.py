@@ -8,7 +8,6 @@ fell through to the model, and it was ignored for carrying no interview date or
 time. The selection was the event; the document list was the next action.
 """
 
-from core import recruitment_mail_audit as audit
 from services import recruitment_mail_agent as agent
 
 
@@ -91,16 +90,10 @@ class TestGenericDocumentRequestsAreNotSelection:
         )
 
 
-class TestAuditEngineAgrees:
-    """The audit engine and the notification path must not disagree."""
-
-    def test_provisionally_shortlisted_matches_a_shortlist_phrase(self):
-        lowered = INFOSHARE_BODY.lower()
-        assert any(phrase in lowered for phrase in audit._SHORTLIST_PHRASES)
-
-    def test_a_bare_document_request_matches_no_shortlist_phrase(self):
-        lowered = "please share your pan card and aadhar card.".lower()
-        assert not any(phrase in lowered for phrase in audit._SHORTLIST_PHRASES)
+# The audit engine used to carry a second copy of these shortlist phrases, and
+# a class here asserted the two never disagreed. Mail Audit was decommissioned,
+# so the notification path below is now the only classifier and there is no
+# second opinion left to reconcile against.
 
 
 class TestInterviewBehaviourIsPreserved:

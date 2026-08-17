@@ -12,24 +12,11 @@ from services import cross_project_outbox as outbox
 _dispatcher_task: asyncio.Task | None = None
 
 
-def fetch_crm_operational_summary(*, stale_days: int) -> dict | None:
-    """Fetch Messaging-owned CRM metrics without sharing its database."""
-    base = os.getenv("MESSAGING_INTERNAL_URL", "http://127.0.0.1:8000").rstrip("/")
-    token = os.getenv("INTERNAL_SERVICE_TOKEN", "").strip()
-    if not token:
-        return None
-    try:
-        with httpx.Client(timeout=5.0) as client:
-            response = client.get(
-                f"{base}/internal/v1/operational-summary",
-                params={"stale_days": stale_days},
-                headers={"X-Internal-Service-Token": token},
-            )
-            response.raise_for_status()
-            payload = response.json()
-        return payload if payload.get("status") == "ok" else None
-    except (httpx.HTTPError, ValueError, TypeError):
-        return None
+# fetch_crm_operational_summary() was removed with Daily Briefing, its only
+# caller. It read Marketing's `/internal/v1/operational-summary` projection.
+# That Marketing endpoint is untouched and still serves the contract in
+# docs/migration/cross-project-contracts.md — only this consumer is gone, so a
+# future Operations feature can call it again without a Marketing change.
 
 
 async def send_notification(*, title: str, body: str, tag: str, whatsapp_text: str = "") -> None:

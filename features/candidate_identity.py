@@ -1,6 +1,7 @@
 """One definition of "who is this candidate" for every part of Teleautomation.
 
-The system grew four separate answers to that question:
+The system grew four separate answers to that question. The fourth has since
+been decommissioned with the BGV Register, leaving three:
 
 * ``candidate_identity_links`` — derived once per backend start by migration 010
   from phone, personal email, mailbox email and explicit relationships.
@@ -8,7 +9,6 @@ The system grew four separate answers to that question:
   also collapses rows by canonical *name* through ``_CANDIDATE_NAME_ALIASES``.
 * ``_collapse_profile_candidates`` — the Candidates page display winner, which
   is what a mailbox is attached to at OAuth-connect time.
-* ``bgv_register.profile_key`` — ``name|phone``, in a JSON file.
 
 Reconciliation used the first one alone, through a single ``COALESCE`` hop.
 That is unsafe for three independent reasons, all provable from the migration

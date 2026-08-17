@@ -9,7 +9,6 @@ import './index.css'
 import './businessShell.css'
 import './dailyOps.css'
 import './recruitmentMail.css'
-import './outcomeAudit.css'
 import './components/ui/CommonModal.css'
 
 const submitSlot = window.location.pathname.replace(/\/+$/, '') === '/submit-slot'

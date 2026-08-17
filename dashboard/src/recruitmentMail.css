@@ -436,6 +436,54 @@
   background: rgba(239, 68, 68, 0.1);
   color: #f87171;
 }
+
+.sot-ocr-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.sot-ocr-toggle--muted {
+  color: var(--sot-muted);
+  font-size: 12px;
+}
+
+.sot-ocr-toggle__label {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--sot-muted);
+}
+
+/* Sized down from the generic .sot-header-actions button so the switch reads as
+   a state pill next to Refresh rather than a second primary action. */
+.sot-header-actions .sot-ocr-toggle__switch {
+  border: 1px solid #7f1d1d;
+  border-radius: 999px;
+  background: rgba(239, 68, 68, 0.1);
+  color: #f87171;
+  padding: 5px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  min-width: 52px;
+}
+
+.sot-header-actions .sot-ocr-toggle__switch--on {
+  border-color: #16a34a;
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+}
+
+.sot-header-actions .sot-ocr-toggle__switch:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.sot-ocr-toggle__error {
+  color: #f87171;
+  font-size: 12px;
+}
 .sot-header-actions button,
 .sot-primary-button {
   border: 1px solid #36557c;

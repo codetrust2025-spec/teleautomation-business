@@ -1,34 +1,15 @@
-"""Operations-owned daily briefing and OCR policy routes."""
+"""Operations-owned OCR policy routes.
+
+The daily briefing routes that shared this module were removed with the Daily
+Briefing feature. OCR stayed: its control moved out of the decommissioned
+Settings page and into AI Mail Review, against these same routes.
+"""
 
 from __future__ import annotations
 
-import asyncio
-
 from fastapi import APIRouter, HTTPException, Request
 
-from core.operations_api_helpers import viewer_reference
-
 router = APIRouter()
-
-
-@router.get("/ai/daily-briefing")
-async def daily_briefing_get(request: Request):
-    from core.daily_briefing import get_briefing
-
-    payload = await asyncio.to_thread(get_briefing, reference=viewer_reference(request))
-    return {"status": "ok", "briefing": payload}
-
-
-@router.post("/ai/daily-briefing/refresh")
-async def daily_briefing_refresh(request: Request):
-    from core.daily_briefing import get_briefing
-
-    payload = await asyncio.to_thread(
-        get_briefing,
-        reference=viewer_reference(request),
-        refresh=True,
-    )
-    return {"status": "ok", "message": "Briefing updated", "briefing": payload}
 
 
 @router.get("/ai/ocr-policy")

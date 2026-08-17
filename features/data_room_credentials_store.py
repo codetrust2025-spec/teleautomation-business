@@ -228,41 +228,6 @@ def get_credentials() -> dict:
     }
 
 
-def handler_kit_for(
-    *,
-    username: str,
-    reference: str | None,
-    role: str = "handler",
-) -> dict:
-    """Shared prompts/resources for handlers — avoids repeating links in WhatsApp."""
-    creds = get_credentials()
-    ref = (reference or "").strip()
-    handler_row: dict | None = None
-    for row in creds.get("handlers") or []:
-        if str(row.get("username") or "").strip().lower() == str(username or "").strip().lower():
-            handler_row = dict(row)
-            break
-    site = (creds.get("site_url") or _default_site_url()).strip()
-    out = {
-        "site_url": site,
-        "submit_slot_url": f"{site.rstrip('/')}/submit-slot" if site else "",
-        "username": username,
-        "reference": ref or (handler_row or {}).get("reference") or username,
-        "role": role,
-        "prompts": creds.get("prompts") or [],
-        "resources": creds.get("resources") or [],
-        "updated_at": creds.get("updated_at"),
-    }
-    if handler_row:
-        out["login"] = {
-            "username": handler_row.get("username") or username,
-            "reference": handler_row.get("reference") or ref,
-            "notes": handler_row.get("notes") or "",
-        }
-    if role == "admin":
-        out["prompts"] = creds.get("prompts") or []
-        out["resources"] = creds.get("resources") or []
-    return out
 
 
 def save_credentials(

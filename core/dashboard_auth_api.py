@@ -135,22 +135,6 @@ def install_dashboard_auth(app: FastAPI) -> None:
             return _json({"detail": err}, status=400)
         return {"status": "ok"}
 
-    @app.get("/auth/handler-kit")
-    async def auth_handler_kit(request: Request):
-        """Handler onboarding — login info + vault prompts/resources (no admin secrets)."""
-        from features import data_room_credentials_store as creds
-
-        profile = auth.operator_profile_from_cookies(dict(request.cookies))
-        username = profile.get("username")
-        if not username:
-            return _json({"detail": "Authentication required"}, status=401)
-        kit = creds.handler_kit_for(
-            username=username,
-            reference=profile.get("reference"),
-            role=profile.get("role") or "admin",
-        )
-        return {"status": "ok", "kit": kit}
-
     class DashboardAuthMiddleware(BaseHTTPMiddleware):
         async def dispatch(self, request: Request, call_next):
             from core.dashboard_access import is_internal_service_authorized, is_ops_request_authorized

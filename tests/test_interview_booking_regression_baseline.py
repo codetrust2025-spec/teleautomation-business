@@ -245,7 +245,13 @@ def test_manual_approval_cannot_book_a_non_interview_outcome():
     assert exc.value.args[0] == "NOT_ACTIONABLE"
 
 
-# ── 9. The booking module stays independent of the audit ─────────────────────
+# ── 9. The audit is gone and must not come back ────────────────────────────
+#
+# This section used to prove the Ollama mail audit could not reach the booking
+# path. Mail Audit was decommissioned, so the guarantee is now stronger and
+# simpler: the audit modules do not exist, and no runtime module imports them.
+# Written as a presence check rather than the previous per-module scans, which
+# skipped missing files and would now pass while asserting nothing.
 
 AUDIT_MODULES = (
     "recruitment_mail_audit",
@@ -254,56 +260,23 @@ AUDIT_MODULES = (
 )
 
 
-def test_the_booking_module_imports_nothing_from_the_audit():
-    source = (REPO / "services" / "interview_auto_booking.py").read_text(encoding="utf-8")
+def test_the_audit_modules_no_longer_exist():
     for module in AUDIT_MODULES:
-        assert module not in source, f"booking now references {module}"
+        assert not (REPO / "core" / f"{module}.py").is_file(), f"{module} was reintroduced"
 
 
-def test_the_calendar_parser_imports_nothing_from_the_audit():
-    source = (REPO / "services" / "calendar_invite_parser.py").read_text(encoding="utf-8")
-    for module in AUDIT_MODULES:
-        assert module not in source
-
-
-def test_the_audit_never_calls_a_booking_execution_function():
-    """The audit is read-only over bookings. It may read the audit table; it
-    may never call the functions that create, move or cancel a slot."""
-    forbidden = (
-        "execute_auto_booking", "execute_manual_approved_booking",
-        "assign_interview_slot", "cancel_interview_slot",
-        "reschedule_interview_slot",
-    )
-    for name in ("core/recruitment_mail_audit.py",
-                 "core/recruitment_mail_audit_store.py",
-                 "core/recruitment_audit_ai.py"):
-        path = REPO / name
-        if not path.is_file():
+def test_no_runtime_module_imports_the_audit():
+    skip = {".git", "node_modules", "__pycache__", "tests", "dashboard", "static",
+            "data", "logs", ".venv", ".pytest_cache", "docs"}
+    offenders = []
+    for path in REPO.rglob("*.py"):
+        if any(part in skip for part in path.parts):
             continue
-        source = path.read_text(encoding="utf-8")
-        for call in forbidden:
-            assert call not in source, f"{name} references {call}"
-
-
-def test_the_audit_never_imports_the_booking_module():
-    """Reading the interview_auto_booking_audit *table* is allowed and is how
-    the interview report is built. Importing the booking *module* is not: that
-    is the only way audit code could reach an execution function."""
-    imports = (
-        "from services.interview_auto_booking",
-        "from services import interview_auto_booking",
-        "import services.interview_auto_booking",
-        "services.interview_auto_booking.",
-    )
-    for name in ("core/recruitment_mail_audit.py",
-                 "core/recruitment_mail_audit_store.py",
-                 "core/recruitment_audit_ai.py"):
-        path = REPO / name
-        if not path.is_file():
-            continue
-        source = path.read_text(encoding="utf-8")
-        for statement in imports:
-            assert statement not in source, f"{name} imports the booking module"
+        source = path.read_text(encoding="utf-8", errors="ignore")
+        for module in AUDIT_MODULES:
+            if f"import {module}" in source or f"from core.{module}" in source:
+                offenders.append(f"{path.relative_to(REPO)} -> {module}")
+    assert not offenders, f"audit imports survive: {offenders}"
 
 
 # ── 10. Byte-level pin on the decision path ──────────────────────────────────

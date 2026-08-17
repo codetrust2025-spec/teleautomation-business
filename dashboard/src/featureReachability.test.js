@@ -54,19 +54,20 @@ const reachableCode = [...reachable]
   .map((f) => readFileSync(f, 'utf8'))
   .join('\n')
 
+// The six shipped features, plus the cross-cutting modules that have silently
+// gone missing before. Daily Briefing, Mail Audit, Payment Reconciliation, BGV
+// Register and Handler Kit were decommissioned, so their entries are gone with
+// them; OCR survived that removal and is asserted at its new home inside AI
+// Mail Review.
 const REQUIRED_MODULES = {
+  'daily ops': 'dailyOps/DailyOpsPanel.jsx',
   candidates: 'components/CandidatesPanel.jsx',
-  'bookings and daily ops': 'dailyOps/DailyOpsPanel.jsx',
+  'slot booking': 'pages/SubmitSlotPage.jsx',
+  'mail alerts': 'components/MailMonitoringNotifications.jsx',
   'data room': 'components/DataRoomPanel.jsx',
-  'recruitment mail': 'components/RecruitmentMailPanel.jsx',
-  'mail monitoring notifications': 'components/MailMonitoringNotifications.jsx',
-  'staff handler kit': 'components/HandlerKitPanel.jsx',
-  'outcome audit': 'components/OutcomeAuditPanel.jsx',
-  'payment reconciliation': 'components/PaymentReconciliationPanel.jsx',
-  'BGV register': 'components/BgvRegisterPanel.jsx',
-  'daily briefing': 'components/DailyBriefingCard.jsx',
+  'AI mail review': 'components/RecruitmentMailPanel.jsx',
+  'OCR on/off control': 'components/OcrToggle.jsx',
   'notification sounds': 'notifications/GlobalNotificationSounds.jsx',
-  'OCR policy admin': 'components/OcrPolicyPanel.jsx',
 }
 
 describe('operations feature reachability', () => {
@@ -151,4 +152,9 @@ describe('operations backend routes are reachable from the UI', () => {
 // overlay in the monolith, which is why the split lost it). Every remaining
 // entry is unreachable in the monolith too, so no unexplained loss survives.
 // See docs/feature-parity-matrix.md.
-const BASELINE_UNREFERENCED = 36
+//
+// Lowered 36 → 23 on 2026-08-17 by the six-feature decommission, which deleted
+// the frontend and the backend of each removed feature together. A drop here is
+// the evidence that no orphaned route family was left behind; had only the UI
+// gone, this number would have risen.
+const BASELINE_UNREFERENCED = 23
