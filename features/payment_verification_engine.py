@@ -610,6 +610,20 @@ def _load_ledger() -> dict[str, Any]:
             }
 
 
+def ledger_available() -> bool:
+    """Is the payment ledger actually readable?
+
+    `_load_ledger()` fabricates an empty ledger when the file cannot be read.
+    That keeps read paths alive, but an accounting caller subtracting
+    recoveries cannot tell "nothing to recover" from "the ledger is gone".
+    """
+    try:
+        with open(_ledger_file(), encoding="utf-8") as handle:
+            return isinstance(json.load(handle), dict)
+    except (OSError, ValueError):
+        return False
+
+
 def _save_ledger(data: dict[str, Any]) -> None:
     path = _ledger_file()
     parent = os.path.dirname(path)

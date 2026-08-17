@@ -225,6 +225,48 @@ HANDLER_COMMISSION_PCT = 50
 PROFILE_CLOSURE_COMPLIMENTARY_AMOUNT = 5_000
 PROFILE_CLOSURE_ADMIN_REFERENCE = "Thrilok"
 
+_log = logging.getLogger(__name__)
+
+
+class AccountingSourceUnavailable(RuntimeError):
+    """A store a payable balance depends on could not be read.
+
+    Raised internally so a missing source takes the same path as a corrupt
+    one, and both end up reported rather than silently treated as zero.
+    """
+
+
+# Stores that a handler's payable balance is computed from. Losing any of them
+# does not break the arithmetic — it quietly removes an offset, which is how
+# the August 2026 opening balances came to be overstated after the service
+# split. Anything added here must also be registered for migration.
+REQUIRED_ACCOUNTING_SOURCES = ("handler_expenses", "handler_salaries",
+                               "payment_verification_ledger")
+
+
+def unavailable_accounting_sources() -> list[str]:
+    """Which required accounting stores cannot be read right now."""
+    missing: list[str] = []
+    try:
+        from features import handler_expenses as _he
+        if not _he.store_available():
+            missing.append("handler_expenses")
+    except Exception:
+        missing.append("handler_expenses")
+    try:
+        from features import handler_salaries as _hs
+        if not _hs.store_available():
+            missing.append("handler_salaries")
+    except Exception:
+        missing.append("handler_salaries")
+    try:
+        from features.payment_verification_engine import ledger_available
+        if not ledger_available():
+            missing.append("payment_verification_ledger")
+    except Exception:
+        missing.append("payment_verification_ledger")
+    return missing
+
 # Owners / admins — not handler commission recipients (hidden from payout UI).
 HANDLER_PAYOUT_EXCLUDED_REF_KEYS = frozenset({"ravinder"})
 
@@ -5790,10 +5832,18 @@ def _carry_forward_balances(
             # the month the lead happened to be registered in.
             _note_month(comp_key, _row_closure_month(r))
 
+    # Every source below subtracts from — or adds to — a real payable balance.
+    # If one cannot be read, the arithmetic still completes and still looks
+    # confident, which is how a missing store once turned into overstated money
+    # on screen. Record the failure instead of absorbing it.
+    unreconciled_sources: list[str] = []
+
     # ── Cumulative salary from prior months ──
     prior_salary: dict[str, int] = {}
     try:
         from features import handler_salaries as _hs
+        if not _hs.store_available():
+            raise AccountingSourceUnavailable("handler_salaries")
         # Compute salary for each prior month individually
         # salary_owed_by_handler with month=None returns all-time; we need per-month
         # We'll estimate: if a handler has a monthly salary, multiply by # of prior months
@@ -5806,24 +5856,27 @@ def _carry_forward_balances(
             # Skip April & May 2026 — treated as settled
             if pm in ("2026-04", "2026-05"):
                 continue
-            try:
-                sal = _hs.salary_owed_by_handler(month=pm)
-                for key, sbucket in sal.items():
-                    if scope_key and key != scope_key:
-                        continue
-                    owed_here = int(sbucket.get("owed") or 0)
-                    prior_salary[key] = prior_salary.get(key, 0) + owed_here
-                    if owed_here:
-                        _note_month(key, pm)
-            except Exception:
-                pass
-    except Exception:
-        pass
+            sal = _hs.salary_owed_by_handler(month=pm)
+            for key, sbucket in sal.items():
+                if scope_key and key != scope_key:
+                    continue
+                owed_here = int(sbucket.get("owed") or 0)
+                prior_salary[key] = prior_salary.get(key, 0) + owed_here
+                if owed_here:
+                    _note_month(key, pm)
+    except Exception as exc:
+        unreconciled_sources.append("handler_salaries")
+        _log.error(
+            "carry-forward: salary source unavailable, balances are unreconciled (%s)",
+            exc.__class__.__name__,
+        )
 
     # ── Cumulative payouts from prior months ──
     prior_paid: dict[str, int] = {}
     try:
         from features import handler_expenses as _he
+        if not _he.store_available():
+            raise AccountingSourceUnavailable("handler_expenses")
         # Get ALL expenses, then filter to months < target_month
         all_expenses = _he.list_expenses()
         for exp in all_expenses:
@@ -5843,14 +5896,20 @@ def _carry_forward_balances(
             prior_paid[key] = prior_paid.get(key, 0) + amount
             if amount:
                 _note_month(key, exp_month)
-    except Exception:
-        pass
+    except Exception as exc:
+        unreconciled_sources.append("handler_expenses")
+        _log.error(
+            "carry-forward: payout source unavailable, balances are unreconciled (%s)",
+            exc.__class__.__name__,
+        )
 
     # Sponsored candidate payments received by a referrer are recovered from
     # that referrer's future commission.
     prior_recoveries: dict[str, int] = {}
     try:
-        from features.payment_verification_engine import ledger_entries
+        from features.payment_verification_engine import ledger_available, ledger_entries
+        if not ledger_available():
+            raise AccountingSourceUnavailable("payment_verification_ledger")
         for entry in ledger_entries(action="referrer_recovery"):
             entry_month = str(entry.get("payment_date") or entry.get("created_at") or "")[:7]
             if not entry_month or entry_month >= target_month or entry_month in ("2026-04", "2026-05"):
@@ -5862,8 +5921,14 @@ def _carry_forward_balances(
             prior_recoveries[key] = prior_recoveries.get(key, 0) + recovered_here
             if recovered_here:
                 _note_month(key, entry_month)
-    except Exception:
-        pass
+    except Exception as exc:
+        unreconciled_sources.append("payment_verification_ledger")
+        _log.error(
+            "carry-forward: recovery ledger unavailable, balances are unreconciled (%s)",
+            exc.__class__.__name__,
+        )
+
+    unreconciled_sources = sorted(set(unreconciled_sources))
 
     # Merge into result
     all_keys = (
@@ -5891,6 +5956,10 @@ def _carry_forward_balances(
             # Part of prior_commission, not on top of it.
             "prior_complimentary": prior_complimentary.get(key, 0),
             "prior_complimentary_count": prior_complimentary_count.get(key, 0),
+            # True when a source this figure depends on could not be read, so
+            # the balance is arithmetically complete but factually incomplete.
+            "unreconciled": bool(unreconciled_sources),
+            "unreconciled_sources": list(unreconciled_sources),
         }
     return result
 
@@ -6236,6 +6305,15 @@ def stats(
     total_commission_already_received = 0
     total_company_share_recoverable = 0
 
+    # Probed independently of the carry-forward so the warning still reaches
+    # the client when there are no prior-month rows to attach it to.
+    _unreconciled_sources = unavailable_accounting_sources()
+    if _unreconciled_sources:
+        _log.error(
+            "earnings for %s are unreconciled — unreadable accounting stores: %s",
+            month or "all", ", ".join(_unreconciled_sources),
+        )
+
     # ── Carry-forward: compute cumulative balances from prior months ──
     carry_fwd: dict[str, dict] = {}
     if month and month != "all":
@@ -6336,6 +6414,8 @@ def stats(
         p["prior_months"]      = list(cf.get("prior_months") or [])
         p["prior_complimentary"] = int(cf.get("prior_complimentary") or 0)
         p["prior_complimentary_count"] = int(cf.get("prior_complimentary_count") or 0)
+        p["unreconciled"] = bool(_unreconciled_sources)
+        p["unreconciled_sources"] = list(_unreconciled_sources)
 
         # ── April & May 2026: treat as fully settled for all handlers ──
         if month in ("2026-04", "2026-05"):
@@ -6486,6 +6566,11 @@ def stats(
                 + total_prior_balance
             ),
         ),
+        # When a required accounting store cannot be read, every payable figure
+        # above is arithmetically sound and factually incomplete. Say so, so no
+        # caller presents it as a settled amount owed.
+        "earnings_unreconciled": bool(_unreconciled_sources),
+        "earnings_unreconciled_sources": _unreconciled_sources,
         # Backwards-compat fields (older client builds expect these names).
         "handler_earnings_total":   total_handler_auto_earnings,
         "handler_deductions_total": total_handler_paid_out + total_handler_recoveries,
