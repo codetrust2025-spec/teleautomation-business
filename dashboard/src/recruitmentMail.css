@@ -498,6 +498,188 @@
   border-color: var(--sot-blue);
   background: #172b48;
 }
+
+/* Ollama AI node pool, shown at the top of AI Mail Review.
+   Carried over from the monolith: the 2026-08 split copied
+   AiNodeManager into this repo without its stylesheet, so the section
+   shipped with class names no rule matched and rendered as raw stacked
+   text. Restored verbatim so the pool looks the way it always did. */
+.sot-ai-nodes {
+  margin: -10px 0 24px;
+  padding: 10px 12px;
+  border: 1px solid #263e5b;
+  border-radius: 11px;
+  background: linear-gradient(145deg, rgba(10, 25, 43, 0.96), rgba(8, 19, 34, 0.96));
+}
+
+.sot-ai-nodes > header,
+.sot-ai-node-title,
+.sot-ai-node-actions {
+  display: flex;
+  align-items: center;
+}
+
+.sot-ai-nodes > header {
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.sot-ai-nodes > header strong {
+  font-size: 14px;
+}
+
+.sot-ai-nodes > header button,
+.sot-ai-node-actions button {
+  border: 1px solid #36557c;
+  border-radius: 7px;
+  padding: 5px 9px;
+  color: #e8f2ff;
+  background: #142235;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.sot-ai-node-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.sot-ai-node {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 8px 10px;
+  border: 1px solid #314b6b;
+  border-radius: 8px;
+  background: rgba(7, 20, 35, 0.82);
+}
+
+.sot-ai-node.is-online {
+  border-color: rgba(34, 197, 94, 0.48);
+}
+
+.sot-ai-node.is-degraded {
+  border-color: rgba(245, 158, 11, 0.58);
+}
+
+.sot-ai-node.is-offline {
+  border-color: rgba(239, 68, 68, 0.5);
+}
+
+.sot-ai-node-title {
+  gap: 7px;
+}
+
+.sot-ai-node-title i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ef4444;
+  box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.12);
+}
+
+.sot-ai-node.is-online .sot-ai-node-title i {
+  background: #22c55e;
+  box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.12);
+}
+
+.sot-ai-node.is-degraded .sot-ai-node-title i {
+  background: #f59e0b;
+  box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.12);
+}
+
+.sot-ai-node-title strong {
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.sot-ai-node-title > span {
+  border: 1px solid #2563eb;
+  border-radius: 999px;
+  padding: 2px 5px;
+  color: #93c5fd;
+  background: rgba(37, 99, 235, 0.15);
+  font-size: 8px;
+  font-weight: 800;
+}
+
+.sot-ai-node dl {
+  display: flex;
+  min-width: 0;
+  margin: 0;
+  color: var(--sot-muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.sot-ai-node dl div {
+  display: flex;
+  align-items: center;
+}
+
+.sot-ai-node dl div + div::before {
+  content: "•";
+  margin: 0 6px;
+  color: #49627f;
+}
+
+.sot-ai-node dt {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+.sot-ai-node dd {
+  margin: 0;
+}
+
+.sot-ai-node-actions {
+  justify-content: flex-end;
+  gap: 5px;
+  flex-wrap: nowrap;
+}
+
+.sot-ai-node-actions button.is-warning {
+  border-color: rgba(245, 158, 11, 0.5);
+  color: #fbbf24;
+}
+
+.sot-ai-node-actions button:disabled,
+.sot-ai-nodes > header button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.sot-ai-node-error {
+  grid-column: 2 / -1;
+  color: #fca5a5;
+  font-size: 10px;
+}
+
+@media (max-width: 760px) {
+  .sot-ai-node-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .sot-ai-node {
+    grid-template-columns: 1fr auto;
+  }
+
+  .sot-ai-node dl {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    flex-wrap: wrap;
+    white-space: normal;
+  }
+}
+
 .sot-alert {
   margin: -12px 0 18px;
   padding: 11px 14px;
