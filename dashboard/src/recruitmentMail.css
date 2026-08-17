@@ -547,10 +547,12 @@
 }
 
 .sot-ai-node {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 8px 10px;
   border: 1px solid #314b6b;
   border-radius: 8px;
   background: rgba(7, 20, 35, 0.82);
@@ -568,25 +570,13 @@
   border-color: rgba(239, 68, 68, 0.5);
 }
 
-/* Name and PRIMARY on the left, the state badge pinned right, so a pool of
-   cards can be scanned down one edge for health. */
-.sot-ai-node-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  min-width: 0;
-}
-
 .sot-ai-node-title {
   gap: 7px;
-  min-width: 0;
 }
 
 .sot-ai-node-title i {
   width: 7px;
   height: 7px;
-  flex: none;
   border-radius: 50%;
   background: #ef4444;
   box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.12);
@@ -604,13 +594,10 @@
 
 .sot-ai-node-title strong {
   font-size: 13px;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .sot-ai-node-title > span {
-  flex: none;
   border: 1px solid #2563eb;
   border-radius: 999px;
   padding: 2px 5px;
@@ -620,83 +607,43 @@
   font-weight: 800;
 }
 
-.sot-ai-node-state {
-  flex: none;
-  border: 1px solid rgba(239, 68, 68, 0.5);
-  border-radius: 999px;
-  padding: 2px 8px;
-  color: #fca5a5;
-  background: rgba(239, 68, 68, 0.12);
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.sot-ai-node.is-online .sot-ai-node-state {
-  border-color: rgba(34, 197, 94, 0.5);
-  color: #4ade80;
-  background: rgba(34, 197, 94, 0.12);
-}
-
-.sot-ai-node.is-degraded .sot-ai-node-state {
-  border-color: rgba(245, 158, 11, 0.55);
-  color: #fbbf24;
-  background: rgba(245, 158, 11, 0.12);
-}
-
-/* Label/value rows. The previous design hid every dt and joined the values
-   into one nowrap line with bullet separators, which read as "— • — • —" on a
-   node that had reported nothing. Each reading now gets its own labelled row. */
 .sot-ai-node dl {
-  display: grid;
-  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
-  gap: 3px 12px;
+  display: flex;
   min-width: 0;
   margin: 0;
-  font-size: 11px;
+  color: var(--sot-muted);
+  font-size: 10px;
+  white-space: nowrap;
 }
 
 .sot-ai-node dl div {
-  display: contents;
+  display: flex;
+  align-items: center;
+}
+
+.sot-ai-node dl div + div::before {
+  content: "•";
+  margin: 0 6px;
+  color: #49627f;
 }
 
 .sot-ai-node dt {
-  color: var(--sot-muted);
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
   white-space: nowrap;
 }
 
 .sot-ai-node dd {
-  min-width: 0;
   margin: 0;
-  color: #dce9f7;
-  text-align: right;
-  overflow-wrap: anywhere;
-}
-
-.sot-ai-node-endpoint {
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
-}
-
-.sot-ai-node-empty {
-  color: #49627f;
-}
-
-.sot-ai-node-error {
-  border-left: 2px solid rgba(239, 68, 68, 0.55);
-  padding: 3px 0 3px 8px;
-  color: #fca5a5;
-  font-size: 10px;
-  overflow-wrap: anywhere;
 }
 
 .sot-ai-node-actions {
   justify-content: flex-end;
-  gap: 6px;
-  flex-wrap: wrap;
-  margin-top: auto;
-  padding-top: 2px;
+  gap: 5px;
+  flex-wrap: nowrap;
 }
 
 .sot-ai-node-actions button.is-warning {
@@ -710,37 +657,26 @@
   opacity: 0.48;
 }
 
-/* Tablet and below: one card per row. The label column stops competing with
-   long endpoints, and the buttons stretch rather than overflowing the card. */
+.sot-ai-node-error {
+  grid-column: 2 / -1;
+  color: #fca5a5;
+  font-size: 10px;
+}
+
 @media (max-width: 760px) {
   .sot-ai-node-grid {
     grid-template-columns: 1fr;
   }
 
+  .sot-ai-node {
+    grid-template-columns: 1fr auto;
+  }
+
   .sot-ai-node dl {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 0;
-  }
-
-  .sot-ai-node dl div {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 10px;
-    padding: 3px 0;
-    border-bottom: 1px solid rgba(49, 75, 107, 0.35);
-  }
-
-  .sot-ai-node dl div:last-child {
-    border-bottom: 0;
-  }
-
-  .sot-ai-node dd {
-    text-align: right;
-  }
-
-  .sot-ai-node-actions button {
-    flex: 1 1 auto;
+    grid-column: 1 / -1;
+    grid-row: 2;
+    flex-wrap: wrap;
+    white-space: normal;
   }
 }
 
