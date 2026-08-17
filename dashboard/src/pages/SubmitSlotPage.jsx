@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Spinner } from '../Loader.jsx'
 import { SubmitSlotFileDrop } from './SubmitSlotFileDrop.jsx'
+import { bookingSourceMeta } from '../utils/bookingSource.js'
 
 const API_BASE = typeof window !== 'undefined' && window.location.port === '3000'
   ? ''
@@ -564,6 +565,17 @@ export function SubmitSlotPage() {
                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M20 6L9 17l-5-5"/></svg>
                                 Booked
                               </span>
+                              {(() => {
+                                const meta = bookingSourceMeta(slot.interview_booking_source)
+                                return (
+                                  <span
+                                    className={`sbs-source-badge sbs-source-badge--${meta.tone}`}
+                                    title={meta.title}
+                                  >
+                                    {meta.label}
+                                  </span>
+                                )
+                              })()}
                             </div>
                           </div>
                         ))}
