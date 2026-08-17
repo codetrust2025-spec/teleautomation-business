@@ -60,6 +60,20 @@ def _load_records() -> list[tuple[str, dict]]:
     return []
 
 
+def store_available() -> bool:
+    """Is the salary store actually readable?
+
+    `_load_records()` returns an empty list for both "nobody is on a salary"
+    and "the configuration file is missing". Those mean opposite things to a
+    payable balance, so accounting callers must distinguish them here.
+    """
+    try:
+        with open(_FILE, encoding="utf-8") as handle:
+            return isinstance(json.load(handle), dict)
+    except (OSError, json.JSONDecodeError):
+        return False
+
+
 def salary_owed_by_handler(month: str | None = None) -> dict[str, dict]:
     """Return fixed salary owed per handler for one month or all active months.
 

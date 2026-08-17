@@ -151,6 +151,29 @@ export default function EarningsBreakdown({
     return opt ? opt.label.replace(" · this month", "") : month;
   }, [month, monthOptions]);
 
+  // A balance computed while one of its sources was unreadable still adds up,
+  // so nothing on screen would otherwise look wrong. Say it plainly instead.
+  const unreconciledSources = useMemo(() => {
+    const found = new Set();
+    for (const p of performers) {
+      for (const s of p.unreconciled_sources || []) found.add(s);
+    }
+    return [...found];
+  }, [performers]);
+  const SOURCE_LABELS = {
+    handler_expenses: "handler payouts",
+    handler_salaries: "handler salaries",
+    payment_verification_ledger: "payment ledger",
+  };
+  const unreconciledNotice = unreconciledSources.length ? (
+    <p className="earn-unreconciled" role="alert">
+      <strong>Balances are unreconciled.</strong>{" "}
+      These figures were calculated without{" "}
+      {unreconciledSources.map(s => SOURCE_LABELS[s] || s).join(", ")}, so amounts
+      shown as payable are incomplete and must not be paid against.
+    </p>
+  ) : null;
+
   if (!performers.length) {
     return (
       <section className="earn-section">
@@ -169,6 +192,7 @@ export default function EarningsBreakdown({
             </button>
           )}
         </header>
+        {unreconciledNotice}
         <p className="earn-empty">No handler data for this period.</p>
       </section>
     );
@@ -214,6 +238,8 @@ export default function EarningsBreakdown({
           )}
         </div>
       </header>
+
+      {unreconciledNotice}
 
       {/* Table */}
       <div className="earn-table-wrap">

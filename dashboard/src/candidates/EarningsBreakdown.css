@@ -77,6 +77,19 @@
   padding: 24px;
 }
 
+/* Shown when a store the balances depend on could not be read. The figures
+   below it still add up, which is exactly why this has to be conspicuous. */
+.earn-unreconciled {
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  border-radius: 8px;
+  border: 1px solid var(--danger-border, #f0b4b4);
+  background: var(--danger-bg, #fdf3f3);
+  color: var(--danger-text, #8c2f2f);
+}
+
 /* Table */
 .earn-table-wrap {
   overflow-x: auto;

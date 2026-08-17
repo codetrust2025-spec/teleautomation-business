@@ -97,6 +97,24 @@ def _load() -> dict:
             return _empty()
 
 
+def store_available() -> bool:
+    """Is the payout store actually readable?
+
+    `_load()` returns an empty store for both "no payouts recorded" and "the
+    file is gone", which is safe for listing but dangerous for accounting: a
+    balance computed without payouts looks confident and is wrong. Callers that
+    subtract payouts must consult this first and refuse to publish a figure
+    when it is False.
+    """
+    if not os.path.exists(_FILE):
+        return False
+    try:
+        with open(_FILE, encoding="utf-8") as handle:
+            return isinstance(json.load(handle), dict)
+    except (OSError, json.JSONDecodeError):
+        return False
+
+
 def _save(data: dict) -> None:
     os.makedirs(os.path.dirname(_FILE), exist_ok=True)
     data["updated_at"] = _now_iso()
