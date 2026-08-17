@@ -14,6 +14,14 @@ import {
 } from "./RecruitmentMailPanel.jsx";
 import { ConfirmProvider } from "../context/ConfirmContext.jsx";
 
+// This page now carries the project-wide OCR switch, which reads the signed-in
+// role to decide whether the control is writable. These tests render the panel
+// outside AuthProvider, so the role is supplied directly rather than wrapping
+// every case in a provider that would also start its own auth requests.
+vi.mock("../context/AuthContext.jsx", () => ({
+  useAuth: () => ({ username: "tester", role: "admin" }),
+}));
+
 const payloadFor = (url) => {
   if (url.includes("/ollama/status"))
     return {

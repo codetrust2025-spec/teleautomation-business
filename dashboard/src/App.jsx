@@ -2,14 +2,9 @@ import React, { useEffect, useRef, useState } from 'react'
 import { CandidatesPanel } from './components/CandidatesPanel.jsx'
 import { DailyOpsPanel } from './dailyOps/DailyOpsPanel.jsx'
 import { DataRoomPanel } from './components/DataRoomPanel.jsx'
-import { DailyBriefingCard } from './components/DailyBriefingCard.jsx'
 import { RecruitmentMailPanel } from './components/RecruitmentMailPanel.jsx'
 import { MailMonitoringNotifications } from './components/MailMonitoringNotifications.jsx'
-import { HandlerKitPanel } from './components/HandlerKitPanel.jsx'
-import OutcomeAuditPanel from './components/OutcomeAuditPanel.jsx'
-import PaymentReconciliationPanel from './components/PaymentReconciliationPanel.jsx'
-import BgvRegisterPanel from './components/BgvRegisterPanel.jsx'
-import { OcrPolicyPanel } from './components/OcrPolicyPanel.jsx'
+import { ChangePasswordModal } from './components/ChangePasswordModal.jsx'
 import GlobalNotificationSounds from './notifications/GlobalNotificationSounds.jsx'
 import {
   PendingWorksProvider,
@@ -17,19 +12,17 @@ import {
 } from './dailyOps/PendingWorksProvider.jsx'
 import { useAuth } from './context/AuthContext.jsx'
 
+// The six features Operations ships. Daily Briefing, Mail Audit, Payment
+// Reconciliation, BGV Register, Handler Kit and Settings were decommissioned;
+// their panels and backend routes are gone, not hidden, so there is no view id
+// left for them to be reached through.
 const VIEWS = [
-  { id: 'daily-briefing', label: 'Daily briefing', icon: '☀' },
-  { id: 'ai-recruitment', label: 'AI Mail Review', icon: 'AI' },
-  { id: 'outcome-audit', label: 'Mail Audit', icon: '🔍' },
-  { id: 'mail-notifications', label: 'Mail alerts', icon: '🔔' },
+  { id: 'daily-ops', label: 'Daily Ops', icon: '▤', badge: 'interviews' },
   { id: 'candidates', label: 'Candidates', icon: '▣', badge: 'works' },
-  { id: 'daily-ops', label: 'Daily ops', icon: '▤', badge: 'interviews' },
-  { id: 'payment-reconciliation', label: 'Payment reconciliation', icon: '₹' },
-  { id: 'bgv-register', label: 'BGV register', icon: '✓' },
-  { id: 'data-room', label: 'Data room', icon: '▥' },
-  { id: 'handler-kit', label: 'Handler kit', icon: '◆' },
-  { id: 'settings', label: 'Settings', icon: '⚙' },
-  { id: 'slot-booking', label: 'Slot booking', icon: '▦', external: '/submit-slot' },
+  { id: 'slot-booking', label: 'Slot Booking', icon: '▦', external: '/submit-slot' },
+  { id: 'mail-notifications', label: 'Mail Alerts', icon: '🔔' },
+  { id: 'data-room', label: 'Data Room', icon: '▥' },
+  { id: 'ai-recruitment', label: 'AI Mail Review', icon: 'AI' },
 ]
 
 function countLabel(value) {
@@ -42,6 +35,10 @@ function OperationsShell({ view, onNavigate }) {
   const [sidebarUserMenuOpen, setSidebarUserMenuOpen] = useState(false)
   const [headerUserMenuOpen, setHeaderUserMenuOpen] = useState(false)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
+  // Changing your own password used to be reachable only through Handler Kit.
+  // That page is decommissioned, so the control moved to the account menu it
+  // always belonged in rather than disappearing with it.
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false)
   const sidebarUserMenuRef = useRef(null)
   const headerUserMenuRef = useRef(null)
   const activeView = VIEWS.find(item => item.id === view) || VIEWS[0]
@@ -141,14 +138,24 @@ function OperationsShell({ view, onNavigate }) {
             {sidebarUserMenuOpen && (
               <div className="desk-user-menu desk-user-menu--sidebar" role="menu">
                 {auth.enabled ? (
-                  <button
-                    type="button"
-                    className="desk-user-menu__item desk-user-menu__item--danger"
-                    role="menuitem"
-                    onClick={auth.logout}
-                  >
-                    Sign out
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      className="desk-user-menu__item"
+                      role="menuitem"
+                      onClick={() => { setSidebarUserMenuOpen(false); setChangePasswordOpen(true) }}
+                    >
+                      Change password
+                    </button>
+                    <button
+                      type="button"
+                      className="desk-user-menu__item desk-user-menu__item--danger"
+                      role="menuitem"
+                      onClick={auth.logout}
+                    >
+                      Sign out
+                    </button>
+                  </>
                 ) : (
                   <p className="desk-user-menu__hint">Login is not required on this server.</p>
                 )}
@@ -199,14 +206,24 @@ function OperationsShell({ view, onNavigate }) {
               <div className="desk-user-menu business-header__user-menu" role="menu">
                 <p className="desk-user-menu__hint">Signed in as {displayName}</p>
                 {auth.enabled ? (
-                  <button
-                    type="button"
-                    className="desk-user-menu__item desk-user-menu__item--danger"
-                    role="menuitem"
-                    onClick={auth.logout}
-                  >
-                    Sign out
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      className="desk-user-menu__item"
+                      role="menuitem"
+                      onClick={() => { setHeaderUserMenuOpen(false); setChangePasswordOpen(true) }}
+                    >
+                      Change password
+                    </button>
+                    <button
+                      type="button"
+                      className="desk-user-menu__item desk-user-menu__item--danger"
+                      role="menuitem"
+                      onClick={auth.logout}
+                    >
+                      Sign out
+                    </button>
+                  </>
                 ) : (
                   <p className="desk-user-menu__hint">Login is not required on this server.</p>
                 )}
@@ -219,16 +236,15 @@ function OperationsShell({ view, onNavigate }) {
           {view === 'candidates' && <CandidatesPanel />}
           {view === 'daily-ops' && <DailyOpsPanel onNavCandidates={() => navigate('candidates')} />}
           {view === 'ai-recruitment' && <RecruitmentMailPanel />}
-          {view === 'outcome-audit' && <OutcomeAuditPanel />}
           {view === 'mail-notifications' && <MailMonitoringNotifications />}
-          {view === 'daily-briefing' && <div className="daily-briefing-page"><DailyBriefingCard /></div>}
-          {view === 'payment-reconciliation' && <PaymentReconciliationPanel />}
-          {view === 'bgv-register' && <BgvRegisterPanel />}
           {view === 'data-room' && <DataRoomPanel />}
-          {view === 'handler-kit' && <HandlerKitPanel username={auth.username} reference={auth.reference} />}
-          {view === 'settings' && <OcrPolicyPanel />}
         </main>
       </div>
+
+      <ChangePasswordModal
+        open={changePasswordOpen}
+        onClose={() => setChangePasswordOpen(false)}
+      />
     </div>
   )
 }

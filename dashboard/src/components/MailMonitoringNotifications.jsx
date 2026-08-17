@@ -4,7 +4,6 @@ import { subscribeMailEvents, subscribeMailStatus } from "../notifications/mailE
 import { useDialogA11y } from "../hooks/useDialogA11y.js";
 import { formatIstDateTime, formatScheduleDateTime, formatScheduleIstDateTime } from "../utils/istTime.js";
 import { useConfirm } from "../context/ConfirmContext.jsx";
-import { MailMonitoringTabs } from "./MailMonitoringTabs.jsx";
 import { InlineLoader, OverlayLoader } from "../Loader.jsx";
 
 // Important candidate employment outcomes and actionable interview activity.
@@ -299,7 +298,6 @@ export function MailMonitoringNotifications() {
   };
   return <section className="mail-monitoring-page">
     <header className="mail-monitoring-page__head"><div><p className="mail-eyebrow">AI MAIL MONITORING</p><h1>Mail Monitoring Notifications</h1><p>Persistent candidate job-status alerts with live delivery and administrator review.</p></div><div className="mail-monitoring-page__actions"><button type="button" className="mail-clear-all" disabled={!(summary.visible_total ?? total) || clearing} onClick={clearAll}>{clearing ? "Clearing…" : "Clear all notifications"}</button><span className="mail-live mail-live--live">Live</span></div></header>
-    <MailMonitoringTabs active="mail-notifications" />
     <div className="mail-summary mail-summary--compact">
       <button onClick={() => { setPage(0);setFilters({ search:"", classification:"", priority:"", read:"" }); }}><strong>{summary.visible_total || 0}</strong><span>All</span></button>
       <button onClick={() => { setPage(0);setFilters((value) => ({ ...value, priority:"review_required", read:"" })); }}><strong>{summary.needs_review || 0}</strong><span>Needs review</span></button>

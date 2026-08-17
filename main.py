@@ -175,9 +175,6 @@ async def startup() -> None:
     recruitment_mail_worker.start()
     start_interview_reminder_loop()
     start_outbox_dispatcher()
-    from core.daily_briefing import scheduler_loop
-
-    asyncio.create_task(scheduler_loop(), name="operations-daily-briefing")
 
 
 @app.on_event("shutdown")
