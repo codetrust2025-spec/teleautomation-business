@@ -1,0 +1,177 @@
+/**
+ * Confirmed slots must say HOW each slot was booked.
+ *
+ * The split carried this page across without the booking-source badge or its
+ * stylesheet, so every confirmed slot rendered as a bare "Booked" and the
+ * operator lost the AI-vs-candidate distinction. Nothing failed: the backend
+ * kept returning `interview_booking_source`, the resolver kept its unit tests,
+ * and only the rendering was gone — which no existing test looked at, in either
+ * repository.
+ *
+ * These render the real page against a stubbed `/public/slots/booked` payload
+ * so the badge is asserted where the operator actually sees it, not where the
+ * helper is defined.
+ */
+import React from 'react'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { SubmitSlotPage } from './SubmitSlotPage.jsx'
+
+const SLOTS = [
+  {
+    name: 'Gopichand', technology: 'Java', interview_round: 'L1',
+    date: '2026-08-15', time: '12:00', time_end: '12:30',
+    interview_booking_source: 'ai_auto_booked',
+  },
+  {
+    name: 'Manu', technology: 'Python', interview_round: 'L1',
+    date: '2026-08-17', time: '12:00', time_end: '12:30',
+    interview_booking_source: 'candidate_booked',
+  },
+  {
+    // A legacy row written before the field existed. The historical behaviour
+    // is a muted grey badge reading "Booked", never a guessed source.
+    name: 'Ashok uppuluri', technology: 'DevOps', interview_round: 'Screening',
+    date: '2026-08-18', time: '14:00', time_end: '14:30',
+    interview_booking_source: '',
+  },
+  {
+    name: 'Poojitha', technology: 'Java', interview_round: 'L2',
+    date: '2026-08-15', time: '14:00', time_end: '14:30',
+    interview_booking_source: 'ai_auto_booked',
+  },
+]
+
+function stubFetch(slots = SLOTS) {
+  return vi.fn((url) => {
+    const u = String(url)
+    const body = u.includes('/public/slots/booked')
+      ? { status: 'ok', slots }
+      : { status: 'ok', candidates: [] }
+    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) })
+  })
+}
+
+async function openConfirmed(slots) {
+  vi.stubGlobal('fetch', stubFetch(slots))
+  render(<SubmitSlotPage />)
+  const tab = await screen.findByRole('tab', { name: /confirmed slots/i })
+  fireEvent.click(tab)
+  return tab
+}
+
+/** The card element containing a candidate's name. */
+function cardFor(name) {
+  return screen.getByText(name).closest('.sbs-confirmed-card')
+}
+
+afterEach(() => {
+  cleanup()
+  vi.unstubAllGlobals()
+  vi.restoreAllMocks()
+})
+
+describe('confirmed slot booking source', () => {
+  it('labels an AI auto-booked slot, alongside its stage and Booked status', async () => {
+    await openConfirmed()
+    await waitFor(() => expect(cardFor('Gopichand')).toBeTruthy())
+    const card = within(cardFor('Gopichand'))
+    expect(card.getByText('L1')).toBeTruthy()
+    expect(card.getByText('Booked')).toBeTruthy()
+    expect(card.getByText('AI Auto-booked')).toBeTruthy()
+  })
+
+  it('labels a candidate-booked slot, alongside its stage and Booked status', async () => {
+    await openConfirmed()
+    await waitFor(() => expect(cardFor('Manu')).toBeTruthy())
+    const card = within(cardFor('Manu'))
+    expect(card.getByText('L1')).toBeTruthy()
+    expect(card.getByText('Booked')).toBeTruthy()
+    expect(card.getByText('Candidate booked')).toBeTruthy()
+  })
+
+  it('falls back to the historical muted Booked badge when no source was recorded', async () => {
+    await openConfirmed()
+    await waitFor(() => expect(cardFor('Ashok uppuluri')).toBeTruthy())
+    const card = cardFor('Ashok uppuluri')
+    const badge = card.querySelector('.sbs-source-badge')
+    expect(badge).toBeTruthy()
+    expect(badge.textContent).toBe('Booked')
+    expect(badge.className).toContain('sbs-source-badge--unknown')
+    // Never guessed into one of the two real sources.
+    expect(card.textContent).not.toContain('AI Auto-booked')
+    expect(card.textContent).not.toContain('Candidate booked')
+  })
+
+  it('tones the two real sources apart from each other and from unknown', async () => {
+    await openConfirmed()
+    await waitFor(() => expect(cardFor('Gopichand')).toBeTruthy())
+    expect(cardFor('Gopichand').querySelector('.sbs-source-badge').className)
+      .toContain('sbs-source-badge--auto')
+    expect(cardFor('Manu').querySelector('.sbs-source-badge').className)
+      .toContain('sbs-source-badge--candidate')
+  })
+
+  it('keeps the stage badge a separate element from the source badge', async () => {
+    await openConfirmed()
+    await waitFor(() => expect(cardFor('Gopichand')).toBeTruthy())
+    const card = cardFor('Gopichand')
+    const round = card.querySelector('.sbs-slot-card__round')
+    const source = card.querySelector('.sbs-source-badge')
+    expect(round).toBeTruthy()
+    expect(source).toBeTruthy()
+    expect(round).not.toBe(source)
+    expect(round.textContent).toBe('L1')
+    expect(source.textContent).toBe('AI Auto-booked')
+  })
+})
+
+describe('the rest of the confirmed slots view is unchanged', () => {
+  it('keeps stage badges for every round', async () => {
+    await openConfirmed()
+    await waitFor(() => expect(cardFor('Gopichand')).toBeTruthy())
+    expect(within(cardFor('Poojitha')).getByText('L2')).toBeTruthy()
+    expect(within(cardFor('Ashok uppuluri')).getByText('Screening')).toBeTruthy()
+  })
+
+  it('keeps date grouping and per-day slot counts', async () => {
+    await openConfirmed()
+    await waitFor(() => expect(cardFor('Gopichand')).toBeTruthy())
+    const groups = document.querySelectorAll('.sbs-date-group')
+    // 15th (2 slots), 17th (1), 18th (1)
+    expect(groups.length).toBe(3)
+    const counts = [...document.querySelectorAll('.sbs-date-group__count')].map((n) => n.textContent)
+    expect(counts).toContain('2 slots')
+    expect(counts).toContain('1 slot')
+  })
+
+  it('keeps candidate name and time on the card', async () => {
+    await openConfirmed()
+    await waitFor(() => expect(cardFor('Gopichand')).toBeTruthy())
+    const card = cardFor('Gopichand')
+    expect(card.querySelector('.sbs-slot-card__name').textContent).toBe('Gopichand')
+    expect(card.querySelector('.sbs-slot-card__time').textContent).toMatch(/12:00\s*pm.*12:30\s*pm/i)
+  })
+
+  it('renders every returned slot, one card each', async () => {
+    await openConfirmed()
+    await waitFor(() => expect(cardFor('Gopichand')).toBeTruthy())
+    expect(document.querySelectorAll('.sbs-confirmed-card').length).toBe(SLOTS.length)
+  })
+})
+
+describe('the badge ships with its stylesheet', () => {
+  // The split lost the markup and the CSS together, so asserting the class is
+  // rendered proves only half of it.
+  it('index.css defines all three source tones', async () => {
+    const { readFileSync } = await import('node:fs')
+    const { join, dirname } = await import('node:path')
+    const { fileURLToPath } = await import('node:url')
+    const css = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), '..', 'index.css'), 'utf8')
+    expect(css).toMatch(/\.sbs-source-badge\s*\{/)
+    for (const tone of ['auto', 'candidate', 'unknown']) {
+      expect(css).toMatch(new RegExp(`\\.sbs-source-badge--${tone}\\s*\\{`))
+    }
+  })
+})

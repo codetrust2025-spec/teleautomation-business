@@ -16301,6 +16301,35 @@ html:has(.app-shell--view-candidates)::-webkit-scrollbar-thumb:active {
   display: flex; align-items: center; gap: 0.25rem;
   font-size: 0.65rem; font-weight: 600; color: #6ee7b7;
 }
+/* How the slot was booked — compact, and toned apart from the green
+   "Booked" status so the two read as different facts at a glance. */
+.sbs-source-badge {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-end;
+  white-space: nowrap;
+  border-radius: 999px;
+  padding: 0.1rem 0.4rem;
+  font-size: 0.58rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  border: 1px solid transparent;
+}
+.sbs-source-badge--candidate {
+  color: #93c5fd;
+  background: rgba(59, 130, 246, 0.14);
+  border-color: rgba(59, 130, 246, 0.32);
+}
+.sbs-source-badge--auto {
+  color: #d8b4fe;
+  background: rgba(168, 85, 247, 0.14);
+  border-color: rgba(168, 85, 247, 0.32);
+}
+.sbs-source-badge--unknown {
+  color: #9aa4b2;
+  background: rgba(148, 163, 184, 0.12);
+  border-color: rgba(148, 163, 184, 0.28);
+}
 /* Date groups */
 .sbs-date-group { display: flex; flex-direction: column; gap: 0.4rem; }
 .sbs-date-group__header {
