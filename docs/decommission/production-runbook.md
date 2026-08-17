@@ -16,7 +16,10 @@ Host `187.127.169.159`, all commands as `root` unless noted.
 | Env file | `/opt/teleautomation/.env.production` (0600 root — never printed, never edited) |
 | Operations API container | `teleautomation-production-operations-api-1` → `127.0.0.1:8210` |
 | Operations DB container | `teleautomation-production-operations-db-1` |
-| Current images | api `962eaf675398`, migrate `e9c464cd5040` (built 2026-08-16 19:07) |
+| Current images | api `962eaf675398`, migrate `e9c464cd5040` (built 2026-08-16 19:07), both tagged **only** `:latest` |
+| api digest | `sha256:962eaf6753988c42339c3756f70cdda529ef88986ba61d88908b894aabb7f74d` |
+| migrate digest | `sha256:e9c464cd5040e35a0bc6e6cdfff71768a5102de013bfe7884dbedb0913373e75` |
+| Rollback tags | `…-operations-{api,migrate}:rollback-0207819529e0b6ba88a5e61d435a60108d3557bc` — created in step 4b, **before any build** |
 | nginx | one site `teleautomation-production`; operations → `8210`, marketing → `8110` |
 | Disk | 153G/193G used, **41G free (80%)** |
 | Schema | 40 tables, 32 foreign keys, 27 migrations applied (last 2026-08-16 19:29) |
@@ -31,11 +34,17 @@ built. A plain `docker compose build` fails immediately. Step 6 stages the
 source at the path compose expects.
 
 **2. There is no image registry.**
-Images are built on the host. Rollback therefore depends on the current image
-IDs still existing, which is why step 4 records them and step R1 uses them
-directly. The old source also survives at
-`/opt/teleautomation/teleautomation-business` (`RELEASE_SHA` = `0207819…`), so a
-rebuild-based rollback remains possible if the images are ever pruned.
+Images are built on the host, so the only copy of the current release is the
+image sitting on this machine. It is tagged `:latest` and nothing else, which
+means the build in step 7 moves that tag to the new image and leaves the running
+release **untagged** — one `docker image prune` from being deleted.
+
+Step 4b therefore pins both images under explicit
+`rollback-<release-sha>` tags **before any build**, step 7 refuses to build
+until that pin exists, step 4c forbids pruning for the duration, and R1 rolls
+back by tag rather than by raw id. The old source also survives at
+`/opt/teleautomation/teleautomation-business` (`RELEASE_SHA` = `0207819…`) as a
+rebuild fallback, but that is R1b — the slow path, not the plan.
 
 ## 1. The commit being deployed
 
@@ -60,6 +69,10 @@ Everything below calls that value `$NEW_SHA`. Do not substitute a branch tip.
 
 ## 2–5. Pre-deployment (run in order, all on the host)
 
+Order matters: the rollback images are pinned in **4b, before anything is
+built**, because after the build the pre-deploy image is no longer reachable by
+name.
+
 ### 2. Confirm what is live right now
 
 ```bash
@@ -79,7 +92,7 @@ docker exec teleautomation-production-operations-db-1 sh -c \
   > /opt/teleautomation-backups/pre-decommission-$TS/operations.dump
 ```
 
-### 4. Verify the backup, and record the rollback target
+### 4. Verify the backup
 
 ```bash
 ls -lh /opt/teleautomation-backups/pre-decommission-$TS/operations.dump
@@ -89,17 +102,73 @@ docker run --rm -v /opt/teleautomation-backups/pre-decommission-$TS:/b postgres:
 ```
 
 A non-zero object count and a readable table-of-contents is the check; a dump
-that cannot be listed is not a backup. Then record the rollback target:
+that cannot be listed is not a backup.
+
+### 4b. Pin the rollback images — MANDATORY, BEFORE ANY BUILD
+
+Both current images are tagged **only** `:latest`, and the host currently has
+**zero** dangling images. `docker compose build` will move `:latest` onto the
+newly built image, which leaves the old one untagged — at which point a single
+`docker image prune` deletes the exact image rollback depends on. Naming it
+explicitly is what prevents that, because a tagged image is never dangling.
+
+This step is a hard precondition for step 7. Do not build until it passes.
 
 ```bash
-docker images --no-trunc --format '{{.Repository}} {{.ID}}' \
+OLD_SHA=0207819529e0b6ba88a5e61d435a60108d3557bc
+
+docker tag teleautomation-production-operations-api:latest \
+           teleautomation-production-operations-api:rollback-$OLD_SHA
+docker tag teleautomation-production-operations-migrate:latest \
+           teleautomation-production-operations-migrate:rollback-$OLD_SHA
+```
+
+Verify each tag resolves to the recorded image, comparing full digests rather
+than short ids:
+
+```bash
+test "$(docker image inspect -f '{{.Id}}' \
+        teleautomation-production-operations-api:rollback-$OLD_SHA)" \
+   = "sha256:962eaf6753988c42339c3756f70cdda529ef88986ba61d88908b894aabb7f74d" \
+  && echo "api rollback tag OK" || echo "API ROLLBACK TAG WRONG - STOP"
+
+test "$(docker image inspect -f '{{.Id}}' \
+        teleautomation-production-operations-migrate:rollback-$OLD_SHA)" \
+   = "sha256:e9c464cd5040e35a0bc6e6cdfff71768a5102de013bfe7884dbedb0913373e75" \
+  && echo "migrate rollback tag OK" || echo "MIGRATE ROLLBACK TAG WRONG - STOP"
+```
+
+Expected short ids: api `962eaf675398`, migrate `e9c464cd5040`. Confirm the tags
+are also what the live container is running:
+
+```bash
+test "$(docker inspect -f '{{.Image}}' teleautomation-production-operations-api-1)" \
+   = "$(docker image inspect -f '{{.Id}}' \
+        teleautomation-production-operations-api:rollback-$OLD_SHA)" \
+  && echo "rollback tag matches the running container" || echo "MISMATCH - STOP"
+```
+
+Then record the rollback target alongside the backup:
+
+```bash
+docker images --no-trunc --format '{{.Repository}}:{{.Tag}} {{.ID}}' \
   | grep teleautomation-production-operations \
   | tee /opt/teleautomation-backups/pre-decommission-$TS/images.txt
 cp /opt/teleautomation/teleautomation-business/RELEASE_SHA \
    /opt/teleautomation-backups/pre-decommission-$TS/previous-release-sha.txt
 ```
 
-Expected: api `962eaf675398`, migrate `e9c464cd5040`, previous SHA `0207819…`.
+### 4c. No pruning for the duration of this deployment
+
+**Do not run `docker image prune`, `docker system prune`, `docker builder prune`
+or `docker compose down --rmi` at any point during this deployment or its
+rollback window.** The rollback tags survive an untagged-only prune, but a
+`prune -a` removes any image not used by a running container — which includes
+the rollback images the moment the new release is up.
+
+Disk is at 80% with 41 GB free and the new image is ~456 MB, so there is no need
+to reclaim space. If disk pressure genuinely appears mid-deploy, roll back
+first, then prune.
 
 ### 5. Capture the production baseline
 
@@ -152,6 +221,17 @@ Mail Audit tables are left untouched.
 Marketing is not rebuilt, restarted, or reconfigured. Its build context is also
 missing, which is exactly why the build below names the Operations services
 explicitly instead of building everything.
+
+**Precondition — refuse to build unless the rollback images are pinned.** Run
+this first; if it prints STOP, go back to step 4b.
+
+```bash
+OLD_SHA=0207819529e0b6ba88a5e61d435a60108d3557bc
+docker image inspect teleautomation-production-operations-api:rollback-$OLD_SHA >/dev/null 2>&1 \
+ && docker image inspect teleautomation-production-operations-migrate:rollback-$OLD_SHA >/dev/null 2>&1 \
+ && echo "rollback images pinned - safe to build" \
+ || echo "STOP - rollback images are not pinned, do not build"
+```
 
 ```bash
 cd /opt/teleautomation
@@ -317,28 +397,44 @@ traceback, a stalled mail queue, or any retained count decreasing.
 Rollback is cheap because the schema never changed. **No migration to reverse,
 no database restore required for this release.**
 
-### R1. Restore the previous image (fast path, ~30 seconds)
+### R1. Restore the pinned rollback image (fast path, ~30 seconds)
 
-The previous images are still on the host, so rollback retags rather than
-rebuilds:
+Rollback is driven by the **explicit rollback tags** created in step 4b, never
+by a raw image id. The tags are stable, self-describing, carry the release SHA
+in the name, and — unlike a short id — cannot be silently reassigned by a later
+build or lost to a prune.
 
 ```bash
 cd /opt/teleautomation
-docker tag 962eaf675398 teleautomation-production-operations-api:rollback
+OLD_SHA=0207819529e0b6ba88a5e61d435a60108d3557bc
+
+# Confirm the pin is still intact before relying on it.
+docker image inspect teleautomation-production-operations-api:rollback-$OLD_SHA \
+  --format 'rolling back to {{.Id}}' || { echo "PIN MISSING - use R1b"; exit 1; }
+
+# Point :latest back at the pinned image, then recreate from it. compose reads
+# :latest, so this rolls back without touching the compose file or rebuilding.
+docker tag teleautomation-production-operations-api:rollback-$OLD_SHA \
+           teleautomation-production-operations-api:latest
+docker tag teleautomation-production-operations-migrate:rollback-$OLD_SHA \
+           teleautomation-production-operations-migrate:latest
+
+RELEASE_SHA_OPERATIONS=$OLD_SHA \
 docker compose -f docker-compose.production.yml \
                -f teleautomation-messaging/docker-compose.production.yml \
                --env-file .env.production \
-  stop operations-api
-docker rm -f teleautomation-production-operations-api-1
-docker run -d --name teleautomation-production-operations-api-1 \
-  --network teleautomation-production_default \
-  --env-file /opt/teleautomation/.env.production \
-  -p 127.0.0.1:8210:8000 --restart unless-stopped \
-  962eaf675398
+  up -d --no-deps --force-recreate operations-api
 ```
 
-Preferred alternative, staying inside compose — restore the source and rebuild
-from the previous commit, which is still on disk:
+`up` without `--build` reuses the retagged image, so nothing is compiled and the
+bytes that go back into production are the exact bytes that were serving before
+the deploy.
+
+### R1b. Fallback — rebuild from the previous source
+
+Only if the pinned tags are somehow gone. The previous source is still on disk
+at `/opt/teleautomation/teleautomation-business` carrying
+`RELEASE_SHA=0207819…`:
 
 ```bash
 mv /opt/teleautomation-business /opt/teleautomation-business.failed-$TS
@@ -350,11 +446,19 @@ docker compose -f docker-compose.production.yml \
   up -d --no-deps --force-recreate --build operations-api
 ```
 
+This rebuilds rather than restores, so it is slower and produces a new image
+from the old source. Prefer R1.
+
 ### R2. Verify the rollback
 
 ```bash
 curl -s https://operations.teleautomation.online/version   # must be 0207819…
 curl -s https://operations.teleautomation.online/health
+
+# the container must be running the pinned image, not a lookalike rebuild
+test "$(docker inspect -f '{{.Image}}' teleautomation-production-operations-api-1)" \
+   = "sha256:962eaf6753988c42339c3756f70cdda529ef88986ba61d88908b894aabb7f74d" \
+  && echo "running the exact pre-deploy image" || echo "NOT the pinned image"
 ```
 
 Then: log in, confirm the **twelve-item** sidebar has returned, confirm mail
