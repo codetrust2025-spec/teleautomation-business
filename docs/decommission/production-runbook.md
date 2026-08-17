@@ -39,12 +39,13 @@ rebuild-based rollback remains possible if the images are ever pruned.
 
 ## 1. The commit being deployed
 
-Branch `chore/decommission-six-features` carries two commits on top of the live
-release:
+Branch `chore/decommission-six-features` carries three commits on top of the
+live release. Only the first changes shipped code; the other two are docs.
 
 ```
-450efc2  decommission six features, and move OCR into AI Mail Review
-ec218c1  add the deployment and rollback plan for the decommission
+450efc2  decommission six features, and move OCR into AI Mail Review   <- code
+ec218c1  add the deployment and rollback plan for the decommission     <- docs
+09f0ff7  add the production runbook, verified against the live host    <- docs
 ```
 
 `PROJECT_RULES.md` and `CLAUDE.md` both forbid deploying from an unmerged
