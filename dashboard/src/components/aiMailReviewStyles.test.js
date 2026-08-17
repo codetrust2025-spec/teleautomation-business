@@ -53,7 +53,8 @@ describe('AI nodes pool is styled', () => {
   })
 
   for (const cls of ['sot-ai-nodes', 'sot-ai-node-grid', 'sot-ai-node', 'sot-ai-node-title',
-                     'sot-ai-node-actions', 'sot-ai-node-error']) {
+                     'sot-ai-node-actions', 'sot-ai-node-error', 'sot-ai-node-head',
+                     'sot-ai-node-state', 'sot-ai-node-empty', 'sot-ai-node-endpoint']) {
     it(`.${cls} has a rule`, () => {
       expect(hasRule(cls)).toBe(true)
     })
@@ -75,6 +76,93 @@ describe('AI nodes pool is styled', () => {
 
   it('styles the header that carries the Refresh button', () => {
     expect(/\.sot-ai-nodes > header/.test(css)).toBe(true)
+  })
+})
+
+/**
+ * The card previously hid every `dt` and joined the values into a single
+ * nowrap line with bullet separators, so a node that had reported nothing
+ * rendered as "— • — • —". These assert the readable layout that replaced it,
+ * since nothing else would notice it regressing back.
+ */
+describe('AI node card is a readable label/value grid', () => {
+  const cardCss = css.slice(css.indexOf('.sot-ai-node {'), css.indexOf('.sot-alert {'))
+
+  it('lays the card out as a vertical stack, not a horizontal strip', () => {
+    const card = /\.sot-ai-node \{([^}]*)\}/.exec(cardCss)[1]
+    expect(card).toMatch(/flex-direction:\s*column/)
+    expect(card).not.toMatch(/grid-template-columns/)
+  })
+
+  it('gives each reading its own labelled row', () => {
+    const dl = /\.sot-ai-node dl \{([^}]*)\}/.exec(cardCss)[1]
+    expect(dl).toMatch(/display:\s*grid/)
+    expect(dl).not.toMatch(/white-space:\s*nowrap/)
+  })
+
+  it('shows the labels rather than hiding them from sighted users', () => {
+    const dt = /\.sot-ai-node dt \{([^}]*)\}/.exec(cardCss)[1]
+    expect(dt).not.toMatch(/clip:/)
+    expect(dt).not.toMatch(/position:\s*absolute/)
+  })
+
+  it('draws no bullet separators between readings', () => {
+    expect(cardCss).not.toMatch(/div \+ div::before/)
+  })
+
+  it('mutes missing values instead of repeating loud dashes', () => {
+    expect(/\.sot-ai-node-empty \{[^}]*color:/.test(cardCss)).toBe(true)
+  })
+
+  it('lets a long endpoint wrap instead of overflowing the card', () => {
+    const dd = /\.sot-ai-node dd \{([^}]*)\}/.exec(cardCss)[1]
+    expect(dd).toMatch(/overflow-wrap:\s*anywhere/)
+  })
+
+  it('keeps the actions together at the bottom', () => {
+    const actions = /\.sot-ai-node-actions \{([^}]*)\}/.exec(cardCss)[1]
+    expect(actions).toMatch(/margin-top:\s*auto/)
+    expect(actions).toMatch(/flex-wrap:\s*wrap/)
+  })
+
+  it('collapses to one column and stretches buttons on small screens', () => {
+    const mq = /@media \(max-width: 760px\) \{([\s\S]*?)\n\}/.exec(cardCss)[1]
+    expect(mq).toMatch(/\.sot-ai-node-grid \{\s*grid-template-columns:\s*1fr/)
+    expect(mq).toMatch(/\.sot-ai-node-actions button/)
+  })
+})
+
+describe('AI node card markup carries the structure the CSS styles', () => {
+  const card = panel.slice(panel.indexOf('function AiNodeManager'))
+
+  it('puts the name and the state badge in a head row', () => {
+    expect(card).toContain('sot-ai-node-head')
+    expect(card).toContain('sot-ai-node-state')
+  })
+
+  it('marks missing readings so they can be muted', () => {
+    expect(panel).toContain('sot-ai-node-empty')
+    expect(card).toMatch(/nodeValue\(/)
+  })
+
+  it('renders the actions after the error rows, so buttons sit last', () => {
+    expect(card.indexOf('Connection unavailable')).toBeLessThan(
+      card.indexOf('sot-ai-node-actions'),
+    )
+  })
+
+  it('still labels every reading', () => {
+    for (const label of ['Required models', 'Vision model', 'Response',
+                         'Endpoint', 'Acceleration', 'Ollama', 'Last success', 'Last failure']) {
+      expect(card).toContain(`<dt>${label}</dt>`)
+    }
+  })
+
+  // Health used to appear twice: once as the badge and again as the first row
+  // of the grid. The badge is the single place it is reported now.
+  it('reports health once, in the badge and not as a detail row', () => {
+    expect(card).not.toContain('<dt>Health</dt>')
+    expect(card).toMatch(/sot-ai-node-state[\s\S]*?human\(node\.status/)
   })
 })
 
