@@ -1435,16 +1435,6 @@ function EvidenceDrawer({ id, onClose, onChanged }) {
   );
 }
 
-// A node that has never reported a value renders an em dash. Marking those
-// explicitly lets the card mute them, so a mostly-idle node reads as a list of
-// blanks rather than a wall of identical dashes competing with real readings.
-const nodeValue = (value) =>
-  value === null || value === undefined || value === "" || value === "—" ? (
-    <span className="sot-ai-node-empty">—</span>
-  ) : (
-    value
-  );
-
 function AiNodeManager({
   nodes,
   busy,
@@ -1475,19 +1465,16 @@ function AiNodeManager({
               className={`sot-ai-node is-${node.status || "offline"}`}
               key={node.id}
             >
-              <header className="sot-ai-node-head">
-                <div className="sot-ai-node-title">
-                  <i aria-hidden="true" />
-                  <strong>{node.label}</strong>
-                  {node.primary && <span>PRIMARY</span>}
-                </div>
-                <span className="sot-ai-node-state">
-                  {human(node.status || "offline")}
-                </span>
-              </header>
-              {/* Health is not repeated here: the badge in the head row above
-                  is the single place it is reported. */}
+              <div className="sot-ai-node-title">
+                <i aria-hidden="true" />
+                <strong>{node.label}</strong>
+                {node.primary && <span>PRIMARY</span>}
+              </div>
               <dl>
+                <div>
+                  <dt>Health</dt>
+                  <dd>{human(node.status || "offline")}</dd>
+                </div>
                 <div>
                   <dt>Required models</dt>
                   <dd>{node.ready ? "Ready" : "Missing / unavailable"}</dd>
@@ -1499,42 +1486,36 @@ function AiNodeManager({
                 <div>
                   <dt>Response</dt>
                   <dd>
-                    {nodeValue(
-                      node.response_time_ms == null
-                        ? null
-                        : `${node.response_time_ms} ms`,
-                    )}
+                    {node.response_time_ms == null
+                      ? "—"
+                      : `${node.response_time_ms} ms`}
                   </dd>
                 </div>
                 <div>
                   <dt>Endpoint</dt>
-                  <dd className="sot-ai-node-endpoint">
-                    {nodeValue(node.endpoint)}
-                  </dd>
+                  <dd>{node.endpoint || "—"}</dd>
                 </div>
                 <div>
                   <dt>Acceleration</dt>
                   <dd>
-                    {nodeValue(
-                      node.gpu
-                        ? node.gpu.accelerated
-                          ? `GPU ${Math.round((node.gpu.gpu_fraction || 0) * 100)}%`
-                          : "CPU only"
-                        : null,
-                    )}
+                    {node.gpu
+                      ? node.gpu.accelerated
+                        ? `GPU ${Math.round((node.gpu.gpu_fraction || 0) * 100)}%`
+                        : "CPU only"
+                      : "—"}
                   </dd>
                 </div>
                 <div>
                   <dt>Ollama</dt>
-                  <dd>{nodeValue(node.ollama_version)}</dd>
+                  <dd>{node.ollama_version || "—"}</dd>
                 </div>
                 <div>
                   <dt>Last success</dt>
-                  <dd>{nodeValue(whenever(node.breaker?.last_success_at))}</dd>
+                  <dd>{whenever(node.breaker?.last_success_at)}</dd>
                 </div>
                 <div>
                   <dt>Last failure</dt>
-                  <dd>{nodeValue(whenever(node.breaker?.last_failure_at))}</dd>
+                  <dd>{whenever(node.breaker?.last_failure_at)}</dd>
                 </div>
               </dl>
               {node.breaker?.in_cooldown && (
@@ -1543,11 +1524,6 @@ function AiNodeManager({
                   {node.breaker.cooldown_remaining_s
                     ? ` — retrying in ${node.breaker.cooldown_remaining_s}s`
                     : ""}
-                </small>
-              )}
-              {!node.endpoint_reachable && (
-                <small className="sot-ai-node-error">
-                  Connection unavailable
                 </small>
               )}
               <div className="sot-ai-node-actions">
@@ -1575,6 +1551,11 @@ function AiNodeManager({
                   Unload
                 </button>
               </div>
+              {!node.endpoint_reachable && (
+                <small className="sot-ai-node-error">
+                  Connection unavailable
+                </small>
+              )}
             </article>
           ))
         ) : (
