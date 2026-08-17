@@ -1485,11 +1485,9 @@ function AiNodeManager({
                   {human(node.status || "offline")}
                 </span>
               </header>
+              {/* Health is not repeated here: the badge in the head row above
+                  is the single place it is reported. */}
               <dl>
-                <div>
-                  <dt>Health</dt>
-                  <dd>{human(node.status || "offline")}</dd>
-                </div>
                 <div>
                   <dt>Required models</dt>
                   <dd>{node.ready ? "Ready" : "Missing / unavailable"}</dd>

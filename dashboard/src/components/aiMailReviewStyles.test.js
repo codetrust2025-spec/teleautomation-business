@@ -152,10 +152,17 @@ describe('AI node card markup carries the structure the CSS styles', () => {
   })
 
   it('still labels every reading', () => {
-    for (const label of ['Health', 'Required models', 'Vision model', 'Response',
+    for (const label of ['Required models', 'Vision model', 'Response',
                          'Endpoint', 'Acceleration', 'Ollama', 'Last success', 'Last failure']) {
       expect(card).toContain(`<dt>${label}</dt>`)
     }
+  })
+
+  // Health used to appear twice: once as the badge and again as the first row
+  // of the grid. The badge is the single place it is reported now.
+  it('reports health once, in the badge and not as a detail row', () => {
+    expect(card).not.toContain('<dt>Health</dt>')
+    expect(card).toMatch(/sot-ai-node-state[\s\S]*?human\(node\.status/)
   })
 })
 
