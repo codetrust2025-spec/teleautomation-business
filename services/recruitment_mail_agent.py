@@ -1626,8 +1626,7 @@ def analyze(message: dict[str, Any], attachment_texts: list[dict[str, str]] | No
 
 # A refusal by our own schema check is a statement about the model's answer, not
 # about the service being reachable, so it does not belong on the infrastructure
-# retry path. `VALIDATION_FAILED` is the status the outcome audit already reports
-# as a SCHEMA_VALIDATION_FAILED gap; nothing produced it until now.
+# retry path.
 _DETERMINISTIC_AI_FAILURES = frozenset({"OLLAMA_SCHEMA_VALIDATION_FAILED"})
 
 # Sampling can turn a rejected answer into a valid one, so a couple of genuine

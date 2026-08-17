@@ -16701,67 +16701,6 @@ html:has(.app-shell--view-candidates)::-webkit-scrollbar-thumb:active {
   width: 100%;
 }
 
-/* Handler onboarding kit */
-.handler-kit {
-  max-width: 42rem;
-  margin: 0 auto;
-  padding: 1.5rem 1rem 2rem;
-}
-.handler-kit-head {
-  margin-bottom: 1.25rem;
-}
-.handler-kit-title {
-  margin: 0 0 0.35rem;
-  font-size: 1.35rem;
-}
-.handler-kit-lead {
-  margin: 0;
-  color: #94a3b8;
-  font-size: 0.9375rem;
-}
-.handler-kit-block {
-  margin-bottom: 1.5rem;
-  padding: 1rem;
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  border-radius: 10px;
-  background: rgba(15, 23, 42, 0.35);
-}
-.handler-kit-block h3 {
-  margin: 0 0 0.75rem;
-  font-size: 1rem;
-}
-.handler-kit-dl {
-  display: grid;
-  grid-template-columns: 6rem 1fr;
-  gap: 0.35rem 0.75rem;
-  margin: 0 0 0.75rem;
-  font-size: 0.875rem;
-}
-.handler-kit-dl dt {
-  color: #94a3b8;
-}
-.handler-kit-pre {
-  white-space: pre-wrap;
-  font-size: 0.8125rem;
-  max-height: 12rem;
-  overflow: auto;
-  margin: 0.5rem 0;
-  padding: 0.5rem;
-  background: rgba(0, 0, 0, 0.25);
-  border-radius: 6px;
-}
-.handler-kit-list {
-  margin: 0;
-  padding-left: 1.1rem;
-}
-.handler-kit-list li {
-  margin-bottom: 0.75rem;
-}
-.handler-kit--loading {
-  display: flex;
-  justify-content: center;
-  padding: 3rem;
-}
 .submit-slot-name-input{cursor:text}.submit-slot-field-hint{font-size:.72rem;color:var(--text-muted,#a8b4c4);line-height:1.35}
 /* Candidate resume column: show the stored resume count without widening the grid. */
 .cand-cell-resume { white-space: nowrap; }
