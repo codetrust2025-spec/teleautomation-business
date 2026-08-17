@@ -289,8 +289,7 @@
 
 .business-body > .candidates-shell,
 .business-body > .daily-ops-shell,
-.business-body > .data-room-panel,
-.business-body > .handler-kit-panel { max-width: 1600px; margin-inline: auto; }
+.business-body > .data-room-panel { max-width: 1600px; margin-inline: auto; }
 
 .business-nav-backdrop { display: none; }
 

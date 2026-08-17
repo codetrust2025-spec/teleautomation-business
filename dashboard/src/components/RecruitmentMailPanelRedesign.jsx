@@ -2508,7 +2508,7 @@ export default function RecruitmentMailPanelRedesign() {
           const proceed = window.confirm(
             `${node.label} is not passing its model health check.\n\n` +
               "Making it primary can stop payment extraction, interview " +
-              "booking and Mail Audit from working.\n\nSet it as primary anyway?",
+              "booking and AI Mail Review from working.\n\nSet it as primary anyway?",
           );
           if (!proceed) return;
           override = true;

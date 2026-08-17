@@ -12,8 +12,7 @@ payment falls short.
 
 Nothing here reads or writes storage. Callers pass the verified total and the
 two expected figures, and every consumer — candidate row, referral, company
-share, BGV register, reconciliation — derives from this one answer so they
-cannot drift apart.
+share — derives from this one answer so they cannot drift apart.
 """
 from __future__ import annotations
 
