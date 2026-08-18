@@ -379,3 +379,69 @@ def test_a_source_stated_am_pm_time_is_recovered_from_a_24h_model_value():
              'body':'Your interview is scheduled for July 20, 2026 at 02:00 PM IST.'}
     validate_result(row,message)
     assert row['interview']['time']=='02:00 PM'
+
+
+def test_selection_outcome_detection():
+    route = routing_decision(
+        "Selection Confirmation - Python Engineer",
+        "Dear Candidate, Congratulations! We are pleased to inform you that you have been selected for the position of Python Engineer at ABC Corp.",
+        sender_email="hr@abccorp.com",
+    )
+    assert route["send_to_ai"] is True
+    assert route["context"]["status"] in {"SELECTED", "FINAL_SELECTION_CONFIRMED"}
+
+
+def test_offer_received_outcome_detection():
+    route = routing_decision(
+        "Congratulations, You're in! Offer letter inside",
+        "Hi Akhil, We are pleased to offer you employment at our company. Please review your attached offer letter.",
+        sender_email="no-reply@kekamail.com",
+    )
+    assert route["send_to_ai"] is True
+    assert route["context"]["status"] in {"OFFER_LETTER_RECEIVED", "OFFER_RECEIVED"}
+
+
+def test_final_round_cleared_outcome_detection():
+    route = routing_decision(
+        "EY | L2 | React JS | Reddy Charan M S",
+        "Hi Charan, Thank you for continued interest in working with EY India. We are pleased to inform you that you have successfully cleared the L1 round.",
+        sender_email="Dhanyalakshmi.J@in.ey.com",
+    )
+    assert route["send_to_ai"] is True
+    assert route["context"]["status"] == "FINAL_ROUND_CLEARED"
+
+
+def test_hr_confirmation_and_documentation_outcome_detection():
+    route = routing_decision(
+        "CAPGEMINI DOCUMENATION",
+        "Hi Poojitha, Minimal documents required for offer release: Please share 1. Pan card 2. Aadhar card 3. Degree certificate.",
+        sender_email="mayank.b.mayank@capgemini.com",
+    )
+    assert route["send_to_ai"] is True
+    assert route["context"]["status"] in {"HR_CONFIRMATION", "DOCUMENT_VERIFICATION"}
+
+
+def test_joining_and_bgv_outcome_detection():
+    route = routing_decision(
+        "Invitation - Digital Employment BGV_RH30116125",
+        "Dear Gopichand, You have been invited to complete your digital employment background verification process.",
+        sender_email="noreply@digiverifier.com",
+    )
+    assert route["send_to_ai"] is True
+    assert route["context"]["status"] in {"BACKGROUND_VERIFICATION", "JOINING_CONFIRMED"}
+
+
+def test_promotional_course_and_review_noise_is_ignored():
+    route_course = routing_decision(
+        "Still copy-pasting React code you don't fully understand?",
+        "Namaste React Course - Learn React. Build Real Projects. Get Hired as a Frontend Developer.",
+        sender_email="team@namastedev.com",
+    )
+    assert route_course["send_to_ai"] is False
+
+    route_review = routing_decision(
+        "Reviews & Salaries of Tata Consultancy Services, and Other Companies you Applied to",
+        "Read reviews, salaries, and interview questions of companies you applied to.",
+        sender_email="no-reply@ambitionbox.com",
+    )
+    assert route_review["send_to_ai"] is False

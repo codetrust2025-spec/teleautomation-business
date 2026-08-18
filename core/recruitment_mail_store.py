@@ -25,7 +25,7 @@ CANONICAL_CLASSIFICATIONS = {
     "document_verification", "compensation_confirmation", "interview_update",
     "interview_shortlisted", "interview_confirmed", "interview_rescheduled",
     "interview_cancelled", "candidate_rejected", "needs_review",
-    "not_relevant",
+    "not_relevant", "final_round_cleared", "hr_confirmation",
 }
 
 # Mail Monitoring Notifications track only auto interview slot booking and
@@ -39,15 +39,17 @@ TRACKED_NOTIFICATION_CLASSIFICATIONS = {
     "document_verification", "compensation_confirmation",
     "interview_shortlisted", "interview_confirmed", "interview_rescheduled",
     "interview_cancelled", "candidate_rejected",
+    "final_round_cleared", "hr_confirmation",
 }
 IMPORTANT_ALERT_EVIDENCE_MEANINGS = {
     "SELECTED", "FINAL_SELECTION_CONFIRMED", "JOB_SELECTION_CONFIRMED",
+    "FINAL_ROUND_CLEARED", "INTERVIEW_CLEARED",
     "OFFER_INDICATION", "OFFER_IN_PROGRESS", "OFFER_APPROVED",
     "OFFER_LETTER_RECEIVED", "APPOINTMENT_LETTER_RECEIVED",
     "OFFER_RECEIVED", "OFFER_ACCEPTED", "OFFER_DECLINED", "OFFER_REVOKED",
     "JOINING_CONFIRMED", "JOINING_DATE_UPDATED", "POST_SELECTION_ONBOARDING",
     "ONBOARDING_STARTED", "BACKGROUND_VERIFICATION", "DOCUMENT_VERIFICATION",
-    "COMPENSATION_CONFIRMATION", "INTERVIEW_SHORTLISTED",
+    "HR_CONFIRMATION", "COMPENSATION_CONFIRMATION", "INTERVIEW_SHORTLISTED",
     "INTERVIEW_CONFIRMED", "INTERVIEW_RESCHEDULED", "INTERVIEW_CANCELLED",
     "CANDIDATE_REJECTED",
 }
@@ -55,21 +57,24 @@ IMPORTANT_ALERT_EVIDENCE_MEANINGS = {
 _STATUS_CLASSIFICATION = {
     "SELECTED": "job_selection_confirmed",
     "FINAL_SELECTION_CONFIRMED": "job_selection_confirmed",
+    "FINAL_ROUND_CLEARED": "final_round_cleared",
     "OFFER_INDICATION": "offer_received",
     "OFFER_IN_PROGRESS": "offer_received",
     "OFFER_APPROVED": "offer_received",
     "OFFER_LETTER_RECEIVED": "offer_received",
     "APPOINTMENT_LETTER_RECEIVED": "offer_received",
+    "OFFER_RECEIVED": "offer_received",
     "OFFER_ACCEPTED": "offer_accepted",
     "OFFER_DECLINED": "offer_declined",
     "OFFER_REVOKED": "offer_revoked",
     "JOINING_CONFIRMED": "joining_confirmed",
-    "JOINING_DATE_UPDATED": "joining_date_updated",
-    "POST_SELECTION_ONBOARDING": "onboarding_started",
-    "JOINED": "onboarding_started",
-    "BACKGROUND_VERIFICATION": "background_verification",
-    "DOCUMENT_VERIFICATION": "document_verification",
-    "COMPENSATION_CONFIRMATION": "compensation_confirmation",
+    "JOINING_DATE_UPDATED": "joining_confirmed",
+    "POST_SELECTION_ONBOARDING": "joining_confirmed",
+    "JOINED": "joining_confirmed",
+    "BACKGROUND_VERIFICATION": "joining_confirmed",
+    "DOCUMENT_VERIFICATION": "hr_confirmation",
+    "HR_CONFIRMATION": "hr_confirmation",
+    "COMPENSATION_CONFIRMATION": "hr_confirmation",
     "INTERVIEW_UPDATE": "interview_update",
     "INTERVIEW_SHORTLISTED": "interview_shortlisted",
     "INTERVIEW_CONFIRMED": "interview_confirmed",
@@ -89,10 +94,12 @@ _CLASSIFICATION_STATUS = {
     "offer_revoked": "Offer Revoked",
     "joining_confirmed": "Joining Confirmed",
     "joining_date_updated": "Joining Confirmed",
-    "onboarding_started": "Onboarding Started",
-    "background_verification": "Selected",
-    "document_verification": "Selected",
-    "compensation_confirmation": "Offer Received",
+    "onboarding_started": "Joining Confirmed",
+    "background_verification": "Joining Confirmed",
+    "document_verification": "HR Confirmation",
+    "compensation_confirmation": "HR Confirmation",
+    "final_round_cleared": "Final Round Cleared",
+    "hr_confirmation": "HR Confirmation",
     "interview_update": "Interview In Progress",
     "interview_shortlisted": "Interview Shortlisted",
     "interview_confirmed": "Interview Confirmed",
@@ -107,7 +114,8 @@ _STATUS_RANK = {
     "Profile Active": 10, "Interview In Progress": 20,
     "Interview Confirmed": 25, "Interview Rescheduled": 25,
     "Interview Cancelled": 20,
-    "Interview Shortlisted": 30, "Rejected": 35, "Selected": 40,
+    "Interview Shortlisted": 30, "Final Round Cleared": 35, "Rejected": 35, "Selected": 40,
+    "HR Confirmation": 45,
     "Offer Received": 50, "Offer Accepted": 60, "Offer Declined": 65,
     "Offer Revoked": 65, "Joining Confirmed": 70,
     "Onboarding Started": 80, "Joined": 90, "Needs Review": 0,
@@ -1344,9 +1352,9 @@ def canonical_classification(result: dict[str, Any] | None = None, status: str |
 def notification_priority(classification: str, *, confidence: float, requires_review: bool = False) -> str:
     if requires_review or confidence < float(__import__('os').getenv('OLLAMA_CONFIDENCE_THRESHOLD', '0.75')):
         return "review_required"
-    if classification in {"job_selection_confirmed", "offer_received", "joining_confirmed", "offer_accepted", "onboarding_started", "interview_confirmed", "interview_rescheduled", "interview_cancelled"}:
+    if classification in {"job_selection_confirmed", "offer_received", "joining_confirmed", "offer_accepted", "onboarding_started", "interview_confirmed", "interview_rescheduled", "interview_cancelled", "final_round_cleared"}:
         return "high"
-    if classification in {"background_verification", "document_verification", "compensation_confirmation", "joining_date_updated"}:
+    if classification in {"background_verification", "document_verification", "compensation_confirmation", "joining_date_updated", "hr_confirmation"}:
         return "medium"
     return "informational"
 

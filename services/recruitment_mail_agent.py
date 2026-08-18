@@ -188,12 +188,12 @@ def _failure_review_result(message: dict[str, Any], exc: Exception) -> dict[str,
     }
 
 VISIBLE_STATUSES = [
-    "SELECTED", "FINAL_SELECTION_CONFIRMED", "OFFER_INDICATION",
-    "OFFER_IN_PROGRESS", "OFFER_APPROVED", "OFFER_LETTER_RECEIVED",
+    "SELECTED", "FINAL_SELECTION_CONFIRMED", "FINAL_ROUND_CLEARED", "OFFER_INDICATION",
+    "OFFER_IN_PROGRESS", "OFFER_APPROVED", "OFFER_LETTER_RECEIVED", "OFFER_RECEIVED",
     "APPOINTMENT_LETTER_RECEIVED", "OFFER_ACCEPTED", "JOINING_CONFIRMED",
     "JOINED", "POST_SELECTION_ONBOARDING", "OFFER_DECLINED", "OFFER_REVOKED",
     "JOINING_DATE_UPDATED", "BACKGROUND_VERIFICATION", "DOCUMENT_VERIFICATION",
-    "COMPENSATION_CONFIRMATION", "INTERVIEW_UPDATE", "INTERVIEW_SHORTLISTED",
+    "HR_CONFIRMATION", "COMPENSATION_CONFIRMATION", "INTERVIEW_UPDATE", "INTERVIEW_SHORTLISTED",
     "INTERVIEW_PROPOSED", "OFFER_NEEDS_REVIEW", "JOINING_NEEDS_REVIEW", "SELECTION_NEEDS_REVIEW",
     "INTERVIEW_CONFIRMED", "INTERVIEW_RESCHEDULED", "INTERVIEW_CANCELLED",
     "CANDIDATE_REJECTED", "MANUAL_REVIEW_REQUIRED",
@@ -203,32 +203,33 @@ STATUSES = VISIBLE_STATUSES + INTERNAL_STATUSES
 TRACKED_STATUSES = set(VISIBLE_STATUSES)
 OFFER_CASE_STATUSES = {
     "OFFER_INDICATION", "OFFER_IN_PROGRESS", "OFFER_APPROVED",
-    "OFFER_LETTER_RECEIVED", "APPOINTMENT_LETTER_RECEIVED", "OFFER_ACCEPTED",
+    "OFFER_LETTER_RECEIVED", "OFFER_RECEIVED", "APPOINTMENT_LETTER_RECEIVED", "OFFER_ACCEPTED",
     "JOINING_CONFIRMED", "JOINED", "POST_SELECTION_ONBOARDING",
 }
 
 STATUS_PRIORITY = [
     "JOINED", "JOINING_CONFIRMED", "POST_SELECTION_ONBOARDING",
-    "OFFER_ACCEPTED", "APPOINTMENT_LETTER_RECEIVED", "OFFER_LETTER_RECEIVED",
+    "OFFER_ACCEPTED", "APPOINTMENT_LETTER_RECEIVED", "OFFER_LETTER_RECEIVED", "OFFER_RECEIVED",
     "OFFER_APPROVED", "OFFER_IN_PROGRESS", "FINAL_SELECTION_CONFIRMED",
     "OFFER_REVOKED", "OFFER_DECLINED", "JOINING_DATE_UPDATED",
-    "BACKGROUND_VERIFICATION", "DOCUMENT_VERIFICATION",
+    "BACKGROUND_VERIFICATION", "DOCUMENT_VERIFICATION", "HR_CONFIRMATION",
     "COMPENSATION_CONFIRMATION", "CANDIDATE_REJECTED",
     "INTERVIEW_CANCELLED", "INTERVIEW_RESCHEDULED", "INTERVIEW_CONFIRMED",
-    "SELECTED", "OFFER_INDICATION", "INTERVIEW_SHORTLISTED", "INTERVIEW_UPDATE", "SHORTLISTED",
+    "FINAL_ROUND_CLEARED", "SELECTED", "OFFER_INDICATION", "INTERVIEW_SHORTLISTED", "INTERVIEW_UPDATE", "SHORTLISTED",
 ]
 
 STATUS_SIGNALS = [
     ("JOINED", ("welcome aboard", "welcome to the organization", "reported for joining", "joined the company", "employment commenced")),
-    ("JOINING_CONFIRMED", ("your date of joining will be", "your joining date is", "date of joining", "expected joining date", "please join on", "report for joining on", "reporting date", "joining is confirmed", "joining confirmed")),
+    ("JOINING_CONFIRMED", ("your date of joining will be", "your joining date is", "date of joining", "expected joining date", "please join on", "report for joining on", "reporting date", "joining is confirmed", "joining confirmed", "welcome to the team")),
     ("POST_SELECTION_ONBOARDING", ("employee onboarding", "post-selection onboarding", "complete onboarding formalities", "complete pre-joining formalities", "pre-joining formalities", "onboarding has started", "complete onboarding before joining")),
     ("OFFER_ACCEPTED", ("offer acceptance", "accepted your offer", "accept the offer", "offer has been accepted")),
     ("OFFER_DECLINED", ("declined the offer", "offer has been declined", "will not accept the offer")),
     ("OFFER_REVOKED", ("offer has been revoked", "withdrawn the offer", "offer stands withdrawn", "offer is rescinded")),
     ("JOINING_DATE_UPDATED", ("revised joining date", "joining date has changed", "joining date has moved", "updated date of joining", "new joining date")),
-    ("BACKGROUND_VERIFICATION", ("background verification", "pre-employment verification", "background check")),
-    ("DOCUMENT_VERIFICATION", ("document verification", "submit employment documents", "documents for verification")),
+    ("BACKGROUND_VERIFICATION", ("background verification", "pre-employment verification", "background check", "digital employment", "digiverifier", "bgv_", "loa accepetence", "loa acceptance")),
+    ("HR_CONFIRMATION", ("minimal documents", "capgemini documenation", "capgemini documentation", "documents required for offer", "documents required - ey", "documents required for onboarding", "pre-offer documents", "pre-offer document", "uan number and updated cv", "post selection document", "ltimindtree selection process - pre-offer")),
     ("COMPENSATION_CONFIRMATION", ("compensation confirmation", "confirmed compensation", "annual ctc is", "salary package is")),
+    ("FINAL_ROUND_CLEARED", ("cleared the final round", "cleared all rounds", "cleared the technical round", "successfully cleared the l1", "successfully cleared the l2", "cleared the l1 round", "cleared the l2 round", "cleared the l1", "cleared the l2", "cleared l1", "cleared l2", "final round cleared")),
     # Shortlisting is an outcome in its own right, not only a preamble to an
     # interview. These phrases used to require the word "interview" right after
     # "shortlisted for", so a plain selection mail — "your profile is
@@ -255,11 +256,11 @@ STATUS_SIGNALS = [
     ("INTERVIEW_UPDATE", ("interview invitation", "interview scheduled", "interview has been scheduled", "interview confirmed", "interview rescheduled", "interview cancelled", "technical interview", "technical round", "managerial interview", "hr interview", "hr round")),
     ("CANDIDATE_REJECTED", ("regret to inform", "not moving forward", "not selected for the role", "application was unsuccessful")),
     ("APPOINTMENT_LETTER_RECEIVED", ("appointment letter attached", "letter of appointment", "appointment letter")),
-    ("OFFER_LETTER_RECEIVED", ("offer letter attached", "find your offer letter", "offer letter has been released", "employment offer attached", "offer of employment")),
+    ("OFFER_LETTER_RECEIVED", ("offer letter attached", "find your offer letter", "offer letter has been released", "employment offer attached", "offer of employment", "offer letter inside", "congratulations, you're in! offer letter", "deployment with", "fulltime with")),
     ("OFFER_APPROVED", ("offer has been approved", "offer is approved", "offer approved")),
     ("OFFER_IN_PROGRESS", ("offer is currently being processed", "processing your offer", "offer is being prepared", "offer under preparation")),
     ("FINAL_SELECTION_CONFIRMED", ("final selection confirmed", "selection has been confirmed", "finally selected")),
-    ("SELECTED", ("you have been selected", "you are selected", "selected for the position", "selected for the role", "congratulations on your selection")),
+    ("SELECTED", ("you have been selected", "you are selected", "selected for the position", "selected for the role", "congratulations on your selection", "selected for the post", "selection confirmation", "shortlisted for offer", "shortlisted for the offer")),
     ("OFFER_INDICATION", ("we are pleased to offer you", "we are delighted to offer you", "we would like to offer you", "planning to release your offer", "intent to offer", "employment offer", "compensation offered", "annual ctc offered")),
     ("SHORTLISTED", ("you have been shortlisted", "being shortlisted", "shortlisted for the role", "shortlisted for the position")),
 ]
@@ -1292,11 +1293,12 @@ def _manual_review_from_strong_context(
     status = str(routing_context.get("status") or "")
     evidence = list(routing_context.get("evidence") or [])
     fallback_statuses = {
-        "SELECTED", "FINAL_SELECTION_CONFIRMED", "OFFER_INDICATION",
-        "OFFER_IN_PROGRESS", "OFFER_APPROVED", "OFFER_LETTER_RECEIVED",
+        "SELECTED", "FINAL_SELECTION_CONFIRMED", "FINAL_ROUND_CLEARED", "OFFER_INDICATION",
+        "OFFER_IN_PROGRESS", "OFFER_APPROVED", "OFFER_LETTER_RECEIVED", "OFFER_RECEIVED",
         "APPOINTMENT_LETTER_RECEIVED", "OFFER_ACCEPTED", "JOINING_CONFIRMED",
-        "JOINED", "POST_SELECTION_ONBOARDING",
-        "INTERVIEW_CONFIRMED", "INTERVIEW_RESCHEDULED", "INTERVIEW_CANCELLED",
+        "JOINED", "POST_SELECTION_ONBOARDING", "BACKGROUND_VERIFICATION",
+        "DOCUMENT_VERIFICATION", "HR_CONFIRMATION", "COMPENSATION_CONFIRMATION",
+        "INTERVIEW_CONFIRMED", "INTERVIEW_RESCHEDULED", "INTERVIEW_CANCELLED", "INTERVIEW_SHORTLISTED",
     }
     if not routing_context.get("qualified") or status not in fallback_statuses or not evidence:
         return None
