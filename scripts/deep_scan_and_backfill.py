@@ -72,9 +72,13 @@ def run_scan_and_backfill(dry_run: bool = True):
     with get_connection() as conn, conn.cursor() as cur:
         # 1. Fetch all mailboxes
         cur.execute("""
-            SELECT m.id, m.candidate_id, m.email_address, c.name as candidate_name, c.phone as candidate_phone
+            SELECT m.id, m.candidate_id, m.email_address,
+                   COALESCE(c.payload->>'name', l_c.payload->>'name', m.email_address) as candidate_name,
+                   COALESCE(c.payload->>'phone', l_c.payload->>'phone') as candidate_phone
             FROM candidate_mailboxes m
-            LEFT JOIN candidates c ON c.id = m.candidate_id
+            LEFT JOIN candidates_store c ON c.id = m.candidate_id
+            LEFT JOIN candidate_identity_links l ON l.alias_candidate_id = m.candidate_id
+            LEFT JOIN candidates_store l_c ON l_c.id = l.canonical_candidate_id
             WHERE m.connection_status = 'CONNECTED' OR m.monitoring_enabled = true
             ORDER BY m.updated_at DESC
         """)
@@ -135,7 +139,7 @@ def run_scan_and_backfill(dry_run: bool = True):
                 lifecycle = context.get("lifecycle_event")
                 intent = context.get("email_intent")
                 
-                # We specifically look for the 5 target outcome families:
+                # Target outcome families:
                 # 1. Selected (SELECTED, FINAL_SELECTION_CONFIRMED)
                 # 2. Offer Received (OFFER_LETTER_RECEIVED, OFFER_RECEIVED, OFFER_INDICATION, OFFER_APPROVED, OFFER_IN_PROGRESS)
                 # 3. Final Round Cleared (FINAL_ROUND_CLEARED)
