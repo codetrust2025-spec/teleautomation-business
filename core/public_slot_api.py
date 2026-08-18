@@ -165,6 +165,42 @@ def install_public_slot_routes(app) -> None:
             headers={"Cache-Control": "no-store, max-age=0"},
         )
 
+    @app.get("/public/slots/payment-info")
+    async def public_slot_payment_info(
+        service_type: str = "round_wise",
+        name: str = "",
+        phone: str = "",
+        interview_round: str = "",
+    ):
+        """Return the payment requirement for a service type or candidate name.
+
+        The frontend uses this to show the correct amount due on the payment
+        card without hardcoding the baseline or depending on an exact roster
+        match.
+        """
+        normalized = service_type.strip() or "round_wise"
+        if normalized == "round_wise":
+            amount_due = cs.baseline_for_service("round_wise")
+        else:
+            amount_due = cs.merged_balance_due_for_name(name) if name.strip() else 0
+        # A re-service grant waives payment entirely for one booking.
+        waived = cs.candidate_is_re_service_eligible(
+            name=name.strip(),
+            phone=phone.strip(),
+            interview_round=interview_round.strip(),
+        ) if name.strip() else False
+        needs_payment = amount_due > 0 and not waived
+        return JSONResponse(
+            {
+                "status": "ok",
+                "service_type": normalized,
+                "amount_due": amount_due,
+                "needs_payment": needs_payment,
+                "waived": waived,
+            },
+            headers={"Cache-Control": "no-store, max-age=0"},
+        )
+
     @app.post("/public/slots/payment-proof")
     async def public_slot_payment_proof(
         name: str = Form(...),

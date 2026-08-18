@@ -307,6 +307,8 @@ export function SubmitSlotPage() {
   const [paymentAiResults, setPaymentAiResults] = useState([])
   const [paymentRejected, setPaymentRejected] = useState([])
   const [paymentAnalysing, setPaymentAnalysing] = useState(false)
+  const [roundWiseAmountDue, setRoundWiseAmountDue] = useState(5000)
+  const [paymentWaived, setPaymentWaived] = useState(false)
 
   const effectiveName = name.trim()
   const selected = useMemo(() => {
@@ -341,7 +343,14 @@ export function SubmitSlotPage() {
   // Uploading a proof is no longer the same as having paid: instalments only
   // clear the fee once they add up, and the server decides when they do.
   const paymentComplete = Boolean(paymentProofIds.length && paymentTotals?.payment_complete)
-  const needsPaymentProof = Boolean(selected?.needs_payment_proof && !paymentComplete)
+  // Round-wise always requires payment proof (backend is authoritative via
+  // baseline_for_service("round_wise")), regardless of whether the candidate
+  // matches the Profile roster. Profile-service uses the roster's balance_due.
+  // A re-service grant waives payment entirely for one booking.
+  const roundWisePaymentRequired = serviceType === 'round_wise' && Boolean(effectiveName) && !paymentWaived
+  const needsPaymentProof = Boolean(
+    (selected?.needs_payment_proof || roundWisePaymentRequired) && !paymentComplete
+  )
 
   const resetPaymentProofs = useCallback(() => {
     setPaymentProofIds([])
@@ -367,6 +376,20 @@ export function SubmitSlotPage() {
   }, [])
 
   useEffect(() => { refresh() }, [refresh])
+  // Fetch the authoritative round-wise payment amount from the backend when
+  // the service type is round_wise. Keeps the frontend from hardcoding it.
+  useEffect(() => {
+    if (serviceType !== 'round_wise') { setPaymentWaived(false); return }
+    fetch(`${API_BASE}/public/slots/payment-info?service_type=round_wise`, { cache: 'no-store' })
+      .then(r => r.json())
+      .then(data => {
+        if (data.status === 'ok') {
+          if (data.amount_due > 0) setRoundWiseAmountDue(data.amount_due)
+          setPaymentWaived(Boolean(data.waived))
+        }
+      })
+      .catch(() => {})
+  }, [serviceType])
   useEffect(() => () => {
     if (slotPreview) URL.revokeObjectURL(slotPreview)
     if (sessionPreview) URL.revokeObjectURL(sessionPreview)
@@ -469,6 +492,14 @@ export function SubmitSlotPage() {
       // so instalments uploaded across several attempts still add together.
       paymentFiles.forEach(f => fd.append('files', f))
       fd.append('existing_proof_ids', paymentProofIds.join(','))
+      // Round-wise proof must be stored under the correct context so
+      // /bookings/confirm can retrieve it with matching service_type and phone.
+      fd.append('service_type', serviceType)
+      if (serviceType === 'round_wise') {
+        fd.append('phone', roundWisePhone.trim())
+        fd.append('technology', effectiveTechnology)
+        fd.append('interview_round', interviewRound)
+      }
       const res = await fetch(`${API_BASE}/public/slots/payment-proof`, { method: 'POST', body: fd })
       const data = await res.json()
       setPaymentRejected(data.rejected || [])
@@ -761,9 +792,9 @@ export function SubmitSlotPage() {
                 {triedSubmit && !interviewRound && <span className="sbs-hint sbs-hint--warn">Required — select a round to confirm.</span>}
               </label>
 
-              {selected?.needs_payment_proof && (
+              {(selected?.needs_payment_proof || roundWisePaymentRequired) && (
                 <div className="sbs-pay-card">
-                  <div className="sbs-pay-head"><span>Payment due</span><strong>₹{(selected.balance_due || 0).toLocaleString('en-IN')}</strong></div>
+                  <div className="sbs-pay-head"><span>Payment due</span><strong>₹{(selected?.balance_due || paymentTotals?.amount_due || roundWiseAmountDue).toLocaleString('en-IN')}</strong></div>
                   {paymentProofIds.length > 0 && (
                     <>
                       <p className={paymentComplete ? 'sbs-pay-ok' : 'sbs-pay-partial'}>
