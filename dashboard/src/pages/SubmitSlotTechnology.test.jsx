@@ -28,6 +28,10 @@ function stubFetch({ extraction } = {}) {
   vi.stubGlobal('fetch', vi.fn((url, options) => {
     const target = String(url)
     const reply = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) })
+    if (target.includes('/payment-info')) {
+      // Waive payment so technology tests can focus on technology behavior.
+      return reply({ status: 'ok', service_type: 'round_wise', amount_due: 5000, needs_payment: false, waived: true })
+    }
     if (target.includes('/extract-invite-ai')) {
       return reply({ status: 'ok', success: true, data: extraction || {} })
     }
