@@ -55,6 +55,31 @@ function attach(input, files) {
   fireEvent.change(input)
 }
 
+/** An interview date that is always ahead of the clock.
+ *
+ * The form disables Confirm for a past date, which is correct. A hardcoded
+ * date therefore time-bombs the suite: this file pinned 2026-08-18 and began
+ * failing the moment the clock rolled past it, with the click silently doing
+ * nothing because the button was disabled.
+ */
+function upcomingDate() {
+  const date = new Date()
+  date.setDate(date.getDate() + 7)
+  return date.toISOString().slice(0, 10)
+}
+
+/** The invite drop, chosen by shape rather than DOM order.
+ *
+ * The invite field is single-file; the payment drop is multi-select. Picking the
+ * first file input is unsafe: typing a round-wise name renders the payment card
+ * immediately, while the waiver answer from /payment-info only arrives a tick
+ * later, so the first input is sometimes the payment drop and sometimes the
+ * invite. Selecting on `multiple` is stable either way.
+ */
+function inviteInput() {
+  return [...document.querySelectorAll('input[type="file"]')].find(input => !input.multiple)
+}
+
 async function chooseRoundWise() {
   render(<SubmitSlotPage />)
   fireEvent.click(await screen.findByRole('button', { name: /profile service/i }))
@@ -66,7 +91,7 @@ describe('Submit slot — round-wise technology', () => {
   afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
   it('offers a technology field and sends what was chosen', async () => {
-    const calls = stubFetch({ extraction: { interview_date: '2026-08-18', start_time: '03:00 PM', confidence_score: 90 } })
+    const calls = stubFetch({ extraction: { interview_date: upcomingDate(), start_time: '03:00 PM', confidence_score: 90 } })
     await chooseRoundWise()
 
     const tech = await screen.findByPlaceholderText(/choose or type the technology/i)
@@ -80,9 +105,12 @@ describe('Submit slot — round-wise technology', () => {
     fireEvent.change(screen.getByPlaceholderText(/type client name/i), { target: { value: 'venkat' } })
     fireEvent.change(screen.getByPlaceholderText(/10-digit phone number/i), { target: { value: '7306994576' } })
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'L1' } })
-    attach(document.querySelector('input[type="file"]'), [screenshot('invite.jpg')])
+    attach(inviteInput(), [screenshot('invite.jpg')])
 
     await waitFor(() => expect(screen.queryByText(/reading invite with ai/i)).toBeNull())
+    // This candidate is waived, so the fee must have cleared before confirming.
+    // Asserting it makes the precondition explicit instead of timing-dependent.
+    await waitFor(() => expect(screen.queryByText(/payment due/i)).toBeNull())
     fireEvent.click(screen.getByRole('button', { name: /confirm booking/i }))
 
     await waitFor(() => expect(calls.confirms).toHaveLength(1))
@@ -91,13 +119,13 @@ describe('Submit slot — round-wise technology', () => {
   })
 
   it('refuses to submit without a technology and says so on the field', async () => {
-    const calls = stubFetch({ extraction: { interview_date: '2026-08-18', start_time: '03:00 PM', confidence_score: 90 } })
+    const calls = stubFetch({ extraction: { interview_date: upcomingDate(), start_time: '03:00 PM', confidence_score: 90 } })
     await chooseRoundWise()
 
     fireEvent.change(screen.getByPlaceholderText(/type client name/i), { target: { value: 'venkat' } })
     fireEvent.change(screen.getByPlaceholderText(/10-digit phone number/i), { target: { value: '7306994576' } })
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'L1' } })
-    attach(document.querySelector('input[type="file"]'), [screenshot('invite.jpg')])
+    attach(inviteInput(), [screenshot('invite.jpg')])
     await waitFor(() => expect(screen.queryByText(/reading invite with ai/i)).toBeNull())
 
     fireEvent.click(screen.getByRole('button', { name: /confirm booking/i }))
@@ -108,21 +136,21 @@ describe('Submit slot — round-wise technology', () => {
   })
 
   it('fills the field from the invite when it names the technology', async () => {
-    stubFetch({ extraction: { interview_date: '2026-08-18', start_time: '03:00 PM', technology: 'Automation Testing', confidence_score: 90 } })
+    stubFetch({ extraction: { interview_date: upcomingDate(), start_time: '03:00 PM', technology: 'Automation Testing', confidence_score: 90 } })
     await chooseRoundWise()
 
-    attach(document.querySelector('input[type="file"]'), [screenshot('invite.jpg')])
+    attach(inviteInput(), [screenshot('invite.jpg')])
     await waitFor(() =>
       expect(screen.getByPlaceholderText(/choose or type the technology/i).value).toBe('Automation Testing'))
   })
 
   it('keeps a typed technology when a later invite says something else', async () => {
-    stubFetch({ extraction: { interview_date: '2026-08-18', start_time: '03:00 PM', technology: 'Automation Testing', confidence_score: 90 } })
+    stubFetch({ extraction: { interview_date: upcomingDate(), start_time: '03:00 PM', technology: 'Automation Testing', confidence_score: 90 } })
     await chooseRoundWise()
 
     const tech = await screen.findByPlaceholderText(/choose or type the technology/i)
     fireEvent.change(tech, { target: { value: 'Golang' } })
-    attach(document.querySelector('input[type="file"]'), [screenshot('invite.jpg')])
+    attach(inviteInput(), [screenshot('invite.jpg')])
 
     await waitFor(() => expect(screen.queryByText(/reading invite with ai/i)).toBeNull())
     expect(tech.value).toBe('Golang')
