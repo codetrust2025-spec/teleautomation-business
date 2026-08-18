@@ -141,6 +141,55 @@ function dedupeCandidates(rows) {
   return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }))
 }
 
+/** Technology for a round-wise booking.
+ *
+ * /bookings/confirm refuses a round-wise booking without one, and the invite
+ * only sometimes names it, so it has to be askable. The vocabulary is whatever
+ * the roster already uses, but anything can be typed — a booking must never be
+ * blocked because a technology is missing from a list.
+ */
+function SlotTechnologyPicker({ options, value, onChange, disabled }) {
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef(null)
+  const query = value.trim().toLocaleLowerCase()
+  const matches = useMemo(
+    () => options.filter(t => t.toLocaleLowerCase().includes(query)),
+    [options, query],
+  )
+  useEffect(() => {
+    function close(e) { if (!rootRef.current?.contains(e.target)) setOpen(false) }
+    document.addEventListener('pointerdown', close)
+    return () => document.removeEventListener('pointerdown', close)
+  }, [])
+  return (
+    <div ref={rootRef} className="sbs-picker">
+      <div className="sbs-picker__input-wrap">
+        <svg className="sbs-picker__icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M8 18 3 12l5-6M16 6l5 6-5 6" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+        <input className="sbs-input sbs-name-input" value={value}
+          onChange={e => { onChange(e.target.value); setOpen(true) }}
+          onFocus={() => setOpen(true)}
+          placeholder="Choose or type the technology" disabled={disabled}
+          aria-autocomplete="list" aria-expanded={open} aria-controls="sbs-technology-options" />
+        <button type="button" className="sbs-picker__toggle" onClick={() => setOpen(v => !v)} disabled={disabled} aria-label="Show technologies" aria-expanded={open}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+      </div>
+      {open && (
+        <div id="sbs-technology-options" className="sbs-picker__menu" role="listbox">
+          {matches.length ? matches.map(t => (
+            <button key={t} type="button" role="option"
+              aria-selected={t.toLocaleLowerCase() === query}
+              className="sbs-picker__option"
+              onClick={() => { onChange(t); setOpen(false) }}>{t}</button>
+          )) : <p className="sbs-picker__empty">Type the technology to continue.</p>}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function SlotCandidatePicker({ candidates, value, onChange, disabled }) {
   const [open, setOpen] = useState(false)
   const rootRef = useRef(null)
@@ -248,6 +297,7 @@ export function SubmitSlotPage() {
   const [manualDate, setManualDate] = useState('')
   const [manualTime, setManualTime] = useState('')
   const [interviewRound, setInterviewRound] = useState('')
+  const [technology, setTechnology] = useState('')
   const [serviceType, setServiceType] = useState('profile_service')
   const [showServiceDrop, setShowServiceDrop] = useState(false)
   const [triedSubmit, setTriedSubmit] = useState(false)
@@ -264,6 +314,20 @@ export function SubmitSlotPage() {
     const key = effectiveName.toLowerCase()
     return dedupeCandidates(candidates).find(c => c.name.toLowerCase() === key) || null
   }, [effectiveName, candidates])
+
+  // Suggestions only — the roster's existing technologies, offered so the common
+  // ones are one tap away. Anything else can still be typed.
+  const technologyOptions = useMemo(() => {
+    const seen = new Map()
+    for (const row of candidates || []) {
+      const value = String(row?.technology || '').trim()
+      if (!value || value.toLowerCase() === 'unspecified') continue
+      if (!seen.has(value.toLowerCase())) seen.set(value.toLowerCase(), value)
+    }
+    return [...seen.values()].sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' }))
+  }, [candidates])
+
+  const effectiveTechnology = (technology || parsedSlot?.technology || '').trim()
 
   const bookingSlot = useMemo(() => {
     const effectiveDate = manualDate || parsedSlot?.date || ''
@@ -343,6 +407,9 @@ export function SubmitSlotPage() {
         if ((ext.end_time || ext.time_end) && !userEditedFields.time_end) slot.time_end = normalizeTo12h(ext.end_time || ext.time_end)
         if (ext.meeting_platform) slot.platform = ext.meeting_platform
         if (ext.technology) slot.technology = ext.technology
+        if (ext.technology && !technology && !userEditedFields.technology) {
+          setTechnology(ext.technology)
+        }
         if (ext.interview_round && !interviewRound && !userEditedFields.round) {
           setInterviewRound(ext.interview_round)
           slot.interview_round = ext.interview_round
@@ -434,7 +501,8 @@ export function SubmitSlotPage() {
       return
     }
     if (!effectiveName || !slotFile || !interviewRound || needsPaymentProof
-        || (serviceType === 'round_wise' && !roundWisePhone.trim())) {
+        || (serviceType === 'round_wise' && !roundWisePhone.trim())
+        || (serviceType === 'round_wise' && !effectiveTechnology)) {
       setTriedSubmit(true)
       setError('')
       return
@@ -452,7 +520,7 @@ export function SubmitSlotPage() {
       if (bookingSlot?.time) fd.append('time', bookingSlot.time)
       if (bookingSlot?.time_end) fd.append('time_end', bookingSlot.time_end)
       if (bookingSlot?.interview_round) fd.append('interview_round', bookingSlot.interview_round)
-      if (bookingSlot?.technology) fd.append('technology', bookingSlot.technology)
+      if (effectiveTechnology) fd.append('technology', effectiveTechnology)
       if (serviceType === 'round_wise') fd.append('phone', roundWisePhone.trim())
       fd.append('candidate_id', selected?.id || '')
       if (paymentProofIds.length) fd.append('payment_proof_ids', paymentProofIds.join(','))
@@ -478,7 +546,7 @@ export function SubmitSlotPage() {
       const data = await res.json()
       if (!res.ok) { setError(data.payment_due ? (data.message || 'Payment required.') : (data.message || 'Could not book slot')); return }
       if (slotPreview) URL.revokeObjectURL(slotPreview)
-      setSlotFile(null); setSlotPreview(''); setParsedSlot(null); setManualDate(''); setManualTime(''); setInterviewRound(''); setServiceType('profile_service'); resetPaymentProofs()
+      setSlotFile(null); setSlotPreview(''); setParsedSlot(null); setManualDate(''); setManualTime(''); setInterviewRound(''); setTechnology(''); setServiceType('profile_service'); resetPaymentProofs()
       setName(''); setRoundWisePhone('')
       setTriedSubmit(false)
       setSuccess(`Slot confirmed for ${data.candidate?.name || effectiveName}.`)
@@ -624,8 +692,8 @@ export function SubmitSlotPage() {
                   </button>
                   {showServiceDrop && (
                     <ul className="sbs-dropdown">
-                      <li className={`sbs-dropdown__item${serviceType === "round_wise" ? " sbs-dropdown__item--active" : ""}`} onMouseDown={e => e.preventDefault()} onClick={e => { e.stopPropagation(); setServiceType("round_wise"); setShowServiceDrop(false); setName(""); resetPaymentProofs(); }}>Round-wise</li>
-                      <li className={`sbs-dropdown__item${serviceType === "profile_service" ? " sbs-dropdown__item--active" : ""}`} onMouseDown={e => e.preventDefault()} onClick={e => { e.stopPropagation(); setServiceType("profile_service"); setShowServiceDrop(false); setName(""); resetPaymentProofs(); }}>Profile service</li>
+                      <li className={`sbs-dropdown__item${serviceType === "round_wise" ? " sbs-dropdown__item--active" : ""}`} onMouseDown={e => e.preventDefault()} onClick={e => { e.stopPropagation(); setServiceType("round_wise"); setShowServiceDrop(false); setName(""); setTechnology(""); resetPaymentProofs(); }}>Round-wise</li>
+                      <li className={`sbs-dropdown__item${serviceType === "profile_service" ? " sbs-dropdown__item--active" : ""}`} onMouseDown={e => e.preventDefault()} onClick={e => { e.stopPropagation(); setServiceType("profile_service"); setShowServiceDrop(false); setName(""); setTechnology(""); resetPaymentProofs(); }}>Profile service</li>
                     </ul>
                   )}
                 </div>
@@ -660,6 +728,25 @@ export function SubmitSlotPage() {
                   {triedSubmit && !roundWisePhone.trim()
                     ? <span className="sbs-hint sbs-hint--warn">Required — round-wise booking needs the candidate phone.</span>
                     : <span className="sbs-hint">Identifies the candidate across rounds.</span>}
+                </label>
+              )}
+
+              {serviceType === "round_wise" && (
+                // /bookings/confirm rejects a round-wise booking without a
+                // technology and tells the candidate to select one, so there
+                // has to be somewhere to select it. The invite fills it in when
+                // it names the technology; often it does not.
+                <label className="sbs-field">
+                  <span className="sbs-label">Technology <span className="sbs-required" aria-hidden="true">*</span></span>
+                  <SlotTechnologyPicker
+                    options={technologyOptions}
+                    value={technology}
+                    onChange={value => { setTechnology(value); setUserEditedFields(prev => ({ ...prev, technology: true })) }}
+                    disabled={busy || parsing}
+                  />
+                  {triedSubmit && !effectiveTechnology
+                    ? <span className="sbs-hint sbs-hint--warn">Required — round-wise booking needs the technology.</span>
+                    : <span className="sbs-hint">Read from the invite when it says; otherwise pick or type it.</span>}
                 </label>
               )}
 
