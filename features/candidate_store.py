@@ -4874,6 +4874,7 @@ def _import_confirmed_interview_slot(
     source: str = "public-upload",
     payment_proof_id: str | None = None,
     pending_payment_proof: tuple[str, dict] | None = None,
+    pending_payment_proofs: list[tuple[str, dict]] | None = None,
     payment_reuse: dict | None = None,
     candidate_id: str = "",
     idempotency_key: str = "",
@@ -4916,8 +4917,14 @@ def _import_confirmed_interview_slot(
         interview_round=interview_round,
         candidate_id=candidate_id,
     )
+    # A split payment presents several proofs; one is simply the common case.
+    payment_proofs = list(
+        pending_payment_proofs
+        if pending_payment_proofs is not None
+        else ([pending_payment_proof] if pending_payment_proof else [])
+    )
     pay_block = None
-    if not pending_payment_proof and not re_service_grant:
+    if not payment_proofs and not re_service_grant:
         pay_block = slot_booking_payment_block_reason(
             canon,
             payment_proof_id=payment_proof_id,
@@ -5209,10 +5216,16 @@ def finalize_public_booking_payment(
     row: dict,
     *,
     pending_payment_proof: tuple[str, dict] | None = None,
+    pending_payment_proofs: list[tuple[str, dict]] | None = None,
     payment_reuse: dict | None = None,
     idempotency_key: str = "",
 ) -> dict:
-    """Attach temporary payment evidence only after booking confirmation."""
+    """Attach temporary payment evidence only after booking confirmation.
+
+    A fee settled in instalments arrives as several proofs. Each is attached in
+    turn and the recorded payment is then derived from everything on the row,
+    so 2,000 + 1,000 + 2,000 is recorded as the 5,000 it is.
+    """
     cid = _clean_str(row.get("id"))
     if not cid:
         raise ValueError("Confirmed candidate record is missing")
@@ -5232,8 +5245,12 @@ def finalize_public_booking_payment(
         patch["previousBookingId"] = previous_booking_id
         patch["reusedPaymentId"] = reused_payment_id
 
-    if pending_payment_proof:
-        path, pending = pending_payment_proof
+    proofs = list(
+        pending_payment_proofs
+        if pending_payment_proofs is not None
+        else ([pending_payment_proof] if pending_payment_proof else [])
+    )
+    for path, pending in proofs:
         pending_id = _clean_str(pending.get("id"))
         existing_proof = next(
             (
@@ -5287,13 +5304,18 @@ def finalize_public_booking_payment(
             if not entry:
                 raise ValueError("Could not attach verified payment proof")
             current = get_candidate(cid) or current
-            # The proof decides the amount, not the invoice. Booking used to add
-            # the amount *due* and clamp the running total to the expected
-            # figure, so a candidate who paid ₹6,000 against a ₹5,000 minimum was
-            # recorded as having paid ₹5,000. Expected is a floor, not a ceiling.
-            patch["payment"] = payment_receipts.verified_proof_total(
-                partition_candidate_attachments(current)["payment_proofs"]
-            )
+
+    if proofs:
+        # The proofs decide the amount, not the invoice. Booking used to add
+        # the amount *due* and clamp the running total to the expected figure,
+        # so a candidate who paid ₹6,000 against a ₹5,000 minimum was recorded
+        # as having paid ₹5,000. Expected is a floor, not a ceiling. Summing
+        # over every attached proof is also what makes a split payment add up;
+        # verified_proof_total counts one transaction once, however many times
+        # its screenshot was uploaded.
+        patch["payment"] = payment_receipts.verified_proof_total(
+            partition_candidate_attachments(current)["payment_proofs"]
+        )
 
     if patch:
         current = update_candidate(cid, patch, allow_slot_without_rules=True)

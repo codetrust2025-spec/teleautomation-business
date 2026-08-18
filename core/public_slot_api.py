@@ -130,6 +130,22 @@ def _json_error(message: str, status: int = 400, **extra: Any) -> JSONResponse:
     return JSONResponse(payload, status_code=status)
 
 
+def _pending_proof_ids(*values: str) -> list[str]:
+    """Pending payment proof ids from a single field or a split-payment list.
+
+    A split payment carries several proofs, so the id fields accept a
+    comma-separated list. Order is preserved and repeats are dropped: the same
+    id twice must never let one instalment count twice toward the fee.
+    """
+    ordered: list[str] = []
+    for value in values:
+        for token in str(value or "").replace("\n", ",").split(","):
+            proof_id = token.strip()
+            if proof_id and proof_id not in ordered:
+                ordered.append(proof_id)
+    return ordered
+
+
 def install_public_slot_routes(app) -> None:
     from features import candidate_store as cs
 
@@ -152,44 +168,104 @@ def install_public_slot_routes(app) -> None:
     @app.post("/public/slots/payment-proof")
     async def public_slot_payment_proof(
         name: str = Form(...),
-        file: UploadFile = File(...),
+        file: UploadFile | None = File(default=None),
+        files: list[UploadFile] = File(default=[]),
         note: str = Form(default=""),
         service_type: str = Form(default=""),
         phone: str = Form(default=""),
         candidate_id: str = Form(default=""),
         technology: str = Form(default=""),
         interview_round: str = Form(default=""),
+        existing_proof_ids: str = Form(default=""),
     ):
+        # A split payment arrives as several screenshots (2,000 + 1,000 + 2,000
+        # against a 5,000 fee). Every receipt is still verified on its own and
+        # still fails closed - registered receiver, visible identifier,
+        # transaction reference, successful status, extraction confidence - but
+        # "does this cover the fee" is a property of the whole set, not of one
+        # instalment, so it is decided on the running total here and enforced
+        # again at /bookings/confirm, which is where money actually moves.
+        uploads = [
+            upload
+            for upload in ([file] if file is not None else []) + list(files or [])
+            if upload is not None and (upload.filename or "")
+        ]
+        if not uploads:
+            return _json_error("Attach at least one payment screenshot.")
         try:
-            raw = await file.read()
             if service_type.strip() == "round_wise":
                 due_amount = cs.baseline_for_service("round_wise")
                 payment_owner = None
             else:
                 due_amount = cs.merged_balance_due_for_name(name) if name else 0
                 payment_owner = cs._best_row_for_slot_name(name)
-            # Payee validation is security-critical and deliberately fails
-            # closed. Never save or credit the receipt before this succeeds.
-            try:
-                from features.payment_verification_engine import verify_payment_screenshot
-                from features.ollama_payment_extract import generate_payment_narrative
 
-                ai_extraction = await asyncio.to_thread(
-                    verify_payment_screenshot,
-                    raw,
-                    file.content_type or "image/jpeg",
-                    source_module="public_slot_payment_proof",
-                    expected_amount=due_amount,
-                    entity_id=str((payment_owner or {}).get("id") or ""),
-                    entity_name=name.strip(),
-                    candidate_id=str((payment_owner or {}).get("id") or ""),
-                    referrer_hint=str((payment_owner or {}).get("reference") or ""),
-                    purpose="candidate_payment",
-                    payment_scope=(
-                        "ROUND" if service_type.strip() == "round_wise" else "PROFILE"
-                    ),
-                    create_ledger=False,
+            from features.payment_verification_engine import verify_payment_screenshot
+            from features.ollama_payment_extract import generate_payment_narrative
+            from features.pending_slot_payment import (
+                duplicates_existing,
+                get_verified_proof,
+                save_verified_proof,
+                verified_total,
+            )
+
+            normalized_service = service_type.strip() or "profile_service"
+            # Screenshots saved by an earlier click already count toward the
+            # total, so uploading the instalments one at a time reaches the same
+            # place as uploading them together.
+            accepted: list[dict] = []
+            for proof_id in _pending_proof_ids(existing_proof_ids):
+                resolved = get_verified_proof(
+                    proof_id,
+                    name=name,
+                    service_type=normalized_service,
+                    phone=phone,
+                    candidate_id=candidate_id,
+                    technology=technology,
+                    interview_round=interview_round,
                 )
+                if resolved:
+                    accepted.append(resolved[1])
+
+            saved: list[dict] = []
+            extractions: list[dict] = []
+            rejected: list[dict] = []
+            for upload in uploads:
+                raw = await upload.read()
+                label = upload.filename or "payment.jpg"
+                # Payee validation is security-critical and deliberately fails
+                # closed. Never save or credit the receipt before this succeeds.
+                try:
+                    ai_extraction = await asyncio.to_thread(
+                        verify_payment_screenshot,
+                        raw,
+                        upload.content_type or "image/jpeg",
+                        source_module="public_slot_payment_proof",
+                        # Deliberately 0: one instalment of a split payment is a
+                        # complete, genuine payment, and rejecting it for not
+                        # covering the whole fee on its own is what made split
+                        # payments impossible. The fee is checked on the total.
+                        expected_amount=0,
+                        entity_id=str((payment_owner or {}).get("id") or ""),
+                        entity_name=name.strip(),
+                        candidate_id=str((payment_owner or {}).get("id") or ""),
+                        referrer_hint=str((payment_owner or {}).get("reference") or ""),
+                        purpose="candidate_payment",
+                        payment_scope=(
+                            "ROUND" if service_type.strip() == "round_wise" else "PROFILE"
+                        ),
+                        create_ledger=False,
+                    )
+                except Exception:
+                    logger.exception("Company payment verification failed")
+                    rejected.append({
+                        "filename": label,
+                        "message": (
+                            "Could not verify this payment against the company/referrer registry. "
+                            "Upload a clear receipt showing the receiver UPI ID or payment phone number, amount, UTR, and successful status."
+                        ),
+                    })
+                    continue
                 ai_extraction["company_payment_reasons"] = list(
                     ai_extraction.get("deterministic_reasons") or []
                 )
@@ -208,56 +284,129 @@ def install_public_slot_routes(app) -> None:
                             " ".join(ai_extraction["company_payment_reasons"])
                             or "This receipt is not a verified payment to a registered company or referrer account."
                         )
-                    return _json_error(
-                        message,
-                        ai_extraction=ai_extraction,
+                    rejected.append({
+                        "filename": label,
+                        "message": message,
+                        "ai_extraction": ai_extraction,
+                    })
+                    continue
+                # The same receipt uploaded twice is one payment. Nothing else
+                # catches it while the proofs are still pending - the fraud
+                # check only sees evidence already attached to a candidate - so
+                # without this one 2,000 screenshot would read as 4,000.
+                if duplicates_existing(
+                    {
+                        "sha256": hashlib.sha256(raw).hexdigest(),
+                        "verification": ai_extraction,
+                    },
+                    accepted,
+                ):
+                    rejected.append({
+                        "filename": label,
+                        "message": (
+                            "This screenshot is the same transaction as one already "
+                            "uploaded, so it adds nothing to the total."
+                        ),
+                        "ai_extraction": ai_extraction,
+                    })
+                    continue
+                try:
+                    pending_proof = save_verified_proof(
+                        name=name,
+                        service_type=normalized_service,
+                        phone=phone,
+                        candidate_id=candidate_id,
+                        technology=technology,
+                        interview_round=interview_round,
+                        data=raw,
+                        original_name=label,
+                        mime_type=upload.content_type or "image/jpeg",
+                        amount_due=due_amount,
+                        note=note or "",
+                        verification=ai_extraction,
                     )
-            except Exception as ai_exc:
-                logger.exception("Company payment verification failed")
-                return _json_error(
-                    "Could not verify this payment against the company/referrer registry. "
-                    "Upload a clear receipt showing the receiver UPI ID or payment phone number, amount, UTR, and successful status."
+                except ValueError as proof_exc:
+                    rejected.append({
+                        "filename": label,
+                        "message": str(proof_exc),
+                        "ai_extraction": ai_extraction,
+                    })
+                    continue
+                accepted.append(pending_proof)
+                saved.append(pending_proof)
+                extractions.append(ai_extraction)
+
+            if saved:
+                narratives = await asyncio.gather(
+                    *(
+                        asyncio.to_thread(
+                            generate_payment_narrative,
+                            extraction,
+                            candidate_name=name,
+                            expected_amount=due_amount,
+                            received_amount=0,
+                        )
+                        for extraction in extractions
+                    ),
+                    return_exceptions=True,
                 )
+                for extraction, narrative in zip(extractions, narratives):
+                    if isinstance(narrative, BaseException):
+                        logger.debug(
+                            "Payment narrative generation skipped: %s", narrative
+                        )
+                    else:
+                        extraction["narrative"] = narrative
 
-            from features.pending_slot_payment import save_verified_proof
-
-            pending_proof = save_verified_proof(
-                name=name,
-                service_type=service_type.strip() or "profile_service",
-                phone=phone,
-                candidate_id=candidate_id,
-                technology=technology,
-                interview_round=interview_round,
-                data=raw,
-                original_name=file.filename or "payment.jpg",
-                mime_type=file.content_type or "image/jpeg",
-                amount_due=due_amount,
-                note=note or "",
-                verification=ai_extraction,
-            )
-            result = {
-                "candidate_id": "",
-                "proof_id": pending_proof["id"],
-                "proof": pending_proof,
-                "balance_due": 0,
-                "name": name.strip(),
-                "message": pending_proof.get("message") or "",
+            required = max(0, int(due_amount or 0))
+            verified_sum = verified_total(accepted)
+            remaining = max(0, required - verified_sum)
+            payment_complete = required <= 0 or remaining <= 0
+            totals = {
+                "proof_ids": [str(entry.get("id") or "") for entry in accepted],
+                "verified_total": verified_sum,
+                "amount_due": required,
+                "remaining_due": remaining,
+                "balance_due": remaining,
+                "payment_complete": payment_complete,
+                "proof_count": len(accepted),
+                "rejected": [
+                    {"filename": item["filename"], "message": item["message"]}
+                    for item in rejected
+                ],
             }
-            try:
-                ai_extraction["narrative"] = await asyncio.to_thread(
-                    generate_payment_narrative,
-                    ai_extraction,
-                    candidate_name=name,
-                    expected_amount=due_amount,
-                    received_amount=0,
+            if not saved:
+                first = rejected[0] if rejected else {}
+                return _json_error(
+                    " ".join(dict.fromkeys(item["message"] for item in rejected))
+                    or "No payment screenshot could be verified.",
+                    ai_extraction=first.get("ai_extraction") or {},
+                    **totals,
                 )
-            except Exception as narrative_exc:
-                logger.debug("Payment narrative generation skipped: %s", narrative_exc)
         except ValueError as e:
             return _json_error(str(e))
-        resp = {"status": "ok", **result}
-        resp["ai_extraction"] = ai_extraction
-        return resp
+        return {
+            "status": "ok",
+            "candidate_id": "",
+            "name": name.strip(),
+            # The proof's own notice (a reuse allowance, say) stays here, where
+            # it has always been. How far the instalments get toward the fee is
+            # reported by the totals below, not by prose.
+            "message": str(saved[0].get("message") or ""),
+            # Single-proof shape kept intact for any caller that predates split
+            # payments; the lists alongside it are the complete answer.
+            "proof_id": str(saved[0].get("id") or ""),
+            "proof": saved[0],
+            "ai_extraction": extractions[0],
+            "proofs": saved,
+            "ai_extractions": extractions,
+            "notices": [
+                str(entry.get("message") or "")
+                for entry in saved
+                if str(entry.get("message") or "").strip()
+            ],
+            **totals,
+        }
 
     @app.post("/public/slots/parse-screenshot")
     async def public_slot_parse_screenshot(file: UploadFile = File(...)):
@@ -543,6 +692,7 @@ def install_public_slot_routes(app) -> None:
         service_type: str = Form(default="round_wise"),
         notes: str = Form(default=""),
         payment_proof_id: str = Form(default=""),
+        payment_proof_ids: str = Form(default=""),
         idempotency_key: str = Form(default=""),
         invite_trace_id: str = Form(default=""),
         invite_display_date: str = Form(default=""),
@@ -572,33 +722,64 @@ def install_public_slot_routes(app) -> None:
                 "Enter the candidate phone number and try again."
             )
 
-        normalized_proof_id = payment_proof_id.strip()
-        pending_payment_proof = None
-        if normalized_proof_id:
+        requested_proof_ids = _pending_proof_ids(payment_proof_id, payment_proof_ids)
+        normalized_proof_id = requested_proof_ids[0] if requested_proof_ids else ""
+        pending_payment_proofs: list[tuple[str, dict]] = []
+        if requested_proof_ids:
             from features.pending_slot_payment import get_verified_proof
 
-            pending_payment_proof = get_verified_proof(
-                normalized_proof_id,
-                name=name,
-                service_type=normalized_service_type,
-                phone=normalized_phone,
-                candidate_id=candidate_id.strip(),
-                technology=normalized_technology,
-                interview_round=normalized_round,
-            )
+            for proof_id in requested_proof_ids:
+                resolved = get_verified_proof(
+                    proof_id,
+                    name=name,
+                    service_type=normalized_service_type,
+                    phone=normalized_phone,
+                    candidate_id=candidate_id.strip(),
+                    technology=normalized_technology,
+                    interview_round=normalized_round,
+                )
+                if resolved:
+                    pending_payment_proofs.append(resolved)
+        pending_payment_proof = pending_payment_proofs[0] if pending_payment_proofs else None
         re_service_booking = cs.candidate_is_re_service_eligible(
             name=name.strip(),
             phone=normalized_phone,
             interview_round=normalized_round,
             candidate_id=candidate_id.strip(),
         )
-        if normalized_service_type == "round_wise" and not pending_payment_proof and not re_service_booking:
+        if normalized_service_type == "round_wise" and not pending_payment_proofs and not re_service_booking:
             return _json_error(
                 "Upload and verify the payment screenshot to continue.",
                 payment_due=True,
                 balance_due=cs.baseline_for_service("round_wise"),
                 name=name.strip(),
             )
+        # The upload boundary verifies each receipt on its own; the fee itself
+        # is only satisfiable by the set. Booking is where money moves, so the
+        # total is re-derived here from the stored proofs rather than trusted
+        # from the client, and instalments that do not add up are refused.
+        if pending_payment_proofs and not re_service_booking:
+            from features.pending_slot_payment import verified_total
+
+            required_amount = (
+                cs.baseline_for_service("round_wise")
+                if normalized_service_type == "round_wise"
+                else max(0, int(cs.merged_balance_due_for_name(name) or 0))
+            )
+            paid_total = verified_total(
+                [entry for _path, entry in pending_payment_proofs]
+            )
+            if required_amount > 0 and paid_total < required_amount:
+                return _json_error(
+                    f"The verified payments add up to Rs {paid_total:,} of the "
+                    f"Rs {required_amount:,} due. Upload the remaining payment "
+                    "screenshot(s) before confirming.",
+                    payment_due=True,
+                    balance_due=required_amount - paid_total,
+                    verified_total=paid_total,
+                    amount_due=required_amount,
+                    name=name.strip(),
+                )
 
         slot_image: bytes | None = None
         slot_image_name = ""
@@ -658,7 +839,10 @@ def install_public_slot_routes(app) -> None:
                     slot_time,
                     slot_end,
                     normalized_round.lower(),
-                    normalized_proof_id,
+                    # Every instalment is part of what identifies this booking.
+                    # A single proof still joins to itself, so keys minted
+                    # before split payments existed are unchanged.
+                    ",".join(requested_proof_ids),
                 ]
             ).encode("utf-8")
         ).hexdigest()
@@ -699,14 +883,32 @@ def install_public_slot_routes(app) -> None:
                     row, action = existing_booking, "skip_exists"
                 else:
                     payment_reuse = {}
-                    if pending_payment_proof:
+                    if pending_payment_proofs:
                         from features.pending_slot_payment import validate_for_confirmation
 
-                        payment_reuse = validate_for_confirmation(
-                            pending_payment_proof,
-                            phone=normalized_phone,
-                            candidate_id=candidate_id.strip(),
-                        )
+                        # Every instalment is fraud-checked; any rejection
+                        # raises and aborts the whole confirmation.
+                        reuse_results = [
+                            validate_for_confirmation(
+                                proof,
+                                phone=normalized_phone,
+                                candidate_id=candidate_id.strip(),
+                            )
+                            for proof in pending_payment_proofs
+                        ]
+                        reused = [
+                            result for result in reuse_results if result.get("reuse_allowed")
+                        ]
+                        if len(reused) > 1:
+                            # Only one prior booking can be recorded as the
+                            # source of a reused payment, so a split payment
+                            # carrying two of them has no single answer.
+                            from features.payment_fraud_detection import (
+                                PAYMENT_REUSE_BLOCKED_MESSAGE,
+                            )
+
+                            raise ValueError(PAYMENT_REUSE_BLOCKED_MESSAGE)
+                        payment_reuse = reused[0] if reused else reuse_results[0]
                     row, action = cs.import_confirmed_interview_slot(
                         name=name, date=day, time=slot_time, time_end=slot_end,
                         interview_round=normalized_round, technology=normalized_technology,
@@ -714,6 +916,7 @@ def install_public_slot_routes(app) -> None:
                         notes=notes, source="submit-slot form",
                         payment_proof_id=normalized_proof_id or None,
                         pending_payment_proof=pending_payment_proof,
+                        pending_payment_proofs=pending_payment_proofs,
                         payment_reuse=payment_reuse,
                         candidate_id=candidate_id.strip(),
                         idempotency_key=booking_key, slot_image=slot_image,
@@ -721,6 +924,7 @@ def install_public_slot_routes(app) -> None:
                     )
                     row = cs.finalize_public_booking_payment(
                         row, pending_payment_proof=pending_payment_proof,
+                        pending_payment_proofs=pending_payment_proofs,
                         payment_reuse=payment_reuse,
                         idempotency_key=booking_key,
                     )

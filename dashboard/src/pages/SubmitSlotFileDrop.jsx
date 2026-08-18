@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 
 export function SubmitSlotFileDrop({
   label,
@@ -10,17 +10,40 @@ export function SubmitSlotFileDrop({
   previewUrl,
   onFile,
   compact = false,
+  // A payment settled in instalments has one screenshot per transfer, so that
+  // field collects a list. The invite drop stays single-file.
+  multiple = false,
+  files,
+  onFiles,
 }) {
   const inputRef = useRef(null)
   const [drag, setDrag] = useState(false)
+  const picked = useMemo(() => (multiple ? files || [] : []), [multiple, files])
+  const [thumbs, setThumbs] = useState([])
+
+  // The preview URLs are owned here so a form holding several screenshots does
+  // not have to track and revoke one object URL per file.
+  useEffect(() => {
+    if (!multiple) return undefined
+    const urls = picked.map(f => URL.createObjectURL(f))
+    setThumbs(urls)
+    return () => urls.forEach(url => URL.revokeObjectURL(url))
+  }, [multiple, picked])
+
+  const hasSelection = multiple ? picked.length > 0 : Boolean(file)
 
   function pick() {
     if (!disabled && !busy) inputRef.current?.click()
   }
 
+  function addFiles(list) {
+    const images = Array.from(list || []).filter(f => f && (!f.type || f.type.startsWith('image/')))
+    if (images.length) onFiles([...picked, ...images])
+  }
+
   function onInput(ev) {
-    const f = ev.target.files?.[0] || null
-    onFile(f)
+    if (multiple) addFiles(ev.target.files)
+    else onFile(ev.target.files?.[0] || null)
     ev.target.value = ''
   }
 
@@ -28,6 +51,7 @@ export function SubmitSlotFileDrop({
     ev.preventDefault()
     setDrag(false)
     if (disabled || busy) return
+    if (multiple) { addFiles(ev.dataTransfer.files); return }
     const f = ev.dataTransfer.files?.[0]
     if (f && f.type.startsWith('image/')) onFile(f)
   }
@@ -39,7 +63,7 @@ export function SubmitSlotFileDrop({
         className={[
           'submit-slot-drop',
           drag ? 'submit-slot-drop--drag' : '',
-          file ? 'submit-slot-drop--has-file' : '',
+          hasSelection ? 'submit-slot-drop--has-file' : '',
           disabled || busy ? 'submit-slot-drop--disabled' : '',
         ].filter(Boolean).join(' ')}
         onDragOver={ev => { ev.preventDefault(); if (!disabled && !busy) setDrag(true) }}
@@ -55,6 +79,7 @@ export function SubmitSlotFileDrop({
           ref={inputRef}
           type="file"
           accept={accept}
+          multiple={multiple}
           className="submit-slot-drop-input"
           disabled={disabled || busy}
           onChange={onInput}
@@ -63,6 +88,13 @@ export function SubmitSlotFileDrop({
         {previewUrl ? (
           <div className="submit-slot-drop-preview">
             <img src={previewUrl} alt="" />
+          </div>
+        ) : file && !multiple ? (
+          <div className="submit-slot-drop-icon submit-slot-drop-icon--file" aria-hidden="true">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+              <path d="M6 2h8l4 4v16H6z" strokeLinejoin="round" />
+              <path d="M14 2v5h5" strokeLinejoin="round" />
+            </svg>
           </div>
         ) : (
           <div className="submit-slot-drop-icon" aria-hidden="true">
@@ -73,7 +105,19 @@ export function SubmitSlotFileDrop({
           </div>
         )}
         <div className="submit-slot-drop-copy">
-          {file ? (
+          {multiple ? (
+            picked.length ? (
+              <>
+                <strong>{picked.length} screenshot{picked.length === 1 ? '' : 's'} ready</strong>
+                <span>Tap to add another</span>
+              </>
+            ) : (
+              <>
+                <strong>{compact ? 'Upload screenshots' : 'Drop payment screenshots here'}</strong>
+                <span>one per payment · PNG, JPG, WebP</span>
+              </>
+            )
+          ) : file ? (
             <>
               <strong>{file.name}</strong>
               <span>Tap to replace</span>
@@ -85,7 +129,39 @@ export function SubmitSlotFileDrop({
             </>
           )}
         </div>
+        {file && !multiple && (
+          <button
+            type="button"
+            className="submit-slot-drop-remove"
+            aria-label={`Remove ${file.name}`}
+            onClick={ev => {
+              ev.stopPropagation()
+              onFile(null)
+            }}
+          >
+            ×
+          </button>
+        )}
       </div>
+      {multiple && picked.length > 0 && (
+        <ul className="submit-slot-drop-list">
+          {picked.map((f, index) => (
+            <li className="submit-slot-drop-list__item" key={`${f.name}-${f.size}-${index}`}>
+              {thumbs[index] ? <img src={thumbs[index]} alt="" /> : null}
+              <span className="submit-slot-drop-list__name">{f.name}</span>
+              <button
+                type="button"
+                className="submit-slot-drop-list__remove"
+                aria-label={`Remove ${f.name}`}
+                disabled={disabled || busy}
+                onClick={() => onFiles(picked.filter((_, other) => other !== index))}
+              >
+                ×
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
       {hint ? <p className="submit-slot-drop-hint">{hint}</p> : null}
     </div>
   )
