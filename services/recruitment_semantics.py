@@ -452,11 +452,11 @@ def classify_context(
         and any(token in lowered for token in ("selected", "selection", "offer", "shortlisted for offer", "cleared the round", "cleared l1", "cleared l2"))
     )) and not is_visa_or_tender_spam
     selected = (any(phrase in lowered for phrase in (
-        "you have been selected for", "you are selected for", "selected for the role", "selected for the position",
+        "you have been selected", "you are selected", "selected for the role", "selected for the position",
         "selected for the post", "selection has been confirmed", "final selection confirmed",
         "congratulations on your selection", "selection confirmation", "shortlisted for offer",
         "shortlisted for the offer", "congratulations – you have been selected",
-    )) or bool(re.search(r"\bcongratulations.{0,40}\bselected for\b", lowered))) and not is_visa_or_tender_spam
+    )) or bool(re.search(r"\bcongratulations.{0,40}\bselected\b", lowered))) and not is_visa_or_tender_spam
     interview_cancelled = bool(re.search(
         r"(?:\binterview\b.{0,80}\b(?:cancelled|canceled|called off)\b|\b(?:cancelled|canceled|called off)\b.{0,80}\binterview\b)",
         lowered,
