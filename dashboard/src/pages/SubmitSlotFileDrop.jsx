@@ -86,19 +86,19 @@ export function SubmitSlotFileDrop({
           tabIndex={-1}
         />
         {previewUrl ? (
-          <div className="submit-slot-drop-preview">
+          <div className="submit-slot-drop-thumb">
             <img src={previewUrl} alt="" />
           </div>
         ) : file && !multiple ? (
           <div className="submit-slot-drop-icon submit-slot-drop-icon--file" aria-hidden="true">
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
               <path d="M6 2h8l4 4v16H6z" strokeLinejoin="round" />
               <path d="M14 2v5h5" strokeLinejoin="round" />
             </svg>
           </div>
         ) : (
           <div className="submit-slot-drop-icon" aria-hidden="true">
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
               <path d="M12 16V4m0 0L8 8m4-4 4 4" strokeLinecap="round" strokeLinejoin="round" />
               <path d="M4 14v2a4 4 0 004 4h8a4 4 0 004-4v-2" strokeLinecap="round" />
             </svg>

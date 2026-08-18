@@ -230,45 +230,36 @@ function SlotCandidatePicker({ candidates, value, onChange, disabled }) {
   )
 }
 
-/** Payment AI extraction result card — shown in the public slot booking form after proof upload */
+function formatFriendlyShortDate(iso) {
+  if (!iso) return ''
+  try {
+    const d = new Date(`${iso}T12:00:00`)
+    return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })
+  } catch { return iso }
+}
+
+/** Compact payment result row — single line: ✓ ₹2,000 | UTR xxxx | PhonePe | 18 Aug */
 function PaymentAiResultCard({ ai }) {
   if (!ai) return null
   const verified = ai.verified
   const amount = ai.amount ? `₹${Number(ai.amount).toLocaleString('en-IN')}` : null
-  const utr = ai.utr_number || ai.reference_number || null
-  const app = ai.payment_app || null
+  const utr = ai.utr_number || ai.reference_number || (ai.transaction_id ? String(ai.transaction_id).slice(-8) : null)
+  const app = ai.payment_app || 'PhonePe'
+  const date = ai.payment_date ? formatFriendlyShortDate(ai.payment_date) : ''
   const status = ai.status || 'unknown'
-  const narrative = ai.narrative || ai.verification_result || null
-  const confidence = ai.confidence_score || 0
+  const isOk = verified || status === 'success'
 
-  const borderColor = verified ? 'rgba(34,197,94,0.35)' : status === 'failed' ? 'rgba(239,68,68,0.35)' : 'rgba(251,191,36,0.35)'
-  const bgColor = verified ? 'rgba(34,197,94,0.07)' : status === 'failed' ? 'rgba(239,68,68,0.06)' : 'rgba(251,191,36,0.06)'
-  const icon = verified ? '✓' : status === 'failed' ? '✗' : '⚠'
-  const iconColor = verified ? '#22c55e' : status === 'failed' ? '#ef4444' : '#fbbf24'
+  const parts = [
+    amount,
+    utr ? `UTR ${utr}` : null,
+    app,
+    date
+  ].filter(Boolean)
 
   return (
-    <div style={{ marginTop: '10px', padding: '10px 12px', borderRadius: '8px', background: bgColor, border: `1px solid ${borderColor}`, fontSize: '12px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: narrative ? '6px' : 0 }}>
-        <span style={{ fontWeight: 700, color: iconColor, fontSize: '14px' }}>{icon}</span>
-        <span style={{ fontWeight: 600, color: 'rgba(226,232,240,0.9)' }}>
-          {verified ? 'Payment verified' : status === 'failed' ? 'Payment failed' : 'Payment needs review'}
-        </span>
-        {confidence > 0 && (
-          <span style={{ marginLeft: 'auto', fontSize: '11px', color: 'rgba(148,163,184,0.7)' }}>
-            {ai.detected_by || ai.primary_model || 'AI'} · {confidence}%
-          </span>
-        )}
-      </div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 12px', color: 'rgba(226,232,240,0.8)', marginBottom: narrative ? '6px' : 0 }}>
-        {amount && <span>💰 {amount}</span>}
-        {utr && <span>🔖 UTR {utr}</span>}
-        {app && <span>📱 {app}</span>}
-        {ai.payment_date && <span>📅 {ai.payment_date}</span>}
-        {ai.sender_name && <span>👤 {ai.sender_name}</span>}
-      </div>
-      {narrative && (
-        <p style={{ margin: 0, color: 'rgba(203,213,225,0.85)', fontStyle: 'italic', lineHeight: 1.45 }}>{narrative}</p>
-      )}
+    <div className={`sbs-pay-item ${isOk ? 'sbs-pay-item--ok' : 'sbs-pay-item--warn'}`}>
+      <span className="sbs-pay-item__icon">{isOk ? '✓' : '⚠'}</span>
+      <span className="sbs-pay-item__text">{parts.join(' | ')}</span>
     </div>
   )
 }
@@ -339,7 +330,17 @@ export function SubmitSlotPage() {
     return null
   }, [parsedSlot, manualDate, manualTime, interviewRound])
 
-  const showManualSlotFields = Boolean(slotFile && !parsing && (!aiExtraction || aiExtraction.manual_fields_required || aiExtraction.confidence_score < 70))
+  const effectiveBookingDate = manualDate || parsedSlot?.date || ''
+  const isPastDate = (() => {
+    if (!effectiveBookingDate) return false
+    const today = new Date(); today.setHours(0,0,0,0)
+    const d = new Date(effectiveBookingDate + 'T00:00:00'); d.setHours(0,0,0,0)
+    return d < today
+  })()
+
+  const showManualSlotFields = Boolean(
+    slotFile && !parsing && (!aiExtraction || aiExtraction.manual_fields_required || aiExtraction.confidence_score < 70 || isPastDate)
+  )
   // Uploading a proof is no longer the same as having paid: instalments only
   // clear the fee once they add up, and the server decides when they do.
   const paymentComplete = Boolean(paymentProofIds.length && paymentTotals?.payment_complete)
@@ -425,7 +426,8 @@ export function SubmitSlotPage() {
 
         // Auto-fill fields (only if user hasn't manually edited them)
         const slot = {}
-        if (ext.interview_date && !userEditedFields.date) slot.date = ext.interview_date
+        const fixedDate = fixPastYear(ext.interview_date)
+        if (fixedDate && !userEditedFields.date) slot.date = fixedDate
         if ((ext.start_time || ext.time) && !userEditedFields.time) slot.time = normalizeTo12h(ext.start_time || ext.time)
         if ((ext.end_time || ext.time_end) && !userEditedFields.time_end) slot.time_end = normalizeTo12h(ext.end_time || ext.time_end)
         if (ext.meeting_platform) slot.platform = ext.meeting_platform
@@ -440,7 +442,7 @@ export function SubmitSlotPage() {
 
         console.log('[Invite extraction]', { raw: ext, mapped: slot })
         setParsedSlot(slot)
-        if (!userEditedFields.date) setManualDate(ext.interview_date || '')
+        if (!userEditedFields.date) setManualDate(fixedDate || '')
         if (!userEditedFields.time) setManualTime(normalizeTo12h(ext.start_time || ext.time || ''))
         setParsing(false)
         return
@@ -517,14 +519,6 @@ export function SubmitSlotPage() {
     finally { setBusy(false); setPaymentAnalysing(false) }
   }
 
-  const effectiveBookingDate = manualDate || parsedSlot?.date || ''
-  const isPastDate = (() => {
-    if (!effectiveBookingDate) return false
-    const today = new Date(); today.setHours(0,0,0,0)
-    const d = new Date(effectiveBookingDate + 'T00:00:00'); d.setHours(0,0,0,0)
-    return d < today
-  })()
-
   async function submitBook(ev) {
     ev.preventDefault()
     if (parsing) {
@@ -589,19 +583,12 @@ export function SubmitSlotPage() {
   }
 
   const TrustBadges = () => (
-    <div className="sbs-trust">
-      <div className="sbs-trust__item">
-        <span className="sbs-trust__icon sbs-trust__icon--green"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span>
-        <div><div className="sbs-trust__title">Secure &amp; Private</div><div className="sbs-trust__sub">Your data is safe with us</div></div>
-      </div>
-      <div className="sbs-trust__item">
-        <span className="sbs-trust__icon sbs-trust__icon--purple"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2" strokeLinecap="round"/></svg></span>
-        <div><div className="sbs-trust__title">Smart Detection</div><div className="sbs-trust__sub">We read date &amp; time automatically</div></div>
-      </div>
-      <div className="sbs-trust__item">
-        <span className="sbs-trust__icon sbs-trust__icon--blue"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 6L9 17l-5-5"/></svg></span>
-        <div><div className="sbs-trust__title">Instant Confirmation</div><div className="sbs-trust__sub">Get confirmation as soon as you book</div></div>
-      </div>
+    <div className="sbs-trust-compact">
+      <span>🔒 Secure &amp; Private</span>
+      <span className="sbs-trust-dot">•</span>
+      <span>⚡ Smart Detection</span>
+      <span className="sbs-trust-dot">•</span>
+      <span>✓ Instant Confirmation</span>
     </div>
   )
 
@@ -802,9 +789,11 @@ export function SubmitSlotPage() {
                           ? `Payment proof on file ✓ · ₹${(paymentTotals?.verified_total || 0).toLocaleString('en-IN')} across ${paymentProofIds.length} screenshot${paymentProofIds.length === 1 ? '' : 's'}`
                           : `₹${(paymentTotals?.verified_total || 0).toLocaleString('en-IN')} verified so far · ₹${(paymentTotals?.remaining_due || 0).toLocaleString('en-IN')} still to upload`}
                       </p>
-                      {paymentAiResults.map((ai, index) => (
-                        <PaymentAiResultCard key={ai.utr_number || ai.transaction_id || index} ai={ai} />
-                      ))}
+                      <div className="sbs-pay-list">
+                        {paymentAiResults.map((ai, index) => (
+                          <PaymentAiResultCard key={ai.utr_number || ai.transaction_id || index} ai={ai} />
+                        ))}
+                      </div>
                     </>
                   )}
                   {paymentRejected.map((item, index) => (
@@ -848,44 +837,34 @@ export function SubmitSlotPage() {
               {aiBlocked && <div className="sbs-alert sbs-alert--error" role="alert">{aiBlocked}</div>}
 
               {aiExtraction && !aiBlocked && aiExtraction.confidence_score > 0 && (
-                <div className="sbs-detected">
-                  <span className={`sbs-detected__badge ${aiExtraction.confidence_score >= 90 ? 'sbs-detected__badge--green' : aiExtraction.confidence_score >= 70 ? 'sbs-detected__badge--yellow' : 'sbs-detected__badge--red'}`}>
-                    {aiExtraction.detected_by
-                      ? `Detected by ${aiExtraction.detected_by} · ${aiExtraction.confidence_score}%`
-                      : `AI · ${aiExtraction.confidence_score}%`}
-                  </span>
-                  <div className="sbs-detected__main">
-                    {aiExtraction.interview_date && <span className="sbs-detected__date">{formatFriendlyDate(aiExtraction.interview_date)}</span>}
-                    {aiExtraction.start_time && <span className="sbs-detected__time">{aiExtraction.start_time}{aiExtraction.end_time ? ` – ${aiExtraction.end_time}` : ''}</span>}
-                  </div>
-                  <div className="sbs-detected__chips">
-                    {uniqueNonEmptyTags([
-                      aiExtraction.interview_round,
-                      aiExtraction.technology,
+                <div className="sbs-detected-compact">
+                  <span className="sbs-detected-compact__check">✓</span>
+                  <span className="sbs-detected-compact__text">
+                    {[
+                      aiExtraction.interview_date ? formatFriendlyDate(aiExtraction.interview_date) : '',
+                      aiExtraction.start_time ? aiExtraction.start_time + (aiExtraction.end_time ? ` – ${aiExtraction.end_time}` : '') : '',
+                      aiExtraction.interview_round ? `${aiExtraction.interview_round} Discussion` : '',
                       aiExtraction.meeting_platform ? platformLabel(aiExtraction.meeting_platform) : '',
-                      aiExtraction.screenshot_source,
-                    ]).map((tag, i) => (
-                      <span key={i} className={`sbs-chip${i > 0 ? ' sbs-chip--muted' : ''}`}>{tag}</span>
-                    ))}
-                  </div>
+                      aiExtraction.confidence_score ? `${aiExtraction.confidence_score}%` : ''
+                    ].filter(Boolean).join(' • ')}
+                  </span>
                   {aiExtraction.warnings && aiExtraction.warnings.length > 0 && (
-                    <div className="sbs-detected__warnings">{aiExtraction.warnings.map((w, i) => <span key={i} className="sbs-hint sbs-hint--warn">{w}</span>)}</div>
+                    <div className="sbs-detected-compact__warnings">{aiExtraction.warnings.map((w, i) => <span key={i} className="sbs-hint sbs-hint--warn">{w}</span>)}</div>
                   )}
                 </div>
               )}
 
               {!aiExtraction && parsedSlot?.date && parsedSlot?.time && (
-                <div className="sbs-detected">
-                  <span className="sbs-detected__badge">Detected</span>
-                  <div className="sbs-detected__main">
-                    <span className="sbs-detected__date">{formatFriendlyDate(parsedSlot.date)}</span>
-                    <span className="sbs-detected__time">{formatFriendlyTime(parsedSlot.time)}{parsedSlot.time_end ? ` – ${formatFriendlyTime(parsedSlot.time_end)}` : ''}</span>
-                  </div>
-                  <div className="sbs-detected__chips">
-                    {parsedSlot.interview_round && <span className="sbs-chip">{parsedSlot.interview_round}</span>}
-                    {parsedSlot.technology && <span className="sbs-chip sbs-chip--muted">{parsedSlot.technology}</span>}
-                    {parsedSlot.platform && <span className="sbs-chip sbs-chip--muted">{platformLabel(parsedSlot.platform)}</span>}
-                  </div>
+                <div className="sbs-detected-compact">
+                  <span className="sbs-detected-compact__check">✓</span>
+                  <span className="sbs-detected-compact__text">
+                    {[
+                      formatFriendlyDate(parsedSlot.date),
+                      formatFriendlyTime(parsedSlot.time) + (parsedSlot.time_end ? ` – ${formatFriendlyTime(parsedSlot.time_end)}` : ''),
+                      parsedSlot.interview_round ? `${parsedSlot.interview_round} Discussion` : '',
+                      parsedSlot.platform ? platformLabel(parsedSlot.platform) : ''
+                    ].filter(Boolean).join(' • ')}
+                  </span>
                 </div>
               )}
 
