@@ -745,13 +745,28 @@ def extract_payment_with_ollama(
         if not result.get("confidence_score") and isinstance(
             result.get("confidence"), dict
         ):
-            confidence_values = [
-                float(value)
-                for value in result["confidence"].values()
-                if isinstance(value, (int, float))
-            ]
-            if confidence_values:
-                average = sum(confidence_values) / len(confidence_values)
+            confidence_dict = result["confidence"]
+            relevant_values = []
+            for field, value in confidence_dict.items():
+                if not isinstance(value, (int, float)):
+                    continue
+                if value == 0.0 and field in {
+                    "receiver_phone_number",
+                    "sender_phone_number",
+                    "transaction_id",
+                    "utr",
+                    "receiver_account_identifier",
+                    "receiver_upi_id",
+                }:
+                    if not result.get(field):
+                        continue
+                relevant_values.append(float(value))
+            if not relevant_values:
+                relevant_values = [
+                    float(v) for v in confidence_dict.values() if isinstance(v, (int, float))
+                ]
+            if relevant_values:
+                average = sum(relevant_values) / len(relevant_values)
                 result["confidence_score"] = round(
                     average if average > 1 else average * 100
                 )
