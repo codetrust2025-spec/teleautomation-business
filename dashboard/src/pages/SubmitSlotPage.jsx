@@ -238,8 +238,11 @@ export function SubmitSlotPage() {
   const [parsedSlot, setParsedSlot] = useState(null)
   const [slotFile, setSlotFile] = useState(null)
   const [slotPreview, setSlotPreview] = useState('')
-  const [paymentProofId, setPaymentProofId] = useState('')
-  const [paymentFile, setPaymentFile] = useState(null)
+  // A fee paid in instalments produces one proof per transfer, so the booking
+  // carries a list of proof ids rather than a single one.
+  const [paymentProofIds, setPaymentProofIds] = useState([])
+  const [paymentFiles, setPaymentFiles] = useState([])
+  const [paymentTotals, setPaymentTotals] = useState(null)
   const [sessionFile, setSessionFile] = useState(null)
   const [sessionPreview, setSessionPreview] = useState('')
   const [manualDate, setManualDate] = useState('')
@@ -251,7 +254,8 @@ export function SubmitSlotPage() {
   const [aiExtraction, setAiExtraction] = useState(null)
   const [aiBlocked, setAiBlocked] = useState('')
   const [userEditedFields, setUserEditedFields] = useState({})
-  const [paymentAiResult, setPaymentAiResult] = useState(null)
+  const [paymentAiResults, setPaymentAiResults] = useState([])
+  const [paymentRejected, setPaymentRejected] = useState([])
   const [paymentAnalysing, setPaymentAnalysing] = useState(false)
 
   const effectiveName = name.trim()
@@ -270,7 +274,18 @@ export function SubmitSlotPage() {
   }, [parsedSlot, manualDate, manualTime, interviewRound])
 
   const showManualSlotFields = Boolean(slotFile && !parsing && (!aiExtraction || aiExtraction.manual_fields_required || aiExtraction.confidence_score < 70))
-  const needsPaymentProof = Boolean(selected?.needs_payment_proof && !paymentProofId)
+  // Uploading a proof is no longer the same as having paid: instalments only
+  // clear the fee once they add up, and the server decides when they do.
+  const paymentComplete = Boolean(paymentProofIds.length && paymentTotals?.payment_complete)
+  const needsPaymentProof = Boolean(selected?.needs_payment_proof && !paymentComplete)
+
+  const resetPaymentProofs = useCallback(() => {
+    setPaymentProofIds([])
+    setPaymentFiles([])
+    setPaymentTotals(null)
+    setPaymentAiResults([])
+    setPaymentRejected([])
+  }, [])
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -378,19 +393,28 @@ export function SubmitSlotPage() {
   }
 
   async function uploadPaymentProof() {
-    if (!effectiveName || !paymentFile) { setError('Enter your name and attach a payment screenshot first.'); return }
-    setBusy(true); setError(''); setSuccess(''); setPaymentAiResult(null); setPaymentAnalysing(true)
+    if (!effectiveName || !paymentFiles.length) { setError('Enter your name and attach at least one payment screenshot first.'); return }
+    setBusy(true); setError(''); setSuccess(''); setPaymentRejected([]); setPaymentAnalysing(true)
     try {
-      const fd = new FormData(); fd.append('name', effectiveName); fd.append('file', paymentFile)
+      const fd = new FormData()
+      fd.append('name', effectiveName)
+      // Every screenshot goes in one request; ids already saved are sent back
+      // so instalments uploaded across several attempts still add together.
+      paymentFiles.forEach(f => fd.append('files', f))
+      fd.append('existing_proof_ids', paymentProofIds.join(','))
       const res = await fetch(`${API_BASE}/public/slots/payment-proof`, { method: 'POST', body: fd })
       const data = await res.json()
+      setPaymentRejected(data.rejected || [])
       if (!res.ok) { setError(data.message || 'Payment upload failed'); return }
-      setPaymentProofId(data.proof_id || ''); setPaymentFile(null)
-      setSuccess('Payment proof saved — you can confirm your slot.')
-      // Capture AI extraction result that backend already ran during upload
-      if (data.ai_extraction && data.ai_extraction.is_payment_screenshot) {
-        setPaymentAiResult(data.ai_extraction)
-      }
+      setPaymentProofIds(data.proof_ids || [])
+      setPaymentTotals(data)
+      setPaymentFiles([])
+      // Every accepted screenshot keeps the AI reading the backend already ran.
+      setPaymentAiResults([
+        ...paymentAiResults,
+        ...(data.ai_extractions || []).filter(ai => ai && ai.is_payment_screenshot),
+      ])
+      if (data.payment_complete) setSuccess('Payment proof saved — you can confirm your slot.')
     } catch { setError('Network error — try again') }
     finally { setBusy(false); setPaymentAnalysing(false) }
   }
@@ -431,7 +455,7 @@ export function SubmitSlotPage() {
       if (bookingSlot?.technology) fd.append('technology', bookingSlot.technology)
       if (serviceType === 'round_wise') fd.append('phone', roundWisePhone.trim())
       fd.append('candidate_id', selected?.id || '')
-      if (paymentProofId) fd.append('payment_proof_id', paymentProofId)
+      if (paymentProofIds.length) fd.append('payment_proof_ids', paymentProofIds.join(','))
       // Confirmation must be idempotent: a retry or double submit has to resolve
       // to the same booking rather than creating a second one.
       fd.append(
@@ -444,7 +468,7 @@ export function SubmitSlotPage() {
           bookingSlot?.time || '',
           bookingSlot?.time_end || '',
           bookingSlot?.interview_round || '',
-          paymentProofId,
+          paymentProofIds.join(','),
         ].join('|'),
       )
       fd.append('file', slotFile)
@@ -454,7 +478,7 @@ export function SubmitSlotPage() {
       const data = await res.json()
       if (!res.ok) { setError(data.payment_due ? (data.message || 'Payment required.') : (data.message || 'Could not book slot')); return }
       if (slotPreview) URL.revokeObjectURL(slotPreview)
-      setSlotFile(null); setSlotPreview(''); setParsedSlot(null); setManualDate(''); setManualTime(''); setInterviewRound(''); setServiceType('profile_service'); setPaymentProofId('')
+      setSlotFile(null); setSlotPreview(''); setParsedSlot(null); setManualDate(''); setManualTime(''); setInterviewRound(''); setServiceType('profile_service'); resetPaymentProofs()
       setName(''); setRoundWisePhone('')
       setTriedSubmit(false)
       setSuccess(`Slot confirmed for ${data.candidate?.name || effectiveName}.`)
@@ -600,8 +624,8 @@ export function SubmitSlotPage() {
                   </button>
                   {showServiceDrop && (
                     <ul className="sbs-dropdown">
-                      <li className={`sbs-dropdown__item${serviceType === "round_wise" ? " sbs-dropdown__item--active" : ""}`} onMouseDown={e => e.preventDefault()} onClick={e => { e.stopPropagation(); setServiceType("round_wise"); setShowServiceDrop(false); setName(""); setPaymentProofId(""); }}>Round-wise</li>
-                      <li className={`sbs-dropdown__item${serviceType === "profile_service" ? " sbs-dropdown__item--active" : ""}`} onMouseDown={e => e.preventDefault()} onClick={e => { e.stopPropagation(); setServiceType("profile_service"); setShowServiceDrop(false); setName(""); setPaymentProofId(""); }}>Profile service</li>
+                      <li className={`sbs-dropdown__item${serviceType === "round_wise" ? " sbs-dropdown__item--active" : ""}`} onMouseDown={e => e.preventDefault()} onClick={e => { e.stopPropagation(); setServiceType("round_wise"); setShowServiceDrop(false); setName(""); resetPaymentProofs(); }}>Round-wise</li>
+                      <li className={`sbs-dropdown__item${serviceType === "profile_service" ? " sbs-dropdown__item--active" : ""}`} onMouseDown={e => e.preventDefault()} onClick={e => { e.stopPropagation(); setServiceType("profile_service"); setShowServiceDrop(false); setName(""); resetPaymentProofs(); }}>Profile service</li>
                     </ul>
                   )}
                 </div>
@@ -610,9 +634,9 @@ export function SubmitSlotPage() {
               <label className="sbs-field">
                 <span className="sbs-label">Client name</span>
                 {serviceType === "round_wise" ? (
-                  <input className="sbs-input" type="text" value={name} onChange={e => { setName(e.target.value); setPaymentProofId(''); }} placeholder="Type client name" disabled={busy || parsing} />
+                  <input className="sbs-input" type="text" value={name} onChange={e => { setName(e.target.value); resetPaymentProofs(); }} placeholder="Type client name" disabled={busy || parsing} />
                 ) : (
-                  <SlotCandidatePicker candidates={candidates} value={name} onChange={v => { setName(v); setPaymentProofId('') }} disabled={busy || parsing} />
+                  <SlotCandidatePicker candidates={candidates} value={name} onChange={v => { setName(v); resetPaymentProofs() }} disabled={busy || parsing} />
                 )}
                 {triedSubmit && !effectiveName
                   ? <span className="sbs-hint sbs-hint--warn">Enter client name to confirm.</span>
@@ -653,18 +677,41 @@ export function SubmitSlotPage() {
               {selected?.needs_payment_proof && (
                 <div className="sbs-pay-card">
                   <div className="sbs-pay-head"><span>Payment due</span><strong>₹{(selected.balance_due || 0).toLocaleString('en-IN')}</strong></div>
-                  {paymentProofId ? (
+                  {paymentProofIds.length > 0 && (
                     <>
-                      <p className="sbs-pay-ok">Payment proof on file ✓</p>
-                      {paymentAiResult && (
-                        <PaymentAiResultCard ai={paymentAiResult} />
-                      )}
+                      <p className={paymentComplete ? 'sbs-pay-ok' : 'sbs-pay-partial'}>
+                        {paymentComplete
+                          ? `Payment proof on file ✓ · ₹${(paymentTotals?.verified_total || 0).toLocaleString('en-IN')} across ${paymentProofIds.length} screenshot${paymentProofIds.length === 1 ? '' : 's'}`
+                          : `₹${(paymentTotals?.verified_total || 0).toLocaleString('en-IN')} verified so far · ₹${(paymentTotals?.remaining_due || 0).toLocaleString('en-IN')} still to upload`}
+                      </p>
+                      {paymentAiResults.map((ai, index) => (
+                        <PaymentAiResultCard key={ai.utr_number || ai.transaction_id || index} ai={ai} />
+                      ))}
                     </>
-                  ) : (
+                  )}
+                  {paymentRejected.map((item, index) => (
+                    <span className="sbs-hint sbs-hint--warn" key={`${item.filename}-${index}`}>
+                      {item.filename}: {item.message}
+                    </span>
+                  ))}
+                  {!paymentComplete && (
                     <>
-                      <SubmitSlotFileDrop compact label="Payment screenshot" file={paymentFile} disabled={busy || parsing} busy={busy || paymentAnalysing} onFile={f => { setPaymentFile(f); setPaymentAiResult(null) }} />
-                      <button type="button" className="sbs-secondary-btn" disabled={busy || parsing || paymentAnalysing || !paymentFile} onClick={uploadPaymentProof}>
-                        {paymentAnalysing ? <><Spinner size={14} />&nbsp;Analysing…</> : 'Save payment proof'}
+                      {/* Split payments are normal here — one screenshot per
+                          transfer, and the AI totals them for this booking. */}
+                      <SubmitSlotFileDrop
+                        compact
+                        multiple
+                        label={paymentProofIds.length ? 'Add remaining payment screenshots' : 'Payment screenshots'}
+                        hint="Paid in parts? Attach every payment screenshot — they are added up for this booking."
+                        files={paymentFiles}
+                        disabled={busy || parsing}
+                        busy={busy || paymentAnalysing}
+                        onFiles={next => { setPaymentFiles(next); setPaymentRejected([]) }}
+                      />
+                      <button type="button" className="sbs-secondary-btn" disabled={busy || parsing || paymentAnalysing || !paymentFiles.length} onClick={uploadPaymentProof}>
+                        {paymentAnalysing
+                          ? <><Spinner size={14} />&nbsp;Analysing {paymentFiles.length > 1 ? `${paymentFiles.length} screenshots` : ''}…</>
+                          : `Save payment proof${paymentFiles.length > 1 ? 's' : ''}`}
                       </button>
                       {triedSubmit && needsPaymentProof && <span className="sbs-hint sbs-hint--warn">Upload and save payment proof to confirm.</span>}
                     </>

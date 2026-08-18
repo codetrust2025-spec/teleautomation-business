@@ -149,3 +149,64 @@ def validate_for_confirmation(
     if fraud_check["decision"] == "rejected":
         raise ValueError(" ".join(fraud_check["reasons"]))
     return fraud_check
+
+
+def verified_amount(entry: dict) -> int:
+    """Rupees one pending proof is verified for.
+
+    Only a booking-eligible proof is worth anything, so an unverified upload
+    can never be counted toward what a split payment adds up to.
+    """
+    verification = dict((entry or {}).get("verification") or {})
+    if not verification.get("booking_eligible"):
+        return 0
+    return max(0, int(verification.get("amount") or 0))
+
+
+def transaction_identities(entry: dict) -> tuple[str, ...]:
+    """Every identifier naming the transaction behind one pending proof.
+
+    Mirrors `payment_receipts._secondary_identity`, so a screenshot that is
+    re-uploaded — cropped, renamed, or simply picked twice — collapses onto the
+    proof already accepted instead of adding its amount a second time.
+    """
+    verification = dict((entry or {}).get("verification") or {})
+    keys: list[str] = []
+    for kind, value in (
+        ("utr", verification.get("utr_number")),
+        ("transaction_id", verification.get("transaction_id")),
+        ("reference", verification.get("reference_number")),
+    ):
+        folded = "".join(str(value or "").lower().split())
+        if len(folded) >= 8:
+            keys.append(f"{kind}:{folded}")
+    digest = str((entry or {}).get("sha256") or "").strip().lower()
+    if digest:
+        keys.append(f"screenshot_sha256:{digest}")
+    return tuple(keys) or (f"pending_proof:{str((entry or {}).get('id') or '')}",)
+
+
+def unique_proofs(entries) -> list[dict]:
+    """Pending proofs with re-uploads of the same transaction removed."""
+    seen: set[str] = set()
+    kept: list[dict] = []
+    for entry in entries or []:
+        keys = transaction_identities(entry)
+        if any(key in seen for key in keys):
+            continue
+        seen.update(keys)
+        kept.append(entry)
+    return kept
+
+
+def verified_total(entries) -> int:
+    """Combined rupees across a split payment, each screenshot counted once."""
+    return sum(verified_amount(entry) for entry in unique_proofs(entries))
+
+
+def duplicates_existing(entry: dict, existing) -> bool:
+    """True when this proof is the same transaction as one already accepted."""
+    seen: set[str] = set()
+    for other in existing or []:
+        seen.update(transaction_identities(other))
+    return any(key in seen for key in transaction_identities(entry))
