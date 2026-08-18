@@ -1,4 +1,4 @@
-﻿"""Deep scan candidate emails and backfill genuine missed notifications."""
+"""Deep scan candidate emails and backfill genuine missed notifications."""
 from __future__ import annotations
 
 import argparse
@@ -34,12 +34,13 @@ def is_job_portal_or_newsletter_or_noise(subject: str, body: str, sender_email: 
         "udemy.com", "coursera.com", "geeksforgeeks.org", "leetcode.com",
         "hackerrank.com", "hackerearth.com", "medium.com", "quora.com",
         "github.com", "gitlab.com", "atlassian.net", "substack.com",
-        "mailer.daffodilsw.com", "notifications.freelancer.com", "upwork.com"
+        "mailer.daffodilsw.com", "notifications.freelancer.com", "upwork.com",
+        "google.com", "googlemail.com", "e.google.com"
     )
     for domain in portal_domains:
         if domain in sender:
-            # If it's a portal domain, only allow if it's an explicit offer or selection letter directly addressed
-            if not any(token in combined for token in ("offer letter attached", "we are pleased to offer you", "formal offer of employment", "appointment letter")):
+            # If it's a portal domain, only allow if it's an explicit offer letter or BGV directly addressed
+            if not any(token in combined for token in ("offer letter attached", "we are pleased to offer you", "formal offer of employment", "appointment letter", "invitation - digital employment")):
                 return True
 
     noise_patterns = (
@@ -51,6 +52,21 @@ def is_job_portal_or_newsletter_or_noise(subject: str, body: str, sender_email: 
         r"\bbatch starting\b", r"\benroll now\b", r"\blearn react\b",
         r"\blearn python\b", r"\bsalary insights\b", r"\bcompany reviews\b",
         r"\binterview questions of\b", r"\bhow to crack\b",
+        r"\bwork permit\b", r"\bpr visa\b", r"\bvisa assistance\b",
+        r"\bgovernment tender\b", r"\bemd-free\b", r"\bcareer gap\b",
+        r"\bexperience letters from\b", r"\bintroducing gemini\b",
+        r"\bthanks for submitting your application\b",
+        r"\bapplication has been physically reviewed\b",
+        r"\btime to schedule your interview\b",
+        r"\byour availability required\b",
+        r"\bwe’re looking forward to your interview\b",
+        r"\bwe're looking forward to your interview\b",
+        r"\binterview has been successfully scheduled\b",
+        r"\binterview confirmation mail\b",
+        r"\binterview link\b",
+        r"\btalview:\b",
+        r"\bimportant update about your.*application\b",
+        r"\bnext steps for your.*application\b",
     )
     # If the mail matches promotional patterns and lacks strong direct outcome phrases:
     strong_outcome = any(token in combined for token in (

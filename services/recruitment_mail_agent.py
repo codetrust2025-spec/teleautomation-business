@@ -227,10 +227,9 @@ STATUS_SIGNALS = [
     ("OFFER_REVOKED", ("offer has been revoked", "withdrawn the offer", "offer stands withdrawn", "offer is rescinded")),
     ("JOINING_DATE_UPDATED", ("revised joining date", "joining date has changed", "joining date has moved", "updated date of joining", "new joining date")),
     ("BACKGROUND_VERIFICATION", ("background verification", "pre-employment verification", "background check", "digital employment", "digiverifier", "bgv_", "loa accepetence", "loa acceptance")),
-    ("DOCUMENT_VERIFICATION", ("document verification", "submit employment documents", "documents for verification")),
-    ("HR_CONFIRMATION", ("minimal documents", "documentation", "capgemini documenation", "documents required for offer", "submit your documents", "pre-offer document", "pre-offer", "uan number and updated cv", "documents required for onboarding", "post selection document")),
+    ("HR_CONFIRMATION", ("minimal documents", "capgemini documenation", "capgemini documentation", "documents required for offer", "documents required - ey", "documents required for onboarding", "pre-offer documents", "pre-offer document", "uan number and updated cv", "post selection document", "ltimindtree selection process - pre-offer")),
     ("COMPENSATION_CONFIRMATION", ("compensation confirmation", "confirmed compensation", "annual ctc is", "salary package is")),
-    ("FINAL_ROUND_CLEARED", ("cleared the final round", "cleared all rounds", "cleared the technical round", "cleared the interview", "successfully cleared the l1", "successfully cleared the l2", "cleared the l1", "cleared the l2", "cleared l1", "cleared l2", "final round cleared", "interview cleared", "feedback is positive", "cleared the screening")),
+    ("FINAL_ROUND_CLEARED", ("cleared the final round", "cleared all rounds", "cleared the technical round", "successfully cleared the l1", "successfully cleared the l2", "cleared the l1 round", "cleared the l2 round", "cleared the l1", "cleared the l2", "cleared l1", "cleared l2", "final round cleared")),
     # Shortlisting is an outcome in its own right, not only a preamble to an
     # interview. These phrases used to require the word "interview" right after
     # "shortlisted for", so a plain selection mail — "your profile is

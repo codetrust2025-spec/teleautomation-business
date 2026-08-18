@@ -394,6 +394,19 @@ def classify_context(
     historical = payslip or document_type in {"EXPERIENCE_LETTER", "RELIEVING_LETTER", "EMPLOYMENT_VERIFICATION"}
 
     lowered = direct.casefold()
+
+    # Fraud / disclaimer / marketing noise guard
+    has_fraud_disclaimer = any(phrase in lowered for phrase in (
+        "fake job offer", "beware of fake", "does not charge any fee", "never asks for fees",
+        "never charges any fee", "never charges a fee", "does not charge fee", "no fees are charged",
+        "fraudulent job", "caution against fraudulent", "recruitment disclaimer",
+        "fraud alert", "job scam",
+    ))
+    is_visa_or_tender_spam = any(phrase in lowered for phrase in (
+        "work permit abroad", "pr visa", "visa assistance", "government tender", "emd-free",
+        "career gap", "experience letters from pvt", "introducing gemini",
+    ))
+
     actual_joined = any(re.search(pattern, lowered) for pattern in (
         r"\bofficially joined\b", r"\bjoined (?:the company|[a-z0-9 &.-]+) today\b",
         r"\bemployment commenced\b", r"\bstarted (?:employment|working) (?:today|on)\b",
@@ -403,43 +416,47 @@ def classify_context(
         r"\bjoining date (?:is|has been) confirmed\b", r"\byour (?:date of joining|joining date) (?:is|will be)\b",
         r"\bplease join on\b", r"\breport for joining on\b", r"\bjoining is confirmed\b", r"\bjoining confirmed\b",
         r"\bdigital employment\b", r"\bdigiverifier\b", r"\bbgv[_\s-]", r"\bbackground verification\b",
-        r"\bloa accepetence\b", r"\bloa acceptance\b", r"\bwelcome to the team\b",
-        r"\bwelcome aboard\b", r"\bwelcome to the organization\b", r"\bpost-selection onboarding\b",
-    ))
-    offer_received = any(phrase in lowered for phrase in (
+        r"\bloa accepetence\b", r"\bloa acceptance\b", r"\bwelcome aboard\b", r"\bwelcome to the organization\b",
+        r"\bpost-selection onboarding\b", r"\bwelcome to kaivale technologies - bgv\b",
+    )) and not is_visa_or_tender_spam
+    offer_received = (any(phrase in lowered for phrase in (
         "we are pleased to offer you", "we are delighted to offer you", "pleased to offer you",
-        "pleased to extend an offer", "offer letter attached", "offer of employment",
+        "pleased to extend an offer", "pleased to extend our offer", "offer letter attached",
         "offer letter inside", "offer letter has been", "appointment letter attached",
-        "letter of appointment", "formal offer of employment", "deployment with",
-        "fulltime with", "intent to offer", "offer released", "job offer",
+        "letter of appointment", "formal offer of employment", "intent offer letter",
+        "intent to offer", "offer released", "congratulations – you have been selected",
+        "interview result – selected", "extending an offer of employment",
     )) or any(re.search(pattern, lowered) for pattern in (
         r"\boffer letter\b", r"\bappointment letter\b", r"\bcongratulations, you're in!\b",
         r"\bpleased to extend (?:an|our) offer\b",
-    ))
+        r"\bformal (?:job )?offer\b",
+    ))) and not has_fraud_disclaimer and not is_visa_or_tender_spam
     offer_accepted = any(phrase in lowered for phrase in (
         "we have received your acceptance", "your offer acceptance is confirmed",
         "accepted the offer", "offer has been accepted", "accepted your offer",
+        "offer acceptance -",
     ))
-    final_round_cleared = any(phrase in lowered for phrase in (
+    final_round_cleared = (any(phrase in lowered for phrase in (
         "cleared the final round", "cleared all rounds", "cleared the technical round",
-        "cleared the interview", "successfully cleared the l1", "successfully cleared the l2",
+        "successfully cleared the l1", "successfully cleared the l2",
+        "cleared the l1 round", "cleared the l2 round",
         "cleared the l1", "cleared the l2", "cleared l1", "cleared l2", "final round cleared",
-        "interview cleared", "feedback is positive", "cleared the screening",
-    )) or bool(re.search(r"\bsuccessfully cleared the (?:l[1-5]|technical|final|hr) round\b", lowered))
-    hr_confirmation = any(phrase in lowered for phrase in (
-        "minimal documents", "documentation", "capgemini documenation", "documents required for offer",
-        "submit your documents", "pre-offer document", "pre-offer", "uan number and updated cv",
-        "documents required for onboarding", "post selection document",
+    )) or bool(re.search(r"\bsuccessfully cleared the (?:l[1-5]|technical|final|hr) round\b", lowered))) and not is_visa_or_tender_spam
+    hr_confirmation = (any(phrase in lowered for phrase in (
+        "minimal documents", "capgemini documenation", "capgemini documentation",
+        "documents required for offer", "documents required - ey", "documents required for onboarding",
+        "pre-offer documents", "pre-offer document", "uan number and updated cv",
+        "post selection document", "ltimindtree selection process - pre-offer",
     )) or (
         any(phrase in lowered for phrase in ("salary discussion", "ctc discussion", "salary negotiation", "ctc breakdown", "hr discussion", "compensation discussion"))
-        and any(token in lowered for token in ("selected", "selection", "offer", "shortlisted", "cleared", "congratulations", "pleased to", "delighted to", "l1", "l2", "round"))
-    )
-    selected = any(phrase in lowered for phrase in (
-        "you have been selected", "you are selected", "selected for the role", "selected for the position",
+        and any(token in lowered for token in ("selected", "selection", "offer", "shortlisted for offer", "cleared the round", "cleared l1", "cleared l2"))
+    )) and not is_visa_or_tender_spam
+    selected = (any(phrase in lowered for phrase in (
+        "you have been selected for", "you are selected for", "selected for the role", "selected for the position",
         "selected for the post", "selection has been confirmed", "final selection confirmed",
         "congratulations on your selection", "selection confirmation", "shortlisted for offer",
-        "shortlisted for the offer", "shortlisted for further process",
-    )) or bool(re.search(r"\bcongratulations.{0,40}\bselected\b", lowered))
+        "shortlisted for the offer", "congratulations – you have been selected",
+    )) or bool(re.search(r"\bcongratulations.{0,40}\bselected for\b", lowered))) and not is_visa_or_tender_spam
     interview_cancelled = bool(re.search(
         r"(?:\binterview\b.{0,80}\b(?:cancelled|canceled|called off)\b|\b(?:cancelled|canceled|called off)\b.{0,80}\binterview\b)",
         lowered,
