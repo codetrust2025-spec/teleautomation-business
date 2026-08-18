@@ -8,7 +8,8 @@ import { InlineLoader, OverlayLoader } from "../Loader.jsx";
 
 // Important candidate employment outcomes and actionable interview activity.
 const TRACKED_CLASSIFICATIONS = [
-  "job_selection_confirmed", "offer_received", "offer_accepted",
+  "job_selection_confirmed", "offer_received", "final_round_cleared",
+  "hr_confirmation", "offer_accepted",
   "offer_declined", "offer_revoked", "joining_confirmed",
   "joining_date_updated", "onboarding_started", "background_verification",
   "document_verification", "compensation_confirmation",
@@ -17,7 +18,8 @@ const TRACKED_CLASSIFICATIONS = [
 ];
 // Tracked categories for the compact notification-type filter.
 const JOB_CONFIRMED_CLASSIFICATIONS = [
-  "job_selection_confirmed", "offer_received", "offer_accepted",
+  "job_selection_confirmed", "offer_received", "final_round_cleared",
+  "hr_confirmation", "offer_accepted",
   "offer_declined", "offer_revoked", "joining_confirmed",
   "joining_date_updated", "onboarding_started", "background_verification",
   "document_verification", "compensation_confirmation", "candidate_rejected",
@@ -44,11 +46,11 @@ export function mailStatusTone(item = {}) {
     .filter(Boolean)
     .join(" ")
     .toLowerCase();
-  if (/automatically booked|auto booked|already booked|approved.*booked|joining confirmed|selection confirmed|offer accepted/.test(status)) return "success";
+  if (/automatically booked|auto booked|already booked|approved.*booked|joining confirmed|selection confirmed|selected|offer accepted|offer received/.test(status)) return "success";
+  if (/final round cleared|interview confirmed|rescheduled/.test(status)) return "info";
+  if (/hr confirmation|document verification|documents requested|compensation confirmation|booking blocked|blocked/.test(status)) return "warning";
   if (/processing failed|cancelled|rejected|failed/.test(status)) return "danger";
-  if (/booking blocked|blocked/.test(status)) return "warning";
   if (/needs review|review required|pending review|review only/.test(status)) return "review";
-  if (/rescheduled|interview confirmed|offer received/.test(status)) return "info";
   return "neutral";
 }
 

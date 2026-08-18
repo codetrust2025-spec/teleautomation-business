@@ -10,12 +10,15 @@ def test_every_requested_classification_is_stable():
         'background_verification','document_verification','compensation_confirmation',
         'interview_update','interview_shortlisted','interview_confirmed','interview_rescheduled',
         'interview_cancelled','candidate_rejected','needs_review','not_relevant',
+        'final_round_cleared','hr_confirmation',
     }
 
 
 def test_legacy_statuses_map_without_breaking_existing_records():
     assert store.canonical_classification(status='OFFER_LETTER_RECEIVED') == 'offer_received'
     assert store.canonical_classification(status='FINAL_SELECTION_CONFIRMED') == 'job_selection_confirmed'
+    assert store.canonical_classification(status='FINAL_ROUND_CLEARED') == 'final_round_cleared'
+    assert store.canonical_classification(status='HR_CONFIRMATION') == 'hr_confirmation'
     assert store.canonical_classification(status='INTERVIEW_UPDATE') == 'interview_update'
     assert store.canonical_classification(status='INTERVIEW_CONFIRMED') == 'interview_confirmed'
 

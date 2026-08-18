@@ -19,6 +19,8 @@ EMAIL_INTENTS = {
     "OFFER_ACCEPTANCE", "JOINING_CONFIRMATION",
     "ACTUAL_JOINING_CONFIRMATION", "REJECTION", "DOCUMENT_SUBMISSION",
     "EMPLOYMENT_DOCUMENT", "GENERAL", "UNKNOWN",
+    "FINAL_ROUND_CLEARED", "HR_CONFIRMATION", "DOCUMENT_VERIFICATION",
+    "BACKGROUND_VERIFICATION", "COMPENSATION_CONFIRMATION",
 }
 
 DOCUMENT_TYPES = {
@@ -30,10 +32,12 @@ DOCUMENT_TYPES = {
 }
 
 LIFECYCLE_EVENTS = {
-    "NONE", "SELECTED", "FINAL_SELECTION_CONFIRMED", "OFFER_INDICATION",
-    "OFFER_IN_PROGRESS", "OFFER_APPROVED", "OFFER_LETTER_RECEIVED",
-    "APPOINTMENT_LETTER_RECEIVED", "OFFER_ACCEPTED", "JOINING_CONFIRMED",
-    "JOINED", "POST_SELECTION_ONBOARDING",
+    "NONE", "SELECTED", "FINAL_SELECTION_CONFIRMED", "FINAL_ROUND_CLEARED",
+    "OFFER_INDICATION", "OFFER_IN_PROGRESS", "OFFER_APPROVED",
+    "OFFER_LETTER_RECEIVED", "APPOINTMENT_LETTER_RECEIVED", "OFFER_ACCEPTED",
+    "OFFER_RECEIVED", "JOINING_CONFIRMED", "JOINED", "POST_SELECTION_ONBOARDING",
+    "BACKGROUND_VERIFICATION", "DOCUMENT_VERIFICATION", "HR_CONFIRMATION",
+    "COMPENSATION_CONFIRMATION",
 }
 
 INTERVIEW_EVENTS = {
@@ -397,20 +401,45 @@ def classify_context(
     ))
     joining_confirmed = any(re.search(pattern, lowered) for pattern in (
         r"\bjoining date (?:is|has been) confirmed\b", r"\byour (?:date of joining|joining date) (?:is|will be)\b",
-        r"\bplease join on\b", r"\breport for joining on\b",
+        r"\bplease join on\b", r"\breport for joining on\b", r"\bjoining is confirmed\b", r"\bjoining confirmed\b",
+        r"\bdigital employment\b", r"\bdigiverifier\b", r"\bbgv[_\s-]", r"\bbackground verification\b",
+        r"\bloa accepetence\b", r"\bloa acceptance\b", r"\bwelcome to the team\b",
+        r"\bwelcome aboard\b", r"\bwelcome to the organization\b", r"\bpost-selection onboarding\b",
     ))
     offer_received = any(phrase in lowered for phrase in (
-        "we are pleased to offer you", "we are delighted to offer you",
-        "offer letter attached", "offer of employment",
+        "we are pleased to offer you", "we are delighted to offer you", "pleased to offer you",
+        "pleased to extend an offer", "offer letter attached", "offer of employment",
+        "offer letter inside", "offer letter has been", "appointment letter attached",
+        "letter of appointment", "formal offer of employment", "deployment with",
+        "fulltime with", "intent to offer", "offer released", "job offer",
+    )) or any(re.search(pattern, lowered) for pattern in (
+        r"\boffer letter\b", r"\bappointment letter\b", r"\bcongratulations, you're in!\b",
+        r"\bpleased to extend (?:an|our) offer\b",
     ))
     offer_accepted = any(phrase in lowered for phrase in (
         "we have received your acceptance", "your offer acceptance is confirmed",
-        "accepted the offer", "offer has been accepted",
+        "accepted the offer", "offer has been accepted", "accepted your offer",
     ))
+    final_round_cleared = any(phrase in lowered for phrase in (
+        "cleared the final round", "cleared all rounds", "cleared the technical round",
+        "cleared the interview", "successfully cleared the l1", "successfully cleared the l2",
+        "cleared the l1", "cleared the l2", "cleared l1", "cleared l2", "final round cleared",
+        "interview cleared", "feedback is positive", "cleared the screening",
+    )) or bool(re.search(r"\bsuccessfully cleared the (?:l[1-5]|technical|final|hr) round\b", lowered))
+    hr_confirmation = any(phrase in lowered for phrase in (
+        "minimal documents", "documentation", "capgemini documenation", "documents required for offer",
+        "submit your documents", "pre-offer document", "pre-offer", "uan number and updated cv",
+        "documents required for onboarding", "post selection document",
+    )) or (
+        any(phrase in lowered for phrase in ("salary discussion", "ctc discussion", "salary negotiation", "ctc breakdown", "hr discussion", "compensation discussion"))
+        and any(token in lowered for token in ("selected", "selection", "offer", "shortlisted", "cleared", "congratulations", "pleased to", "delighted to", "l1", "l2", "round"))
+    )
     selected = any(phrase in lowered for phrase in (
-        "you have been selected", "selected for the role", "selected for the position",
-        "selection has been confirmed", "final selection confirmed",
-    ))
+        "you have been selected", "you are selected", "selected for the role", "selected for the position",
+        "selected for the post", "selection has been confirmed", "final selection confirmed",
+        "congratulations on your selection", "selection confirmation", "shortlisted for offer",
+        "shortlisted for the offer", "shortlisted for further process",
+    )) or bool(re.search(r"\bcongratulations.{0,40}\bselected\b", lowered))
     interview_cancelled = bool(re.search(
         r"(?:\binterview\b.{0,80}\b(?:cancelled|canceled|called off)\b|\b(?:cancelled|canceled|called off)\b.{0,80}\binterview\b)",
         lowered,
@@ -425,9 +454,9 @@ def classify_context(
         lowered,
     )) or _is_assertive_interview_invitation(subject, body)
 
-    # Explicit invitation + schedule semantics take precedence over document
+    # Explicit invitation + schedule semantics or post-selection outcome take precedence over document
     # checklist fields embedded in the same recruiter message.
-    if interview_confirmed or interview_rescheduled or interview_cancelled:
+    if actual_joined or joining_confirmed or offer_received or offer_accepted or selected or final_round_cleared or hr_confirmation or interview_confirmed or interview_rescheduled or interview_cancelled:
         questionnaire = False
         question = False
 
@@ -452,11 +481,15 @@ def classify_context(
     elif actual_joined:
         intent, summary = "ACTUAL_JOINING_CONFIRMATION", "The message explicitly confirms that employment has started."
     elif joining_confirmed:
-        intent, summary = "JOINING_CONFIRMATION", "The message confirms a joining arrangement but does not confirm that employment has started."
+        intent, summary = "JOINING_CONFIRMATION", "The message confirms a joining arrangement, background verification, or onboarding."
     elif offer_accepted:
         intent, summary = "OFFER_ACCEPTANCE", "The message explicitly confirms acceptance of an employment offer."
     elif offer_received or document_type in {"OFFER_LETTER", "APPOINTMENT_LETTER"}:
         intent, summary = "OFFER_LETTER", "The message contains a candidate-specific employment offer."
+    elif final_round_cleared:
+        intent, summary = "FINAL_ROUND_CLEARED", "The message explicitly confirms that the candidate has cleared an interview round."
+    elif hr_confirmation:
+        intent, summary = "HR_CONFIRMATION", "The message confirms HR discussion, salary/CTC confirmation, or post-selection document verification."
     elif selected:
         intent, summary = "SELECTION_CONFIRMATION", "The message explicitly confirms candidate selection."
     else:
@@ -474,6 +507,10 @@ def classify_context(
             lifecycle = "OFFER_LETTER_RECEIVED"
         elif selected:
             lifecycle = "SELECTED"
+        elif final_round_cleared:
+            lifecycle = "FINAL_ROUND_CLEARED"
+        elif hr_confirmation:
+            lifecycle = "HR_CONFIRMATION"
 
     interview_event = "NONE"
     if not (questionnaire or job_ad or non_outcome_notice or transactional or question or historical):
@@ -522,12 +559,21 @@ def validate_lifecycle_event(proposed: str, context: dict[str, Any]) -> tuple[st
     if status == "JOINING_CONFIRMED" and supported != "JOINING_CONFIRMED":
         return "NONE", "JOINING_CONFIRMATION_NOT_ASSERTED"
     comparable = {
-        "SELECTED": {"SELECTED", "FINAL_SELECTION_CONFIRMED"},
-        "FINAL_SELECTION_CONFIRMED": {"SELECTED", "FINAL_SELECTION_CONFIRMED"},
-        "OFFER_INDICATION": {"OFFER_INDICATION", "OFFER_LETTER_RECEIVED"},
-        "OFFER_LETTER_RECEIVED": {"OFFER_INDICATION", "OFFER_LETTER_RECEIVED"},
-        "APPOINTMENT_LETTER_RECEIVED": {"OFFER_INDICATION", "OFFER_LETTER_RECEIVED"},
-        "OFFER_ACCEPTED": {"OFFER_ACCEPTED"},
+        "SELECTED": {"SELECTED", "FINAL_SELECTION_CONFIRMED", "FINAL_ROUND_CLEARED", "SELECTION_CONFIRMATION"},
+        "FINAL_SELECTION_CONFIRMED": {"SELECTED", "FINAL_SELECTION_CONFIRMED", "FINAL_ROUND_CLEARED", "SELECTION_CONFIRMATION"},
+        "FINAL_ROUND_CLEARED": {"SELECTED", "FINAL_SELECTION_CONFIRMED", "FINAL_ROUND_CLEARED", "SELECTION_CONFIRMATION", "INTERVIEW_SHORTLISTED"},
+        "OFFER_INDICATION": {"OFFER_INDICATION", "OFFER_LETTER_RECEIVED", "OFFER_RECEIVED", "OFFER_LETTER", "OFFER_APPROVED", "OFFER_IN_PROGRESS"},
+        "OFFER_LETTER_RECEIVED": {"OFFER_INDICATION", "OFFER_LETTER_RECEIVED", "OFFER_RECEIVED", "OFFER_LETTER", "OFFER_APPROVED"},
+        "OFFER_RECEIVED": {"OFFER_INDICATION", "OFFER_LETTER_RECEIVED", "OFFER_RECEIVED", "OFFER_LETTER", "OFFER_APPROVED"},
+        "APPOINTMENT_LETTER_RECEIVED": {"OFFER_INDICATION", "OFFER_LETTER_RECEIVED", "OFFER_RECEIVED", "OFFER_LETTER"},
+        "OFFER_ACCEPTED": {"OFFER_ACCEPTED", "OFFER_ACCEPTANCE"},
+        "HR_CONFIRMATION": {"HR_CONFIRMATION", "DOCUMENT_VERIFICATION", "COMPENSATION_CONFIRMATION", "SELECTED", "DOCUMENT_SUBMISSION"},
+        "DOCUMENT_VERIFICATION": {"DOCUMENT_VERIFICATION", "HR_CONFIRMATION", "SELECTED", "DOCUMENT_SUBMISSION"},
+        "COMPENSATION_CONFIRMATION": {"COMPENSATION_CONFIRMATION", "HR_CONFIRMATION", "OFFER_LETTER_RECEIVED", "OFFER_RECEIVED"},
+        "JOINING_CONFIRMED": {"JOINING_CONFIRMED", "BACKGROUND_VERIFICATION", "POST_SELECTION_ONBOARDING", "JOINED"},
+        "BACKGROUND_VERIFICATION": {"BACKGROUND_VERIFICATION", "JOINING_CONFIRMED", "POST_SELECTION_ONBOARDING"},
+        "POST_SELECTION_ONBOARDING": {"POST_SELECTION_ONBOARDING", "JOINING_CONFIRMED", "JOINED"},
+        "JOINED": {"JOINED", "JOINING_CONFIRMED"},
     }
     if status in comparable and supported not in comparable[status]:
         return "NONE", "PROPOSED_EVENT_NOT_SUPPORTED_BY_ASSERTIVE_CONTEXT"
