@@ -431,10 +431,28 @@ class TestUTRReuseProtected:
             assert "message" in response.json()
 
 
-class TestPaymentInfoEndpoint:
-    """The payment-info endpoint returns authoritative amounts."""
+class TestPaymentRequirementEndpoints:
+    """Both endpoint contracts read the same authoritative requirement."""
+
+    def test_round_wise_requirement_returns_canonical_contract(
+        self, monkeypatch, tmp_path
+    ):
+        client = _client(monkeypatch, tmp_path)
+        response = client.get(
+            "/public/slots/payment-requirement?service_type=round_wise"
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data == {
+            "status": "ok",
+            "service_type": "round_wise",
+            "payment_required": True,
+            "amount_due": 5000,
+            "re_service": False,
+        }
 
     def test_round_wise_returns_baseline_amount(self, monkeypatch, tmp_path):
+        # Keep PR #14's payment-info contract for older clients.
         client = _client(monkeypatch, tmp_path)
         response = client.get("/public/slots/payment-info?service_type=round_wise")
         assert response.status_code == 200

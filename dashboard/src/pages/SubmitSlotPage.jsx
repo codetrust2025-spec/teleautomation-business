@@ -283,6 +283,7 @@ export function SubmitSlotPage() {
   const [paymentProofIds, setPaymentProofIds] = useState([])
   const [paymentFiles, setPaymentFiles] = useState([])
   const [paymentTotals, setPaymentTotals] = useState(null)
+  const [paymentRequirement, setPaymentRequirement] = useState(null)
   const [sessionFile, setSessionFile] = useState(null)
   const [sessionPreview, setSessionPreview] = useState('')
   const [manualDate, setManualDate] = useState('')
@@ -298,8 +299,6 @@ export function SubmitSlotPage() {
   const [paymentAiResults, setPaymentAiResults] = useState([])
   const [paymentRejected, setPaymentRejected] = useState([])
   const [paymentAnalysing, setPaymentAnalysing] = useState(false)
-  const [roundWiseAmountDue, setRoundWiseAmountDue] = useState(5000)
-  const [paymentWaived, setPaymentWaived] = useState(false)
 
   const effectiveName = name.trim()
   const selected = useMemo(() => {
@@ -344,14 +343,59 @@ export function SubmitSlotPage() {
   // Uploading a proof is no longer the same as having paid: instalments only
   // clear the fee once they add up, and the server decides when they do.
   const paymentComplete = Boolean(paymentProofIds.length && paymentTotals?.payment_complete)
-  // Round-wise always requires payment proof (backend is authoritative via
-  // baseline_for_service("round_wise")), regardless of whether the candidate
-  // matches the Profile roster. Profile-service uses the roster's balance_due.
-  // A re-service grant waives payment entirely for one booking.
-  const roundWisePaymentRequired = serviceType === 'round_wise' && Boolean(effectiveName) && !paymentWaived
-  const needsPaymentProof = Boolean(
-    (selected?.needs_payment_proof || roundWisePaymentRequired) && !paymentComplete
-  )
+  // Round-wise candidates are typed in and need not exist on the profile
+  // roster, so there is no roster row to read a balance from. Reading one
+  // anyway is what hid the payment card for every new round-wise candidate.
+  // The backend rule answers instead — and a lookup that fails must not hide
+  // the payment step, because round-wise always owes the round tariff unless a
+  // Re-Service grant waives it.
+  const roundWise = serviceType === 'round_wise'
+  const paymentRequired = roundWise
+    ? (paymentRequirement?.payment_required ?? true)
+    : Boolean(selected?.needs_payment_proof)
+  // Never computed here — every figure comes from the backend.
+  const paymentAmountDue = roundWise
+    ? (paymentRequirement?.amount_due ?? paymentTotals?.amount_due ?? null)
+    : (selected?.balance_due || 0)
+  const needsPaymentProof = Boolean(paymentRequired && !paymentComplete)
+
+  // Asked of the backend, never derived here. The Re-Service waiver depends on
+  // who is booking and for which round, so it is re-asked as those change.
+  useEffect(() => {
+    if (!roundWise) { setPaymentRequirement(null); return undefined }
+    // Identity changes invalidate an earlier answer immediately. In
+    // particular, a previous candidate's Re-Service waiver must never remain
+    // visible while the new requirement is being fetched.
+    setPaymentRequirement(null)
+    let cancelled = false
+    const timer = setTimeout(async () => {
+      try {
+        const params = new URLSearchParams({
+          service_type: 'round_wise',
+          name: effectiveName,
+          phone: roundWisePhone.trim(),
+          candidate_id: selected?.id || '',
+          interview_round: interviewRound,
+        })
+        let res = await fetch(`${API_BASE}/public/slots/payment-requirement?${params}`, { cache: 'no-store' })
+        // Supports a rolling release where the new frontend arrives before the
+        // canonical endpoint. The compatibility route delegates to the same
+        // backend authority once both versions are present.
+        if (!res.ok) {
+          res = await fetch(`${API_BASE}/public/slots/payment-info?${params}`, { cache: 'no-store' })
+        }
+        const data = await res.json()
+        if (!cancelled && data.status === 'ok') {
+          setPaymentRequirement({
+            ...data,
+            payment_required: data.payment_required ?? data.needs_payment,
+            re_service: data.re_service ?? data.waived,
+          })
+        }
+      } catch { /* keep whatever is known; the step stays reachable either way */ }
+    }, 250)
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [roundWise, effectiveName, roundWisePhone, interviewRound, selected?.id])
 
   const resetPaymentProofs = useCallback(() => {
     setPaymentProofIds([])
@@ -377,20 +421,6 @@ export function SubmitSlotPage() {
   }, [])
 
   useEffect(() => { refresh() }, [refresh])
-  // Fetch the authoritative round-wise payment amount from the backend when
-  // the service type is round_wise. Keeps the frontend from hardcoding it.
-  useEffect(() => {
-    if (serviceType !== 'round_wise') { setPaymentWaived(false); return }
-    fetch(`${API_BASE}/public/slots/payment-info?service_type=round_wise`, { cache: 'no-store' })
-      .then(r => r.json())
-      .then(data => {
-        if (data.status === 'ok') {
-          if (data.amount_due > 0) setRoundWiseAmountDue(data.amount_due)
-          setPaymentWaived(Boolean(data.waived))
-        }
-      })
-      .catch(() => {})
-  }, [serviceType])
   useEffect(() => () => {
     if (slotPreview) URL.revokeObjectURL(slotPreview)
     if (sessionPreview) URL.revokeObjectURL(sessionPreview)
@@ -490,6 +520,15 @@ export function SubmitSlotPage() {
     try {
       const fd = new FormData()
       fd.append('name', effectiveName)
+      // The proof is stored under the booking it belongs to. Sending only the
+      // name filed every round-wise receipt as profile service, and
+      // /bookings/confirm — which looks the proof up in the round-wise context,
+      // by candidate id or phone — could then never find it.
+      fd.append('service_type', serviceType)
+      fd.append('candidate_id', selected?.id || '')
+      if (roundWise) fd.append('phone', roundWisePhone.trim())
+      if (effectiveTechnology) fd.append('technology', effectiveTechnology)
+      if (interviewRound) fd.append('interview_round', interviewRound)
       // Every screenshot goes in one request; ids already saved are sent back
       // so instalments uploaded across several attempts still add together.
       paymentFiles.forEach(f => fd.append('files', f))
@@ -739,7 +778,9 @@ export function SubmitSlotPage() {
                     type="tel"
                     inputMode="tel"
                     value={roundWisePhone}
-                    onChange={e => setRoundWisePhone(e.target.value)}
+                    // The phone is the round-wise proof's identity, so changing
+                    // it makes a proof already on file belong to someone else.
+                    onChange={e => { setRoundWisePhone(e.target.value); resetPaymentProofs() }}
                     placeholder="10-digit phone number"
                     disabled={busy || parsing}
                   />
@@ -779,9 +820,12 @@ export function SubmitSlotPage() {
                 {triedSubmit && !interviewRound && <span className="sbs-hint sbs-hint--warn">Required — select a round to confirm.</span>}
               </label>
 
-              {(selected?.needs_payment_proof || roundWisePaymentRequired) && (
+              {paymentRequired && (
                 <div className="sbs-pay-card">
-                  <div className="sbs-pay-head"><span>Payment due</span><strong>₹{(selected?.balance_due || paymentTotals?.amount_due || roundWiseAmountDue).toLocaleString('en-IN')}</strong></div>
+                  <div className="sbs-pay-head">
+                    <span>Payment due</span>
+                    <strong>{paymentAmountDue == null ? '—' : `₹${paymentAmountDue.toLocaleString('en-IN')}`}</strong>
+                  </div>
                   {paymentProofIds.length > 0 && (
                     <>
                       <p className={paymentComplete ? 'sbs-pay-ok' : 'sbs-pay-partial'}>

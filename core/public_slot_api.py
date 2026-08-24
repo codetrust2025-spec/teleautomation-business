@@ -165,38 +165,55 @@ def install_public_slot_routes(app) -> None:
             headers={"Cache-Control": "no-store, max-age=0"},
         )
 
+    @app.get("/public/slots/payment-requirement")
+    async def public_slot_payment_requirement(
+        service_type: str = "",
+        name: str = "",
+        phone: str = "",
+        candidate_id: str = "",
+        interview_round: str = "",
+    ):
+        """What this booking owes, straight from the rule the booking enforces.
+
+        Round-wise candidates are typed in by hand and are not required to exist
+        on the profile roster, so the form cannot read a balance off a roster row
+        the way profile service does. Asking here keeps one answer at the upload
+        boundary, the booking boundary and the screen.
+        """
+        requirement = cs.public_booking_payment_requirement(
+            service_type=service_type,
+            name=name,
+            phone=phone,
+            candidate_id=candidate_id,
+            interview_round=interview_round,
+        )
+        return JSONResponse(
+            {"status": "ok", **requirement},
+            headers={"Cache-Control": "no-store, max-age=0"},
+        )
+
     @app.get("/public/slots/payment-info")
     async def public_slot_payment_info(
         service_type: str = "round_wise",
         name: str = "",
         phone: str = "",
+        candidate_id: str = "",
         interview_round: str = "",
     ):
-        """Return the payment requirement for a service type or candidate name.
-
-        The frontend uses this to show the correct amount due on the payment
-        card without hardcoding the baseline or depending on an exact roster
-        match.
-        """
-        normalized = service_type.strip() or "round_wise"
-        if normalized == "round_wise":
-            amount_due = cs.baseline_for_service("round_wise")
-        else:
-            amount_due = cs.merged_balance_due_for_name(name) if name.strip() else 0
-        # A re-service grant waives payment entirely for one booking.
-        waived = cs.candidate_is_re_service_eligible(
-            name=name.strip(),
-            phone=phone.strip(),
-            interview_round=interview_round.strip(),
-        ) if name.strip() else False
-        needs_payment = amount_due > 0 and not waived
+        """Backward-compatible view of the authoritative payment requirement."""
+        requirement = cs.public_booking_payment_requirement(
+            service_type=service_type,
+            name=name,
+            phone=phone,
+            candidate_id=candidate_id,
+            interview_round=interview_round,
+        )
         return JSONResponse(
             {
                 "status": "ok",
-                "service_type": normalized,
-                "amount_due": amount_due,
-                "needs_payment": needs_payment,
-                "waived": waived,
+                **requirement,
+                "needs_payment": requirement["payment_required"],
+                "waived": requirement["re_service"],
             },
             headers={"Cache-Control": "no-store, max-age=0"},
         )
@@ -229,12 +246,19 @@ def install_public_slot_routes(app) -> None:
         if not uploads:
             return _json_error("Attach at least one payment screenshot.")
         try:
-            if service_type.strip() == "round_wise":
-                due_amount = cs.baseline_for_service("round_wise")
-                payment_owner = None
-            else:
-                due_amount = cs.merged_balance_due_for_name(name) if name else 0
-                payment_owner = cs._best_row_for_slot_name(name)
+            # The amount is never decided here — candidate_store owns it, and
+            # /bookings/confirm re-derives it from the same call.
+            requirement = cs.public_booking_payment_requirement(
+                service_type=service_type,
+                name=name,
+                phone=phone,
+                candidate_id=candidate_id,
+                interview_round=interview_round,
+            )
+            due_amount = requirement["amount_due"]
+            payment_owner = (
+                None if service_type.strip() == "round_wise" else cs._best_row_for_slot_name(name)
+            )
 
             from features.payment_verification_engine import verify_payment_screenshot
             from features.ollama_payment_extract import generate_payment_narrative
@@ -797,11 +821,13 @@ def install_public_slot_routes(app) -> None:
         if pending_payment_proofs and not re_service_booking:
             from features.pending_slot_payment import verified_total
 
-            required_amount = (
-                cs.baseline_for_service("round_wise")
-                if normalized_service_type == "round_wise"
-                else max(0, int(cs.merged_balance_due_for_name(name) or 0))
-            )
+            required_amount = cs.public_booking_payment_requirement(
+                service_type=normalized_service_type,
+                name=name,
+                phone=normalized_phone,
+                candidate_id=candidate_id.strip(),
+                interview_round=normalized_round,
+            )["amount_due"]
             paid_total = verified_total(
                 [entry for _path, entry in pending_payment_proofs]
             )

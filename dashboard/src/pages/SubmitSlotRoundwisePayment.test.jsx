@@ -42,15 +42,19 @@ function attach(input, files) {
   fireEvent.change(input)
 }
 
-function stubFetch({ paymentInfoOverride, uploadReply, confirmReply } = {}) {
-  const calls = { uploads: [], confirms: [], paymentInfoCalls: [] }
+function inviteFileInput() {
+  return [...document.querySelectorAll('input[type="file"]')].find(input => !input.multiple)
+}
+
+function stubFetch({ paymentRequirementOverride, uploadReply, confirmReply } = {}) {
+  const calls = { uploads: [], confirms: [], paymentRequirementCalls: [] }
   vi.stubGlobal('fetch', vi.fn((url, options) => {
     const target = String(url)
     const reply = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) })
 
-    if (target.includes('/public/slots/payment-info')) {
-      calls.paymentInfoCalls.push(target)
-      return reply(paymentInfoOverride || { status: 'ok', service_type: 'round_wise', amount_due: 5000, needs_payment: true, waived: false })
+    if (target.includes('/public/slots/payment-requirement')) {
+      calls.paymentRequirementCalls.push(target)
+      return reply(paymentRequirementOverride || { status: 'ok', service_type: 'round_wise', amount_due: 5000, payment_required: true, re_service: false })
     }
     if (target.includes('/public/slots/payment-proof')) {
       calls.uploads.push(options.body)
@@ -93,17 +97,17 @@ describe('Round-wise payment — non-roster candidate gets payment card', () => 
 
     // Payment card must appear
     expect(await screen.findByText(/payment due/i)).toBeTruthy()
-    expect(screen.getByText(/₹5,000/)).toBeTruthy()
+    await waitFor(() => expect(screen.getByText(/₹5,000/)).toBeTruthy())
   })
 
-  it('shows correct amount from backend payment-info', async () => {
-    stubFetch({ paymentInfoOverride: { status: 'ok', service_type: 'round_wise', amount_due: 9000, needs_payment: true, waived: false } })
+  it('shows correct amount from the authoritative backend requirement', async () => {
+    stubFetch({ paymentRequirementOverride: { status: 'ok', service_type: 'round_wise', amount_due: 9000, payment_required: true, re_service: false } })
     await chooseRoundWise()
 
     fireEvent.change(screen.getByPlaceholderText(/type client name/i), { target: { value: 'New Candidate' } })
 
     expect(await screen.findByText(/payment due/i)).toBeTruthy()
-    expect(screen.getByText(/₹9,000/)).toBeTruthy()
+    await waitFor(() => expect(screen.getByText(/₹9,000/)).toBeTruthy())
   })
 
   it('roster candidate still gets correct behavior (profile service)', async () => {
@@ -121,7 +125,7 @@ describe('Round-wise payment — non-roster candidate gets payment card', () => 
   })
 
   it('waiver/no-payment path still works (re-service eligible)', async () => {
-    stubFetch({ paymentInfoOverride: { status: 'ok', service_type: 'round_wise', amount_due: 5000, needs_payment: false, waived: true } })
+    stubFetch({ paymentRequirementOverride: { status: 'ok', service_type: 'round_wise', amount_due: 0, payment_required: false, re_service: true } })
     await chooseRoundWise()
 
     fireEvent.change(screen.getByPlaceholderText(/type client name/i), { target: { value: 'Waived Candidate' } })
@@ -201,7 +205,7 @@ describe('Round-wise payment — upload carries correct service_type', () => {
     await screen.findByText(/payment proof saved/i)
 
     // Upload invite
-    const inviteInput = document.querySelector('input[type="file"]')
+    const inviteInput = inviteFileInput()
     attach(inviteInput, [screenshot('invite')])
     await waitFor(() => expect(screen.queryByText(/reading invite with ai/i)).toBeNull())
 
@@ -233,7 +237,7 @@ describe('Round-wise payment — upload carries correct service_type', () => {
     await screen.findByText(/payment proof saved/i)
 
     // Upload invite
-    const inviteInput = document.querySelector('input[type="file"]')
+    const inviteInput = inviteFileInput()
     attach(inviteInput, [screenshot('invite')])
     await waitFor(() => expect(screen.queryByText(/reading invite with ai/i)).toBeNull())
 
@@ -251,15 +255,15 @@ describe('Round-wise payment — upload carries correct service_type', () => {
       if (target.includes('/extract-invite-ai')) {
         return reply({ status: 'ok', success: true, data: { interview_date: upcomingDate(), start_time: '03:00 PM', technology: 'React Native', confidence_score: 92 } })
       }
-      if (target.includes('/public/slots/payment-info')) {
-        return reply({ status: 'ok', service_type: 'round_wise', amount_due: 5000, needs_payment: true, waived: false })
+      if (target.includes('/public/slots/payment-requirement')) {
+        return reply({ status: 'ok', service_type: 'round_wise', amount_due: 5000, payment_required: true, re_service: false })
       }
       if (target.includes('/public/slots/booked')) return reply({ status: 'ok', slots: [] })
       return reply({ status: 'ok', candidates: PROFILE_CANDIDATES })
     }))
 
     await chooseRoundWise()
-    const inviteInput = document.querySelector('input[type="file"]')
+    const inviteInput = inviteFileInput()
     attach(inviteInput, [screenshot('invite')])
 
     await waitFor(() =>
@@ -275,8 +279,8 @@ describe('Round-wise payment — upload carries correct service_type', () => {
       if (target.includes('/extract-invite-ai')) {
         return reply({ status: 'ok', success: true, data: { interview_date: upcomingDate(), start_time: '03:00 PM', technology: 'Overwritten Tech', confidence_score: 92 } })
       }
-      if (target.includes('/public/slots/payment-info')) {
-        return reply({ status: 'ok', service_type: 'round_wise', amount_due: 5000, needs_payment: true, waived: false })
+      if (target.includes('/public/slots/payment-requirement')) {
+        return reply({ status: 'ok', service_type: 'round_wise', amount_due: 5000, payment_required: true, re_service: false })
       }
       if (target.includes('/public/slots/booked')) return reply({ status: 'ok', slots: [] })
       return reply({ status: 'ok', candidates: PROFILE_CANDIDATES })
@@ -287,7 +291,7 @@ describe('Round-wise payment — upload carries correct service_type', () => {
     fireEvent.change(tech, { target: { value: 'Golang' } })
 
     // Now upload invite which tries to set a different technology
-    const inviteInput = document.querySelector('input[type="file"]')
+    const inviteInput = inviteFileInput()
     attach(inviteInput, [screenshot('invite')])
 
     await waitFor(() => expect(screen.queryByText(/reading invite with ai/i)).toBeNull())
@@ -344,7 +348,7 @@ describe('Round-wise booking form — Confirm button gating and compact layout',
     expect(screen.getByText(/UTR 1001/)).toBeTruthy()
 
     // 6. Upload invite screenshot
-    const inviteInput = document.querySelector('input[type="file"]')
+    const inviteInput = inviteFileInput()
     attach(inviteInput, [screenshot('invite')])
 
     await waitFor(() => expect(screen.queryByText(/reading invite with ai/i)).toBeNull())
@@ -382,8 +386,8 @@ describe('Round-wise booking form — Confirm button gating and compact layout',
       if (target.includes('/extract-invite-ai')) {
         return reply({ status: 'ok', success: true, data: { interview_date: yesterdayIso, start_time: '03:00 PM', confidence_score: 90 } })
       }
-      if (target.includes('/public/slots/payment-info')) {
-        return reply({ status: 'ok', service_type: 'round_wise', amount_due: 5000, needs_payment: true, waived: false })
+      if (target.includes('/public/slots/payment-requirement')) {
+        return reply({ status: 'ok', service_type: 'round_wise', amount_due: 5000, payment_required: true, re_service: false })
       }
       if (target.includes('/public/slots/booked')) return reply({ status: 'ok', slots: [] })
       return reply({ status: 'ok', candidates: PROFILE_CANDIDATES })
@@ -420,4 +424,3 @@ describe('Round-wise booking form — Confirm button gating and compact layout',
     })
   })
 })
-
