@@ -42,6 +42,10 @@ function attach(input, files) {
   fireEvent.change(input)
 }
 
+function inviteFileInput() {
+  return [...document.querySelectorAll('input[type="file"]')].find(input => !input.multiple)
+}
+
 function stubFetch({ paymentRequirementOverride, uploadReply, confirmReply } = {}) {
   const calls = { uploads: [], confirms: [], paymentRequirementCalls: [] }
   vi.stubGlobal('fetch', vi.fn((url, options) => {
@@ -93,7 +97,7 @@ describe('Round-wise payment — non-roster candidate gets payment card', () => 
 
     // Payment card must appear
     expect(await screen.findByText(/payment due/i)).toBeTruthy()
-    expect(screen.getByText(/₹5,000/)).toBeTruthy()
+    await waitFor(() => expect(screen.getByText(/₹5,000/)).toBeTruthy())
   })
 
   it('shows correct amount from the authoritative backend requirement', async () => {
@@ -103,7 +107,7 @@ describe('Round-wise payment — non-roster candidate gets payment card', () => 
     fireEvent.change(screen.getByPlaceholderText(/type client name/i), { target: { value: 'New Candidate' } })
 
     expect(await screen.findByText(/payment due/i)).toBeTruthy()
-    expect(screen.getByText(/₹9,000/)).toBeTruthy()
+    await waitFor(() => expect(screen.getByText(/₹9,000/)).toBeTruthy())
   })
 
   it('roster candidate still gets correct behavior (profile service)', async () => {
@@ -201,7 +205,7 @@ describe('Round-wise payment — upload carries correct service_type', () => {
     await screen.findByText(/payment proof saved/i)
 
     // Upload invite
-    const inviteInput = document.querySelector('input[type="file"]')
+    const inviteInput = inviteFileInput()
     attach(inviteInput, [screenshot('invite')])
     await waitFor(() => expect(screen.queryByText(/reading invite with ai/i)).toBeNull())
 
@@ -233,7 +237,7 @@ describe('Round-wise payment — upload carries correct service_type', () => {
     await screen.findByText(/payment proof saved/i)
 
     // Upload invite
-    const inviteInput = document.querySelector('input[type="file"]')
+    const inviteInput = inviteFileInput()
     attach(inviteInput, [screenshot('invite')])
     await waitFor(() => expect(screen.queryByText(/reading invite with ai/i)).toBeNull())
 
@@ -259,7 +263,7 @@ describe('Round-wise payment — upload carries correct service_type', () => {
     }))
 
     await chooseRoundWise()
-    const inviteInput = document.querySelector('input[type="file"]')
+    const inviteInput = inviteFileInput()
     attach(inviteInput, [screenshot('invite')])
 
     await waitFor(() =>
@@ -287,7 +291,7 @@ describe('Round-wise payment — upload carries correct service_type', () => {
     fireEvent.change(tech, { target: { value: 'Golang' } })
 
     // Now upload invite which tries to set a different technology
-    const inviteInput = document.querySelector('input[type="file"]')
+    const inviteInput = inviteFileInput()
     attach(inviteInput, [screenshot('invite')])
 
     await waitFor(() => expect(screen.queryByText(/reading invite with ai/i)).toBeNull())
@@ -344,7 +348,7 @@ describe('Round-wise booking form — Confirm button gating and compact layout',
     expect(screen.getByText(/UTR 1001/)).toBeTruthy()
 
     // 6. Upload invite screenshot
-    const inviteInput = document.querySelector('input[type="file"]')
+    const inviteInput = inviteFileInput()
     attach(inviteInput, [screenshot('invite')])
 
     await waitFor(() => expect(screen.queryByText(/reading invite with ai/i)).toBeNull())

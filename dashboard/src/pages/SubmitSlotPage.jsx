@@ -351,7 +351,7 @@ export function SubmitSlotPage() {
   // Re-Service grant waives it.
   const roundWise = serviceType === 'round_wise'
   const paymentRequired = roundWise
-    ? (paymentRequirement?.payment_required === true || (paymentRequirement == null && !paymentComplete))
+    ? (paymentRequirement?.payment_required ?? true)
     : Boolean(selected?.needs_payment_proof)
   // Never computed here — every figure comes from the backend.
   const paymentAmountDue = roundWise
@@ -363,6 +363,10 @@ export function SubmitSlotPage() {
   // who is booking and for which round, so it is re-asked as those change.
   useEffect(() => {
     if (!roundWise) { setPaymentRequirement(null); return undefined }
+    // Identity changes invalidate an earlier answer immediately. In
+    // particular, a previous candidate's Re-Service waiver must never remain
+    // visible while the new requirement is being fetched.
+    setPaymentRequirement(null)
     let cancelled = false
     const timer = setTimeout(async () => {
       try {
@@ -373,9 +377,21 @@ export function SubmitSlotPage() {
           candidate_id: selected?.id || '',
           interview_round: interviewRound,
         })
-        const res = await fetch(`${API_BASE}/public/slots/payment-requirement?${params}`, { cache: 'no-store' })
+        let res = await fetch(`${API_BASE}/public/slots/payment-requirement?${params}`, { cache: 'no-store' })
+        // Supports a rolling release where the new frontend arrives before the
+        // canonical endpoint. The compatibility route delegates to the same
+        // backend authority once both versions are present.
+        if (!res.ok) {
+          res = await fetch(`${API_BASE}/public/slots/payment-info?${params}`, { cache: 'no-store' })
+        }
         const data = await res.json()
-        if (!cancelled && data.status === 'ok') setPaymentRequirement(data)
+        if (!cancelled && data.status === 'ok') {
+          setPaymentRequirement({
+            ...data,
+            payment_required: data.payment_required ?? data.needs_payment,
+            re_service: data.re_service ?? data.waived,
+          })
+        }
       } catch { /* keep whatever is known; the step stays reachable either way */ }
     }, 250)
     return () => { cancelled = true; clearTimeout(timer) }
