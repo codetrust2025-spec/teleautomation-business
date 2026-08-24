@@ -35,6 +35,12 @@ function stubFetch({ extraction } = {}) {
     if (target.includes('/extract-invite-ai')) {
       return reply({ status: 'ok', success: true, data: extraction || {} })
     }
+    // Round-wise owes the round tariff, which would put a payment card on
+    // screen. These are about the technology field, so the booking is waived by
+    // a Re-Service grant to keep the payment step out of the way.
+    if (target.includes('/payment-requirement')) {
+      return reply({ status: 'ok', service_type: 'round_wise', payment_required: false, amount_due: 0, re_service: true })
+    }
     if (target.includes('/bookings/confirm')) {
       calls.confirms.push(options.body)
       return reply({ status: 'ok', candidate: { name: 'venkat' } })

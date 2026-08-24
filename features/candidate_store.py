@@ -3099,6 +3099,61 @@ def merged_balance_due_for_name(name: str, rows: list[dict] | None = None) -> in
     return balance
 
 
+def public_booking_payment_requirement(
+    *,
+    service_type: str,
+    name: str = "",
+    phone: str = "",
+    candidate_id: str = "",
+    interview_round: str = "",
+) -> dict:
+    """What a public slot booking must pay, and whether a proof is required.
+
+    The single authority for the amount. The upload boundary verifies against
+    it, /bookings/confirm enforces it, and the booking form asks it rather than
+    deriving a figure of its own — which is how round-wise came to display a
+    profile balance while the backend charged the round-wise tariff.
+
+    The two services price differently and always have. Round-wise is a flat
+    per-round tariff (`baseline_for_service`), owed on every round regardless of
+    any profile balance; `merged_balance_due_for_name` deliberately excludes
+    round-wise rows and answers a different question. Profile service bills the
+    outstanding profile balance. Either is waived by an unused Re-Service grant,
+    matching the waiver confirm already applies.
+    """
+    normalized_service = "round_wise" if _clean_str(service_type) == "round_wise" else "profile_service"
+    if find_re_service_grant(
+        name=name,
+        phone=phone,
+        interview_round=interview_round,
+        candidate_id=candidate_id,
+    ):
+        return {
+            "service_type": normalized_service,
+            "payment_required": False,
+            "amount_due": 0,
+            "re_service": True,
+        }
+    if normalized_service == "round_wise":
+        amount = max(0, int(baseline_for_service("round_wise") or 0))
+        # Round-wise is payable per round, so a proof is always required. This
+        # is the rule /bookings/confirm already enforces by refusing a
+        # round-wise booking that carries no verified proof.
+        return {
+            "service_type": normalized_service,
+            "payment_required": True,
+            "amount_due": amount,
+            "re_service": False,
+        }
+    amount = max(0, int(merged_balance_due_for_name(name) or 0)) if _clean_str(name) else 0
+    return {
+        "service_type": normalized_service,
+        "payment_required": amount > 0,
+        "amount_due": amount,
+        "re_service": False,
+    }
+
+
 def slot_booking_payment_block_reason(
     name: str,
     *,
