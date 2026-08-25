@@ -17,6 +17,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { SubmitSlotPage } from './SubmitSlotPage.jsx'
 
+// The form refuses a date in the past, so the invite has to name one ahead of
+// today. A literal date silently stops testing anything the day it goes stale:
+// these read as passing right up until the confirm button quietly disabled
+// itself and every assertion downstream of the submit stopped being reached.
+const AHEAD = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+
 const CANDIDATES = [
   { id: 'c1', name: 'Gopichand', technology: 'React JS', needs_payment_proof: false, balance_due: 0 },
   { id: 'c2', name: 'Manu', technology: 'Java', needs_payment_proof: false, balance_due: 0 },
@@ -62,7 +68,7 @@ describe('Submit slot — round-wise technology', () => {
   afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
   it('offers a technology field and sends what was chosen', async () => {
-    const calls = stubFetch({ extraction: { interview_date: '2026-08-18', start_time: '03:00 PM', confidence_score: 90 } })
+    const calls = stubFetch({ extraction: { interview_date: AHEAD, start_time: '03:00 PM', confidence_score: 90 } })
     await chooseRoundWise()
 
     const tech = await screen.findByPlaceholderText(/choose or type the technology/i)
@@ -87,7 +93,7 @@ describe('Submit slot — round-wise technology', () => {
   })
 
   it('refuses to submit without a technology and says so on the field', async () => {
-    const calls = stubFetch({ extraction: { interview_date: '2026-08-18', start_time: '03:00 PM', confidence_score: 90 } })
+    const calls = stubFetch({ extraction: { interview_date: AHEAD, start_time: '03:00 PM', confidence_score: 90 } })
     await chooseRoundWise()
 
     fireEvent.change(screen.getByPlaceholderText(/type client name/i), { target: { value: 'venkat' } })
@@ -104,7 +110,7 @@ describe('Submit slot — round-wise technology', () => {
   })
 
   it('fills the field from the invite when it names the technology', async () => {
-    stubFetch({ extraction: { interview_date: '2026-08-18', start_time: '03:00 PM', technology: 'Automation Testing', confidence_score: 90 } })
+    stubFetch({ extraction: { interview_date: AHEAD, start_time: '03:00 PM', technology: 'Automation Testing', confidence_score: 90 } })
     await chooseRoundWise()
 
     attach(document.querySelector('input[type="file"]'), [screenshot('invite.jpg')])
@@ -113,7 +119,7 @@ describe('Submit slot — round-wise technology', () => {
   })
 
   it('keeps a typed technology when a later invite says something else', async () => {
-    stubFetch({ extraction: { interview_date: '2026-08-18', start_time: '03:00 PM', technology: 'Automation Testing', confidence_score: 90 } })
+    stubFetch({ extraction: { interview_date: AHEAD, start_time: '03:00 PM', technology: 'Automation Testing', confidence_score: 90 } })
     await chooseRoundWise()
 
     const tech = await screen.findByPlaceholderText(/choose or type the technology/i)
