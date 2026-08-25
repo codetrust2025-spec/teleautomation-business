@@ -39,6 +39,14 @@ _PUBLIC_EXACT = frozenset({
     "/icons.svg",
     "/sw.js",
     "/webhooks/whatsapp",
+    # Google Pub/Sub pushes Gmail mailbox-change notifications here. It is a
+    # machine-to-machine callback and carries no dashboard session, so the
+    # session middleware rejected every push with 401 while the watches went on
+    # reporting themselves healthy - mail monitoring that looks connected and
+    # silently receives nothing. The endpoint is not unauthenticated: it
+    # compares GMAIL_PUBSUB_VERIFICATION_TOKEN with hmac.compare_digest before
+    # doing anything, exactly as /webhooks/whatsapp above does.
+    "/api/gmail/pubsub/push",
     "/push/vapid-public-key",
     "/bookings/confirm",
     # Static pages that must be readable without an account: OAuth consent
