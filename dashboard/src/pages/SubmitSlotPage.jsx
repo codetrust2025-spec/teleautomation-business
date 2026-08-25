@@ -292,6 +292,9 @@ export function SubmitSlotPage() {
   const [paymentProofIds, setPaymentProofIds] = useState([])
   const [paymentFiles, setPaymentFiles] = useState([])
   const [paymentTotals, setPaymentTotals] = useState(null)
+  // The round fee, served alongside the roster. Round-wise has no roster row to
+  // read a balance from, so without this the form has no figure to show.
+  const [roundWiseFee, setRoundWiseFee] = useState(0)
   const [sessionFile, setSessionFile] = useState(null)
   const [sessionPreview, setSessionPreview] = useState('')
   const [manualDate, setManualDate] = useState('')
@@ -342,6 +345,14 @@ export function SubmitSlotPage() {
   // clear the fee once they add up, and the server decides when they do.
   const paymentComplete = Boolean(paymentProofIds.length && paymentTotals?.payment_complete)
   const needsPaymentProof = Boolean(selected?.needs_payment_proof && !paymentComplete)
+  // Round-wise is charged a flat round fee and keeps no roster row, so the card
+  // cannot be driven by `selected` the way profile service is. Without this the
+  // upload control never rendered for a round-wise booking at all, and the
+  // payment /bookings/confirm insists on could not be supplied.
+  const showPaymentCard = serviceType === 'round_wise' || Boolean(selected?.needs_payment_proof)
+  const paymentDueAmount = serviceType === 'round_wise'
+    ? (paymentTotals?.amount_due || roundWiseFee)
+    : (selected?.balance_due || 0)
 
   const resetPaymentProofs = useCallback(() => {
     setPaymentProofIds([])
@@ -360,7 +371,10 @@ export function SubmitSlotPage() {
       ])
       const cData = await cRes.json()
       const bData = await bRes.json()
-      if (cData.status === 'ok') setCandidates(dedupeCandidates(cData.candidates || []))
+      if (cData.status === 'ok') {
+        setCandidates(dedupeCandidates(cData.candidates || []))
+        setRoundWiseFee(Number(cData.round_wise_fee) || 0)
+      }
       if (bData.status === 'ok') setBooked(bData.slots || [])
     } catch { setError('Could not load — check your connection.') }
     finally { setLoading(false) }
@@ -461,10 +475,28 @@ export function SubmitSlotPage() {
 
   async function uploadPaymentProof() {
     if (!effectiveName || !paymentFiles.length) { setError('Enter your name and attach at least one payment screenshot first.'); return }
+    // The proof is filed under the phone below, so it has to be known before
+    // the screenshot is verified rather than after.
+    if (serviceType === 'round_wise' && !roundWisePhone.trim()) {
+      setError('Enter the candidate phone number before uploading payment proof.')
+      setTriedSubmit(true)
+      return
+    }
     setBusy(true); setError(''); setSuccess(''); setPaymentRejected([]); setPaymentAnalysing(true)
     try {
       const fd = new FormData()
       fd.append('name', effectiveName)
+      // A pending proof is filed under the identity that will later claim it,
+      // and /bookings/confirm resolves it by service type plus phone or
+      // candidate id. Uploading without them filed every proof under
+      // "profile_service", so a round-wise booking could never claim its own
+      // payment and the fee was measured against the profile balance instead
+      // of the round-wise baseline.
+      fd.append('service_type', serviceType)
+      fd.append('candidate_id', selected?.id || '')
+      if (serviceType === 'round_wise') fd.append('phone', roundWisePhone.trim())
+      if (effectiveTechnology) fd.append('technology', effectiveTechnology)
+      if (interviewRound) fd.append('interview_round', interviewRound)
       // Every screenshot goes in one request; ids already saved are sent back
       // so instalments uploaded across several attempts still add together.
       paymentFiles.forEach(f => fd.append('files', f))
@@ -721,7 +753,11 @@ export function SubmitSlotPage() {
                     type="tel"
                     inputMode="tel"
                     value={roundWisePhone}
-                    onChange={e => setRoundWisePhone(e.target.value)}
+                    // The pending proof is filed under this phone, so a proof
+                    // uploaded against the old one can no longer be claimed.
+                    // Dropping it here is what keeps the change from failing
+                    // later as an unexplained "upload the payment screenshot".
+                    onChange={e => { setRoundWisePhone(e.target.value); resetPaymentProofs(); }}
                     placeholder="10-digit phone number"
                     disabled={busy || parsing}
                   />
@@ -761,9 +797,9 @@ export function SubmitSlotPage() {
                 {triedSubmit && !interviewRound && <span className="sbs-hint sbs-hint--warn">Required — select a round to confirm.</span>}
               </label>
 
-              {selected?.needs_payment_proof && (
+              {showPaymentCard && (
                 <div className="sbs-pay-card">
-                  <div className="sbs-pay-head"><span>Payment due</span><strong>₹{(selected.balance_due || 0).toLocaleString('en-IN')}</strong></div>
+                  <div className="sbs-pay-head"><span>Payment due</span><strong>₹{paymentDueAmount.toLocaleString('en-IN')}</strong></div>
                   {paymentProofIds.length > 0 && (
                     <>
                       <p className={paymentComplete ? 'sbs-pay-ok' : 'sbs-pay-partial'}>

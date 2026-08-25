@@ -48,6 +48,16 @@ function stubFetch({ extraction } = {}) {
   return calls
 }
 
+/** The invite drop, addressed directly.
+ *
+ * Round-wise also renders a payment drop, and it comes first in the document,
+ * so "the first file input" is no longer the invite. The invite is the
+ * single-file one and the payment drop is the multi-select one.
+ */
+function inviteInput() {
+  return document.querySelector('input[type="file"]:not([multiple])')
+}
+
 function screenshot(name) {
   return new File([name], name, { type: 'image/jpeg' })
 }
@@ -82,7 +92,7 @@ describe('Submit slot — round-wise technology', () => {
     fireEvent.change(screen.getByPlaceholderText(/type client name/i), { target: { value: 'venkat' } })
     fireEvent.change(screen.getByPlaceholderText(/10-digit phone number/i), { target: { value: '7306994576' } })
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'L1' } })
-    attach(document.querySelector('input[type="file"]'), [screenshot('invite.jpg')])
+    attach(inviteInput(), [screenshot('invite.jpg')])
 
     await waitFor(() => expect(screen.queryByText(/reading invite with ai/i)).toBeNull())
     fireEvent.click(screen.getByRole('button', { name: /confirm booking/i }))
@@ -99,7 +109,7 @@ describe('Submit slot — round-wise technology', () => {
     fireEvent.change(screen.getByPlaceholderText(/type client name/i), { target: { value: 'venkat' } })
     fireEvent.change(screen.getByPlaceholderText(/10-digit phone number/i), { target: { value: '7306994576' } })
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'L1' } })
-    attach(document.querySelector('input[type="file"]'), [screenshot('invite.jpg')])
+    attach(inviteInput(), [screenshot('invite.jpg')])
     await waitFor(() => expect(screen.queryByText(/reading invite with ai/i)).toBeNull())
 
     fireEvent.click(screen.getByRole('button', { name: /confirm booking/i }))
@@ -113,7 +123,7 @@ describe('Submit slot — round-wise technology', () => {
     stubFetch({ extraction: { interview_date: AHEAD, start_time: '03:00 PM', technology: 'Automation Testing', confidence_score: 90 } })
     await chooseRoundWise()
 
-    attach(document.querySelector('input[type="file"]'), [screenshot('invite.jpg')])
+    attach(inviteInput(), [screenshot('invite.jpg')])
     await waitFor(() =>
       expect(screen.getByPlaceholderText(/choose or type the technology/i).value).toBe('Automation Testing'))
   })
@@ -124,7 +134,7 @@ describe('Submit slot — round-wise technology', () => {
 
     const tech = await screen.findByPlaceholderText(/choose or type the technology/i)
     fireEvent.change(tech, { target: { value: 'Golang' } })
-    attach(document.querySelector('input[type="file"]'), [screenshot('invite.jpg')])
+    attach(inviteInput(), [screenshot('invite.jpg')])
 
     await waitFor(() => expect(screen.queryByText(/reading invite with ai/i)).toBeNull())
     expect(tech.value).toBe('Golang')

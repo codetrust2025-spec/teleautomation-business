@@ -153,7 +153,18 @@ def install_public_slot_routes(app) -> None:
     async def public_slot_candidates(channel: str | None = None):
         rows = cs.interview_slot_picker_rows(channel=channel or "profile")
         return JSONResponse(
-            {"status": "ok", "candidates": rows, "count": len(rows)},
+            {
+                "status": "ok",
+                "candidates": rows,
+                "count": len(rows),
+                # A round-wise booking has no roster row to carry a balance -
+                # `needs_payment_proof` on these rows is the profile-service
+                # balance, which says nothing about the round fee. The fee is
+                # the same for every round, so the form is told it directly.
+                # /bookings/confirm re-derives the identical figure, so this
+                # stays a display value and never a source of authority.
+                "round_wise_fee": cs.baseline_for_service("round_wise"),
+            },
             headers={"Cache-Control": "no-store, max-age=0"},
         )
 
