@@ -533,14 +533,6 @@ export function SubmitSlotPage() {
       // so instalments uploaded across several attempts still add together.
       paymentFiles.forEach(f => fd.append('files', f))
       fd.append('existing_proof_ids', paymentProofIds.join(','))
-      // Round-wise proof must be stored under the correct context so
-      // /bookings/confirm can retrieve it with matching service_type and phone.
-      fd.append('service_type', serviceType)
-      if (serviceType === 'round_wise') {
-        fd.append('phone', roundWisePhone.trim())
-        fd.append('technology', effectiveTechnology)
-        fd.append('interview_round', interviewRound)
-      }
       const res = await fetch(`${API_BASE}/public/slots/payment-proof`, { method: 'POST', body: fd })
       const data = await res.json()
       setPaymentRejected(data.rejected || [])
