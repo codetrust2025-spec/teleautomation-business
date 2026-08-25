@@ -168,6 +168,30 @@ describe('Round-wise payment — upload carries correct service_type', () => {
     expect(uploadBody.get('interview_round')).toBe('L1')
   })
 
+  it('sends each identity field exactly once', async () => {
+    // FormData.append appends; it does not replace. A reconcile once left two
+    // blocks writing these same four fields, and because the last value wins
+    // the second silently decided the request. Harmless while both agreed, but
+    // it is the same two-places-disagree shape as the bug the fields fix.
+    const calls = stubFetch()
+    await chooseRoundWise()
+
+    fireEvent.change(screen.getByPlaceholderText(/type client name/i), { target: { value: 'venkat' } })
+    fireEvent.change(screen.getByPlaceholderText(/10-digit phone number/i), { target: { value: '7306994576' } })
+    fireEvent.change(screen.getByPlaceholderText(/choose or type the technology/i), { target: { value: 'Java' } })
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'L1' } })
+    expect(await screen.findByText(/payment due/i)).toBeTruthy()
+
+    attach(document.querySelectorAll('input[type="file"]')[0], [screenshot('payment-proof')])
+    fireEvent.click(await screen.findByRole('button', { name: /save payment proof/i }))
+    await waitFor(() => expect(calls.uploads).toHaveLength(1))
+
+    const uploadBody = calls.uploads[0]
+    for (const field of ['service_type', 'phone', 'technology', 'interview_round']) {
+      expect(uploadBody.getAll(field)).toHaveLength(1)
+    }
+  })
+
   it('profile service upload sends service_type=profile_service (no phone/tech)', async () => {
     const calls = stubFetch()
     render(<SubmitSlotPage />)
