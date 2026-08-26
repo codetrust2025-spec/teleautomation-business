@@ -264,6 +264,30 @@ def mailbox_overview_rows() -> list[dict[str, Any]]:
     ]
 
 
+def mailboxes_due_for_watch_renewal(*, before: datetime, limit: int = 100) -> list[dict[str, Any]]:
+    """Connected mailboxes whose Gmail push watch lapses before `before`.
+
+    Unlike `mailbox_health_rows` this deliberately returns the credential
+    ciphertext, because renewing a watch means calling Google as that mailbox.
+
+    A NULL expiration sorts first and is treated as due: it means the mailbox
+    either predates watch tracking or its registration never completed, and both
+    need a watch registered rather than skipped.
+    """
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT * FROM candidate_mailboxes
+               WHERE credential_ciphertext IS NOT NULL
+                 AND monitoring_enabled=true
+                 AND connection_status='CONNECTED'
+                 AND (gmail_watch_expiration IS NULL OR gmail_watch_expiration < %s)
+               ORDER BY gmail_watch_expiration ASC NULLS FIRST
+               LIMIT %s""",
+            (before, limit),
+        )
+        return _rows(cur)
+
+
 def mailbox_by_id(mailbox_id: str) -> dict[str, Any] | None:
     with get_connection() as conn, conn.cursor() as cur:
         cur.execute("SELECT * FROM candidate_mailboxes WHERE id=%s", (mailbox_id,))
