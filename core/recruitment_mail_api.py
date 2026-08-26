@@ -9,6 +9,7 @@ from core.dashboard_access import operator_profile, require_fleet_admin, assert_
 from core.ai_gateway import AIGatewayError, chat_structured, configured_models, health as ollama_health
 from core.ollama_status import snapshot as ollama_status_snapshot
 from core import ollama_nodes
+from core import gmail_watch
 from features import candidate_store
 from services.gmail_mailbox_provider import authorization_url, exchange_code, encrypt_credentials, GmailMailboxProvider
 
@@ -62,17 +63,10 @@ def _node_status(node_id:str)->dict:
     return status
 
 def _renew_gmail_watch(mailbox:dict)->dict|None:
-    topic=(os.getenv('GMAIL_PUBSUB_TOPIC') or '').strip()
-    if not topic or not mailbox.get('credential_ciphertext'):return None
-    result=GmailMailboxProvider(mailbox['credential_ciphertext']).start_watch(topic)
-    expiration=None
-    try:expiration=datetime.fromtimestamp(int(result.get('expiration'))/1000,tz=timezone.utc)
-    except (TypeError,ValueError,OverflowError):pass
-    return store.update_mailbox(mailbox['id'],{
-        'provider_history_id':str(mailbox.get('provider_history_id') or result.get('historyId') or ''),
-        'sync_cursor':str(mailbox.get('sync_cursor') or result.get('historyId') or ''),
-        'gmail_watch_expiration':expiration,'gmail_watch_topic':topic,
-    })
+    # The implementation moved to core.gmail_watch so the background renewal
+    # loop can reuse it without importing this FastAPI module.  The three
+    # request handlers below still call it exactly as before.
+    return gmail_watch.renew_watch(mailbox)
 
 def install_recruitment_mail_routes(app):
     if enabled():

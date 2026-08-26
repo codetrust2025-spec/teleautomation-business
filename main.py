@@ -166,6 +166,7 @@ async def startup() -> None:
         return
     from core.recruitment_mail_store import ensure_schema
     from core.migrations.runner import apply_migrations
+    from services.gmail_watch_renewal_loop import start_gmail_watch_renewal_loop
     from services.interview_reminder_loop import start_interview_reminder_loop
     from services.messaging_client import start_outbox_dispatcher
     from workers.recruitment_mail_worker import recruitment_mail_worker
@@ -174,15 +175,18 @@ async def startup() -> None:
     ensure_schema()
     recruitment_mail_worker.start()
     start_interview_reminder_loop()
+    start_gmail_watch_renewal_loop()
     start_outbox_dispatcher()
 
 
 @app.on_event("shutdown")
 async def shutdown() -> None:
+    from services.gmail_watch_renewal_loop import stop_gmail_watch_renewal_loop
     from services.interview_reminder_loop import stop_interview_reminder_loop
     from services.messaging_client import stop_outbox_dispatcher
     from workers.recruitment_mail_worker import recruitment_mail_worker
 
+    await stop_gmail_watch_renewal_loop()
     await stop_interview_reminder_loop()
     await stop_outbox_dispatcher()
     await recruitment_mail_worker.stop()
