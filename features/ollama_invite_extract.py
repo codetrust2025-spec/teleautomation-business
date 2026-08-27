@@ -4,7 +4,7 @@ Enhances the existing slot_screenshot_parse.py with AI-powered extraction
 using Ollama models running on the developer's laptop (tunneled via SSH).
 
 Primary model: qwen2.5vl:7b (reliable structured extraction)
-Backup model: moondream (lightweight fallback)
+Backup model: qwen2.5vl:7b
 Falls back to existing OCR only if both AI models fail.
 
 Hybrid flow (fast path):
@@ -30,7 +30,10 @@ logger = logging.getLogger(__name__)
 
 # ── Configuration ───────────────────────────────────────────────────────────
 OLLAMA_VISION_MODEL = model_for("interview_screenshot_vision")
-OLLAMA_BACKUP_VISION_MODEL = os.environ.get("OLLAMA_BACKUP_VISION_MODEL", "moondream")
+# The backup has to be able to do the same job as the primary. A small vision
+# model was the previous default and could not read long identifiers at all,
+# which made a failed fallback indistinguishable from an unreadable image.
+OLLAMA_BACKUP_VISION_MODEL = os.environ.get("OLLAMA_BACKUP_VISION_MODEL", "qwen2.5vl:7b")
 OLLAMA_REASONING_MODEL = model_for("reasoning_text")
 def _invite_model_timeout() -> int:
     """Per-call model timeout, never longer than the endpoint's own budget.
@@ -662,7 +665,7 @@ def _extract_with_ocr_and_ai(
       1. OCR image → raw text (Tesseract, instant)
       2. If OCR gets enough text, send to qwen2.5:7b text model for JSON cleanup (~10-30s)
       3. Only if OCR fails or text cleanup fails, call qwen2.5vl:7b vision model (~5 min)
-      4. If vision fails, try moondream backup
+      4. If vision fails, try the backup vision model
       5. If all AI fails, fall back to regex OCR parsing
 
     Ollama runs on the developer's laptop, tunneled to VPS via SSH.
@@ -802,7 +805,7 @@ def _extract_with_ocr_and_ai(
             logger.info("Invalid JSON from vision, retrying...")
             extracted = retry_invalid_json_once(OLLAMA_VISION_MODEL, img_b64, response)
 
-    # ── Step 3: If vision failed, try backup model (moondream) ──────────────
+    # ── Step 3: If vision failed, try the backup vision model ───────────────
     if (
         not extracted
         and not ollama_only

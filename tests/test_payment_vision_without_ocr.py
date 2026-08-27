@@ -173,7 +173,7 @@ def test_the_backup_vision_model_can_also_read_identifiers():
     """The backup runs when the primary fails, so it must be able to do the
     same job. moondream was the old default and returns empty identifiers,
     which made a failed fallback look like an unreadable receipt."""
-    assert extractor.OLLAMA_BACKUP_VISION_MODEL != "moondream"
+    assert "moondream" not in extractor.OLLAMA_BACKUP_VISION_MODEL
 
 
 def test_payment_vision_routes_to_a_capable_model_by_default():
@@ -199,13 +199,15 @@ def test_payment_vision_is_not_bound_to_the_shared_vision_variable(monkeypatch):
     variable, _ = AUXILIARY_MODEL_ROUTES["payment_screenshot_vision"]
     assert variable != "OLLAMA_VISION_MODEL", "payment vision must have its own variable"
 
-    monkeypatch.setenv("OLLAMA_VISION_MODEL", "moondream")
+    # A neutral sentinel rather than a real model name: the point is that the
+    # shared variable cannot reach payments, whatever it happens to be set to.
+    monkeypatch.setenv("OLLAMA_VISION_MODEL", "some-other-vision-model")
     monkeypatch.delenv("OLLAMA_PAYMENT_VISION_MODEL", raising=False)
 
-    assert model_for("payment_screenshot_vision") != "moondream"
+    assert model_for("payment_screenshot_vision") != "some-other-vision-model"
     # ...while the shared workloads still honour the global setting.
-    assert model_for("resume_vision") == "moondream"
-    assert model_for("interview_screenshot_vision") == "moondream"
+    assert model_for("resume_vision") == "some-other-vision-model"
+    assert model_for("interview_screenshot_vision") == "some-other-vision-model"
 
 
 def test_the_payment_backup_has_its_own_variable_too(monkeypatch):
@@ -214,11 +216,11 @@ def test_the_payment_backup_has_its_own_variable_too(monkeypatch):
     no effect where it mattered."""
     import importlib
 
-    monkeypatch.setenv("OLLAMA_BACKUP_VISION_MODEL", "moondream")
+    monkeypatch.setenv("OLLAMA_BACKUP_VISION_MODEL", "some-shared-backup")
     monkeypatch.delenv("OLLAMA_PAYMENT_BACKUP_VISION_MODEL", raising=False)
     reloaded = importlib.reload(extractor)
     try:
-        assert reloaded.OLLAMA_BACKUP_VISION_MODEL != "moondream"
+        assert reloaded.OLLAMA_BACKUP_VISION_MODEL != "some-shared-backup"
     finally:
         monkeypatch.undo()
         importlib.reload(extractor)

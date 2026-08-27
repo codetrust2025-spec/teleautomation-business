@@ -12,19 +12,20 @@ import os
 MODEL_ROUTES = {
     "recruitment_email_primary": ("OLLAMA_PRIMARY_MODEL", "qwen2.5:7b"),
     "recruitment_email_validator": ("AI_RECRUITMENT_VALIDATOR_MODEL", "qwen2.5:7b"),
-    "recruitment_document_vision": ("OLLAMA_VISION_MODEL", "qwen2.5vl:7b"),
+    "recruitment_document_vision": ("OLLAMA_VISION_MODEL", "qwen3-vl:8b-instruct"),
 }
 
 AUXILIARY_MODEL_ROUTES = {
-    "interview_screenshot_vision": ("OLLAMA_VISION_MODEL", "qwen2.5vl:7b"),
+    "interview_screenshot_vision": ("OLLAMA_VISION_MODEL", "qwen3-vl:8b-instruct"),
     # Payments read two long identifiers whose exact digits decide the
     # authorisation, so this route is deliberately NOT bound to the shared
     # OLLAMA_VISION_MODEL: a global vision change made for resumes or invites
-    # must not be able to silently downgrade payment reading. Production once
-    # set OLLAMA_VISION_MODEL=moondream, which cannot read a 22-digit
-    # transaction ID at all. The default is present on every node.
+    # must not be able to silently downgrade payment reading. That is not
+    # hypothetical - a small vision model was once set globally and returned
+    # empty strings for a 22-digit transaction ID. The default here is present
+    # on every Ollama node.
     "payment_screenshot_vision": ("OLLAMA_PAYMENT_VISION_MODEL", "qwen3-vl:8b-instruct"),
-    "resume_vision": ("OLLAMA_VISION_MODEL", "qwen2.5vl:7b"),
+    "resume_vision": ("OLLAMA_VISION_MODEL", "qwen3-vl:8b-instruct"),
     "reasoning_text": ("OLLAMA_REASONING_MODEL", "qwen2.5:7b"),
 }
 
