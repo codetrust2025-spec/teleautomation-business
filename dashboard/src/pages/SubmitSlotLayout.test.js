@@ -13,11 +13,10 @@
  * The primary action was the smallest target on the page and the one every
  * booking has to hit.
  *
- * The form was cramped on BOTH axes: a 450px column on a wide screen, with
- * 38px controls inside it. Widening alone fixed nothing on a phone; raising
- * the touch targets alone left the desktop layout narrow. Both are asserted
- * here, because fixing either one on its own reads as a regression of the
- * other.
+ * The card width is deliberately left at its original 450px: the problem being
+ * fixed here is vertical only. An intermediate attempt widened it to 820px;
+ * that is not the shape wanted, so the max-width is asserted to stay narrow so
+ * a future change does not quietly re-widen it.
  *
  * Heights are pinned with `min-height` rather than left to padding plus font
  * metrics, because that drifts whenever the font does. The assertions are on
@@ -77,13 +76,20 @@ describe('submit-slot form is usable on a phone', () => {
     expect(px('.sbs-form', 'gap')).toBeGreaterThanOrEqual(10)
   })
 
-  it('uses the width available on a desktop screen', () => {
-    // The form was cramped on both axes. A 450px column on a 1366px+ screen is
-    // the horizontal half of that, and the controls inside are all width:100%
-    // so they had nothing to fill.
+  it('keeps the original card width', () => {
+    // Vertical-only fix by design. 820px was tried and rejected; this pins the
+    // width so it is not re-widened as a side effect of some later change.
     const max = px('.sbs-card', 'max-width')
-    expect(max).toBeGreaterThanOrEqual(700)
-    expect(max).toBeLessThanOrEqual(850)
+    expect(max).toBeGreaterThanOrEqual(420)
+    expect(max).toBeLessThanOrEqual(520)
+  })
+
+  it('gives the upload dropzone a comfortable height', () => {
+    // The page renders the --compact variant, which overrode the base rule
+    // back down to 37.6px - below a comfortable target for something you tap
+    // to open a file picker.
+    expect(px('.submit-slot-drop-wrap--compact .submit-slot-drop', 'min-height'))
+      .toBeGreaterThanOrEqual(MIN_TOUCH_PX)
   })
 
   it('still fills the viewport on small screens', () => {
