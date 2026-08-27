@@ -1331,12 +1331,13 @@ img, video, iframe, table, pre, code { max-width: 100%; }
      specificity is (0,3,1) - an element plus three attribute selectors - so it
      beats a single class like `.sbs-input` (0,1,0) whatever the source order.
      It was set to 40px, which is under the 44px minimum it exists to provide,
-     and it silently capped every form in the app on mobile. */
+     and it silently capped every form in the app on mobile. Only the height is
+     raised - padding is left alone so this cannot shift any layout. */
   input:not([type='checkbox']):not([type='radio']):not([type='range']),
   textarea,
   select {
     min-height: 44px;
-    padding: 10px 12px;
+    padding: 8px 12px;
   }
 
   /* Ensure no flex/grid descendant accidentally pushes the viewport
