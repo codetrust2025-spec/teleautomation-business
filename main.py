@@ -17,8 +17,14 @@ from api.routers.expenses import router as expenses_router
 from api.routers.operations_ai import router as operations_ai_router
 from api.routers.referrers import router as referrers_router
 from core.dashboard_auth_api import install_dashboard_auth
+from core.log_redaction import install_access_log_redaction
 from core.public_slot_api import install_public_slot_routes
 from core.recruitment_mail_api import install_recruitment_mail_routes
+
+# Before anything can serve a request: the Gmail Pub/Sub push endpoint carries
+# its verification token in the query string, and uvicorn's access log would
+# otherwise write that live secret to disk on every successful push.
+install_access_log_redaction()
 
 app = FastAPI(title="TeleAutomation Operations", version="2.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=[], allow_methods=["*"], allow_headers=["*"])
