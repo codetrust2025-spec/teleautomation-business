@@ -92,6 +92,16 @@ describe('submit-slot form is usable on a phone', () => {
       .toBeGreaterThanOrEqual(MIN_TOUCH_PX)
   })
 
+  it('does not let the mobile rule cap controls below the tap minimum', () => {
+    // Below 900px this rule wins over `.sbs-input`: (0,3,1) specificity beats a
+    // single class, whatever the order. It was 40px - under the very minimum it
+    // exists to provide - so the booking form was 40px on every phone while
+    // desktop showed the intended 44px.
+    const m = CSS.match(/input:not\(\[type='checkbox'\]\)[\s\S]{0,200}?min-height:\s*(\d+)px/)
+    expect(m, 'mobile tap-target rule not found').not.toBeNull()
+    expect(Number(m[1])).toBeGreaterThanOrEqual(MIN_TOUCH_PX)
+  })
+
   it('still fills the viewport on small screens', () => {
     expect(rule('.sbs-card')).toMatch(/width:\s*100%/)
   })
