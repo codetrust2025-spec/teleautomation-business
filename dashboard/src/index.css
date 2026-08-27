@@ -17332,6 +17332,18 @@ html:has(.app-shell--view-candidates)::-webkit-scrollbar-thumb:active {
     grid-column: 1 / -1;
     grid-row: 3;
   }
+  /* Full width, below the dropzone and thumbnail. Without an explicit
+     placement it auto-flows into the 120px thumbnail column and is cropped by
+     the parent's `overflow: hidden`. */
+  .cand-panel .cand-proofs:has(.cand-proofs-grid) .cand-proofs-ai-result {
+    grid-column: 1 / -1;
+    grid-row: 4;
+    min-width: 0;
+  }
+  .cand-panel .cand-proofs .cand-proofs-ai-result {
+    grid-column: 1 / -1;
+    min-width: 0;
+  }
   /* Upload dropzone — flexible, never overflows */
   .cand-panel .cand-proofs-drop {
     width: 100%;
@@ -17412,4 +17424,48 @@ html:has(.app-shell--view-candidates)::-webkit-scrollbar-thumb:active {
     flex-direction: column;
   }
   .cand-panel--left { border-right: none; border-bottom: 1px solid rgba(255,255,255,.06); }
+}
+
+/* ── Payment proof: extracted-details panel ──────────────────────────────────
+   The panel had no rules at all, so inside the desktop `.cand-proofs` grid it
+   auto-flowed into the 120px column meant for thumbnails. With the parent set
+   to `overflow: hidden` the result was silently cropped rather than scrolled:
+   "Rs 20,00", "Not detect", and a UTR broken across the panel edge.
+   It is a full-width row of its own here, and its values are allowed to wrap. */
+.cand-proofs-ai-result {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-wrap: anywhere;
+}
+.cand-proofs-ai-grid {
+  display: grid;
+  /* The label column sizes to content but is capped, so a long value can never
+     squeeze it to one character per line. */
+  grid-template-columns: minmax(90px, max-content) minmax(0, 1fr) auto;
+  gap: 6px 12px;
+  align-items: baseline;
+  min-width: 0;
+}
+.cand-proofs-ai-grid > span {
+  opacity: 0.75;
+  white-space: nowrap;
+}
+.cand-proofs-ai-value {
+  grid-column: 2 / 4;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.cand-proofs-ai-value--id {
+  /* 22-character identifiers are one unbreakable token; without this the panel
+     is forced wider than its column and the tail is cropped. */
+  word-break: break-all;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}
+@media (max-width: 560px) {
+  /* Label above value rather than a two-column squeeze. */
+  .cand-proofs-ai-grid { grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; }
+  .cand-proofs-ai-grid > span { grid-column: 1 / -1; }
+  .cand-proofs-ai-value { grid-column: 1 / -1; }
 }

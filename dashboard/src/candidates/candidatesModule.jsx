@@ -843,13 +843,7 @@ export function PaymentProofUploader({
             lineHeight: "1.4",
           }}
         >
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "auto 1fr auto",
-              gap: "4px 10px",
-            }}
-          >
+          <div className="cand-proofs-ai-grid">
             <span>Amount</span>
             <strong>₹{Number(aiResult.amount || 0).toLocaleString("en-IN")}</strong>
             <button
@@ -868,17 +862,21 @@ export function PaymentProofUploader({
               ×
             </button>
             <span>Receiver</span>
-            <strong style={{ gridColumn: "2 / 4" }}>
+            <strong className="cand-proofs-ai-value">
               {aiResult.receiver_name || "Not detected"}
             </strong>
             <span>UPI/reference ID</span>
-            <strong style={{ gridColumn: "2 / 4" }}>
+            {/* A UTR is 12-16 characters and a PhonePe transaction ID is 22, so
+                this value has to be allowed to break mid-token. Left to itself
+                it is one unbreakable word and pushes the panel wider than its
+                column. */}
+            <strong className="cand-proofs-ai-value cand-proofs-ai-value--id">
               {aiResult.utr_number || aiResult.transaction_id || "Not detected"}
             </strong>
             <span>Verification status</span>
             <strong
+              className="cand-proofs-ai-value"
               style={{
-                gridColumn: "2 / 4",
                 color: aiResult.deterministic_verified ? "#22c55e" : "#f59e0b",
               }}
             >
