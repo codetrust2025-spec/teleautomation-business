@@ -16151,10 +16151,11 @@ html:has(.app-shell--view-candidates)::-webkit-scrollbar-thumb:active {
   position: relative;
   z-index: 1;
   width: 100%;
-  /* A form this shape reads better as a column than a wide band, and on a
-     phone the cap is never reached anyway. The cramping people actually hit
-     is vertical - see the touch-target and spacing rules below. */
-  max-width: 450px;
+  /* The form was cramped on both axes: a 450px column on a 1366px+ screen,
+     with 38px controls inside it. Both are fixed - this cap plus the
+     touch-target and spacing rules below. `width: 100%` governs underneath,
+     so a phone is unaffected: 820px is a ceiling, never a floor. */
+  max-width: 820px;
   background: rgba(15,17,23,0.85);
   border: 1px solid rgba(148,163,184,0.1);
   border-radius: 0.75rem;
