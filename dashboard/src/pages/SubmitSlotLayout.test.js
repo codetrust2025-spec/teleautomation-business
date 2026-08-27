@@ -13,10 +13,11 @@
  * The primary action was the smallest target on the page and the one every
  * booking has to hit.
  *
- * An earlier attempt widened `.sbs-card` from 450px to 820px. That addressed
- * the wrong axis: it does nothing on a phone, where the cap is never reached.
- * Reverted; these assertions replace the max-width one so the regression that
- * matters is the one under test.
+ * The form was cramped on BOTH axes: a 450px column on a wide screen, with
+ * 38px controls inside it. Widening alone fixed nothing on a phone; raising
+ * the touch targets alone left the desktop layout narrow. Both are asserted
+ * here, because fixing either one on its own reads as a regression of the
+ * other.
  *
  * Heights are pinned with `min-height` rather than left to padding plus font
  * metrics, because that drifts whenever the font does. The assertions are on
@@ -76,12 +77,13 @@ describe('submit-slot form is usable on a phone', () => {
     expect(px('.sbs-form', 'gap')).toBeGreaterThanOrEqual(10)
   })
 
-  it('keeps the card a column rather than a wide band', () => {
-    // The complaint was vertical. Widening this was the wrong fix, and on a
-    // phone `width: 100%` governs long before the cap is reached.
+  it('uses the width available on a desktop screen', () => {
+    // The form was cramped on both axes. A 450px column on a 1366px+ screen is
+    // the horizontal half of that, and the controls inside are all width:100%
+    // so they had nothing to fill.
     const max = px('.sbs-card', 'max-width')
-    expect(max).toBeGreaterThanOrEqual(400)
-    expect(max).toBeLessThanOrEqual(600)
+    expect(max).toBeGreaterThanOrEqual(700)
+    expect(max).toBeLessThanOrEqual(850)
   })
 
   it('still fills the viewport on small screens', () => {
