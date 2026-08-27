@@ -34,10 +34,13 @@ logger = logging.getLogger(__name__)
 # ── Configuration (shared with ollama_invite_extract) ───────────────────────
 OLLAMA_VISION_MODEL = model_for("payment_screenshot_vision")
 # The backup runs when the primary vision call fails, so it has to be capable of
-# the same job. moondream was the previous default and cannot read a 22-digit
-# transaction ID at all - it returns empty strings - which made the fallback
-# indistinguishable from "no identifiers in the image".
-OLLAMA_BACKUP_VISION_MODEL = os.environ.get("OLLAMA_BACKUP_VISION_MODEL", "qwen2.5vl:7b")
+# the same job. Deliberately its own variable: OLLAMA_BACKUP_VISION_MODEL is
+# shared with invite extraction and is set to moondream in production, which
+# cannot read a 22-digit transaction ID at all - it returns empty strings, so a
+# failed fallback looked identical to "no identifiers in the image".
+OLLAMA_BACKUP_VISION_MODEL = os.environ.get(
+    "OLLAMA_PAYMENT_BACKUP_VISION_MODEL", "qwen2.5vl:7b"
+)
 OLLAMA_REASONING_MODEL = model_for("reasoning_text")
 OLLAMA_TIMEOUT = int(os.environ.get("OLLAMA_TIMEOUT", "900"))
 OLLAMA_TEXT_TIMEOUT = int(os.environ.get("OLLAMA_TEXT_TIMEOUT", "60"))

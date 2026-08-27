@@ -17,7 +17,13 @@ MODEL_ROUTES = {
 
 AUXILIARY_MODEL_ROUTES = {
     "interview_screenshot_vision": ("OLLAMA_VISION_MODEL", "qwen2.5vl:7b"),
-    "payment_screenshot_vision": ("OLLAMA_VISION_MODEL", "qwen2.5vl:7b"),
+    # Payments read two long identifiers whose exact digits decide the
+    # authorisation, so this route is deliberately NOT bound to the shared
+    # OLLAMA_VISION_MODEL: a global vision change made for resumes or invites
+    # must not be able to silently downgrade payment reading. Production once
+    # set OLLAMA_VISION_MODEL=moondream, which cannot read a 22-digit
+    # transaction ID at all. The default is present on every node.
+    "payment_screenshot_vision": ("OLLAMA_PAYMENT_VISION_MODEL", "qwen3-vl:8b-instruct"),
     "resume_vision": ("OLLAMA_VISION_MODEL", "qwen2.5vl:7b"),
     "reasoning_text": ("OLLAMA_REASONING_MODEL", "qwen2.5:7b"),
 }

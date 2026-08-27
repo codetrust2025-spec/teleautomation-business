@@ -184,3 +184,41 @@ def test_payment_vision_routes_to_a_capable_model_by_default():
     _, default = AUXILIARY_MODEL_ROUTES["payment_screenshot_vision"]
     assert default != "moondream"
     assert "vl" in default.lower(), "payment vision needs a vision-language model"
+
+
+def test_payment_vision_is_not_bound_to_the_shared_vision_variable(monkeypatch):
+    """A global vision change must not be able to downgrade payment reading.
+
+    OLLAMA_VISION_MODEL is shared by resume, invite and interview-screenshot
+    work. Production set it to moondream, which silently took payments with it.
+    Payments own their variable so that cannot happen again - and so fixing
+    payments cannot disturb those other workloads either.
+    """
+    from core.ai_model_routing import AUXILIARY_MODEL_ROUTES, model_for
+
+    variable, _ = AUXILIARY_MODEL_ROUTES["payment_screenshot_vision"]
+    assert variable != "OLLAMA_VISION_MODEL", "payment vision must have its own variable"
+
+    monkeypatch.setenv("OLLAMA_VISION_MODEL", "moondream")
+    monkeypatch.delenv("OLLAMA_PAYMENT_VISION_MODEL", raising=False)
+
+    assert model_for("payment_screenshot_vision") != "moondream"
+    # ...while the shared workloads still honour the global setting.
+    assert model_for("resume_vision") == "moondream"
+    assert model_for("interview_screenshot_vision") == "moondream"
+
+
+def test_the_payment_backup_has_its_own_variable_too(monkeypatch):
+    """OLLAMA_BACKUP_VISION_MODEL is read by invite extraction as well and is
+    set to moondream in production, so changing only its default would have had
+    no effect where it mattered."""
+    import importlib
+
+    monkeypatch.setenv("OLLAMA_BACKUP_VISION_MODEL", "moondream")
+    monkeypatch.delenv("OLLAMA_PAYMENT_BACKUP_VISION_MODEL", raising=False)
+    reloaded = importlib.reload(extractor)
+    try:
+        assert reloaded.OLLAMA_BACKUP_VISION_MODEL != "moondream"
+    finally:
+        monkeypatch.undo()
+        importlib.reload(extractor)
