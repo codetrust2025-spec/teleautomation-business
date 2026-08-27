@@ -410,7 +410,7 @@ def _extract_utr_from_text(text: str) -> str:
 def _extract_transaction_id_from_text(text: str) -> str:
     """Extract Transaction ID from OCR text (distinct from UTR).
 
-    Handles PhonePe T-prefix IDs (e.g. T260519149403948648792) and other
+    Handles PhonePe T-prefix IDs (e.g. T2605191149403948648792) and other
     labeled transaction identifiers that _extract_utr_from_text may miss
     when the label and value are on separate lines.
     """

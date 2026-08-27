@@ -1,11 +1,21 @@
 """Regression tests for PhonePe-style Transaction ID and 13-digit UTR extraction.
 
-Production defect: a PhonePe screenshot clearly showing Transaction ID
-T260519149403948648792 and UTR 8004909041280 was rejected with "A valid UTR
-or transaction ID is required." because:
+Production defect: a PhonePe screenshot was rejected with "A valid UTR or
+transaction ID is required." because:
   1. The standalone digit regex only matched exactly 12 digits (missed 13-digit UTR)
   2. No dedicated extractor for T-prefix PhonePe Transaction IDs
   3. The OCR cross-check after vision never backfilled transaction_id
+
+The identifiers used below are SYNTHETIC, not the values from that receipt.
+``8004909041280`` is 13 digits on purpose: it is what exercises fix (1), and
+replacing it with a real 12-digit UTR would silently retire the regression this
+file exists for. The actual receipt showed UTR ``800409041280`` (12 digits) and
+Transaction ID ``T2605191149403948648792`` (23 chars, note the ``11``) — see
+tests/test_payment_vision_without_ocr.py, which asserts the real ones.
+
+These tests call the regex helpers directly, so they pass whether or not the
+gated path that production actually runs is working. That is precisely how this
+defect stayed hidden; treat a green run here as saying nothing about production.
 """
 
 import json
