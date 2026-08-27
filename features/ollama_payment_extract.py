@@ -11,7 +11,7 @@ Architecture (same as ollama_invite_extract.py):
   - Hybrid flow: OCR fast path → text model → vision model fallback
 
 Primary model: qwen2.5vl:7b (reliable structured extraction)
-Backup model: moondream (lightweight fallback)
+Backup model: qwen2.5vl:7b
 Falls back to existing OCR regex if both AI models fail.
 """
 from __future__ import annotations
@@ -622,7 +622,7 @@ def extract_payment_with_ollama(
       2. If OCR finds amount + UTR/status, return immediately (regex fast path)
       3. If OCR has text but regex incomplete, send to qwen2.5:7b text model (~10-30s)
       4. Only if OCR fails, call qwen2.5vl:7b vision model (~5 min)
-      5. If vision fails, try moondream backup
+      5. If vision fails, try the backup vision model
       6. If all AI fails, return whatever regex found
 
     Ollama runs on the developer's laptop, tunneled to VPS via SSH.
@@ -746,7 +746,7 @@ def extract_payment_with_ollama(
     if response:
         extracted = _parse_json_response(response)
 
-    # ── Step 4: Backup model (moondream) ────────────────────────────────────
+    # ── Step 4: Backup vision model ─────────────────────────────────────────
     if (
         (not extracted or not extracted.get("is_payment_screenshot"))
         and OLLAMA_BACKUP_VISION_MODEL != OLLAMA_VISION_MODEL
