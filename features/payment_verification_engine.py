@@ -440,6 +440,48 @@ def receiver_registry(*, referrer_hint: str = "") -> list[dict[str, Any]]:
     return records
 
 
+def _record_active_on(record: dict[str, Any], today: str) -> bool:
+    """Whether a registry record is in force on ``today``."""
+    active = bool(record.get("is_active", record.get("active", True)))
+    if record.get("valid_from") and str(record["valid_from"])[:10] > today:
+        active = False
+    if record.get("valid_until") and str(record["valid_until"])[:10] < today:
+        active = False
+    return active
+
+
+def _record_verified(record: dict[str, Any]) -> bool:
+    return str(record.get("verification_status") or "").upper() == "VERIFIED"
+
+
+def _credit_identity(record: dict[str, Any], today: str) -> tuple[Any, ...] | None:
+    """Who this record would credit, and under what standing.
+
+    Two records with equal identities are interchangeable: picking either
+    produces the same authorisation outcome, so a tie between them is a
+    duplicate registration rather than a genuine ambiguity.
+
+    ``None`` means "cannot prove interchangeable" and must never be collapsed.
+    A company payment credits the company whichever company record matched -
+    ``company_id`` and ``receiver_registry_id`` are recorded for audit but do
+    not select a ledger account. A referrer payment is different: the money is
+    somebody's commission, so it collapses only on a matching non-empty
+    ``referrer_id``. Two unresolved referrer rows both carrying an empty id are
+    exactly the case where guessing pays the wrong person.
+    """
+    kind = str(record.get("type") or "")
+    if kind == "company":
+        key: tuple[Any, ...] = ("company",)
+    elif kind == "referrer":
+        referrer_id = str(record.get("referrer_id") or "").strip()
+        if not referrer_id:
+            return None
+        key = ("referrer", referrer_id)
+    else:
+        return None
+    return key + (_record_active_on(record, today), _record_verified(record))
+
+
 def classify_receiver(
     extraction: dict[str, Any],
     *,
@@ -512,6 +554,17 @@ def classify_receiver(
         }
     best_score = max(match[0] for match in matches)
     best_matches = [match for match in matches if match[0] == best_score]
+    collapsed_duplicates: list[str] = []
+    if len(best_matches) > 1:
+        # One payee registered more than once - e.g. the company UPI present in
+        # both COMPANY_PAYMENT_UPI_IDS and the receiver registry file - is not a
+        # disagreement about who to credit. Collapse only when every tied record
+        # would produce the same outcome; anything else falls through to the
+        # ambiguous branch below, unchanged.
+        identities = {_credit_identity(match[1], today) for match in best_matches}
+        if len(identities) == 1 and None not in identities:
+            collapsed_duplicates = sorted({match[1]["id"] for match in best_matches})
+            best_matches = [min(best_matches, key=lambda match: str(match[1]["id"]))]
     if len(best_matches) != 1:
         return {
             "receiver_type": "unknown",
@@ -529,12 +582,8 @@ def classify_receiver(
             "receiver_account_verified": False,
         }
     score, record, matched_by = best_matches[0]
-    currently_active = bool(record.get("is_active", record.get("active", True)))
-    if record.get("valid_from") and str(record["valid_from"])[:10] > today:
-        currently_active = False
-    if record.get("valid_until") and str(record["valid_until"])[:10] < today:
-        currently_active = False
-    verified = str(record.get("verification_status") or "").upper() == "VERIFIED"
+    currently_active = _record_active_on(record, today)
+    verified = _record_verified(record)
     return {
         "receiver_type": record["type"],
         "receiver_registry_id": record["id"],
@@ -542,6 +591,10 @@ def classify_receiver(
         "receiver_match": matched_by,
         "receiver_match_score": score,
         "receiver_match_ambiguous": False,
+        # Non-empty when one payee was registered more than once. The payment is
+        # authorised, but the registry still wants cleaning - see
+        # receiver_registry_conflicts().
+        "receiver_match_duplicates": collapsed_duplicates,
         "receiver_identifier_present": stable_identifier_present,
         "receiver_identifier_complete": matched_by in {"upi", "phone", "account"},
         "receiver_identifier_conflict": False,
