@@ -33,7 +33,14 @@ logger = logging.getLogger(__name__)
 
 # ── Configuration (shared with ollama_invite_extract) ───────────────────────
 OLLAMA_VISION_MODEL = model_for("payment_screenshot_vision")
-OLLAMA_BACKUP_VISION_MODEL = os.environ.get("OLLAMA_BACKUP_VISION_MODEL", "moondream")
+# The backup runs when the primary vision call fails, so it has to be capable of
+# the same job. Deliberately its own variable: OLLAMA_BACKUP_VISION_MODEL is
+# shared with invite extraction and is set to moondream in production, which
+# cannot read a 22-digit transaction ID at all - it returns empty strings, so a
+# failed fallback looked identical to "no identifiers in the image".
+OLLAMA_BACKUP_VISION_MODEL = os.environ.get(
+    "OLLAMA_PAYMENT_BACKUP_VISION_MODEL", "qwen2.5vl:7b"
+)
 OLLAMA_REASONING_MODEL = model_for("reasoning_text")
 OLLAMA_TIMEOUT = int(os.environ.get("OLLAMA_TIMEOUT", "900"))
 OLLAMA_TEXT_TIMEOUT = int(os.environ.get("OLLAMA_TEXT_TIMEOUT", "60"))
@@ -59,6 +66,15 @@ Rules:
 - "amount" is the same figure as integer rupees. Example: ₹30,000 is 30000.
   Preserve every digit. Never convert to paise and never do arithmetic on it.
 - "visible_amounts" lists every payment-like rupee amount visible in the receipt.
+- "transaction_id" and "utr" are the two identifiers the backend authorises on.
+  Copy each one DIGIT FOR DIGIT exactly as printed. These are long - a UTR is
+  typically 12 or 16 digits and a PhonePe transaction ID is a "T" followed by
+  ~21 digits. Reproduce every character, keep any leading letter, and never
+  shorten, truncate, group, space out, re-order or summarise them. If you
+  cannot read every character with certainty, leave the field empty and list it
+  in "missing_fields" rather than guessing a shorter value.
+- "transaction_id" and "utr" are DIFFERENT fields even when both appear. Never
+  copy one into the other, and never merge them.
 - "payment_status" is SUCCESS, PENDING, FAILED, or UNKNOWN.
 - "direction" is critical. A person under "Received from" is the sender, not the receiver.
 - For RECEIVED_FROM, put the account after "Credited to" in "credited_to_identifier".
