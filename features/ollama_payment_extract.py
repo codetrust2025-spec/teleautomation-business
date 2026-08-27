@@ -380,12 +380,42 @@ def _extract_utr_from_text(text: str) -> str:
     m = re.search(r'(?:Ref|ref|REF)\s*(?:No|no|NO)?[:\s]*([A-Za-z0-9]{8,22})', text)
     if m:
         return m.group(1)
-    # Transaction ID
-    m = re.search(r'(?:Txn|txn|TXN|Transaction)\s*(?:ID|Id|id)?[:\s]*([A-Za-z0-9]{8,22})', text)
+    # Transaction ID (labeled)
+    m = re.search(r'(?:Txn|txn|TXN|Transaction)\s*(?:ID|Id|id)?[:\s]*([A-Za-z0-9]{8,30})', text)
     if m:
         return m.group(1)
-    # Standalone 12-digit number (likely UTR)
-    m = re.search(r'\b(\d{12})\b', text)
+    # Standalone 12-16 digit number (UTR from various banks)
+    m = re.search(r'\b(\d{12,16})\b', text)
+    if m:
+        return m.group(1)
+    return ""
+
+
+def _extract_transaction_id_from_text(text: str) -> str:
+    """Extract Transaction ID from OCR text (distinct from UTR).
+
+    Handles PhonePe T-prefix IDs (e.g. T260519149403948648792) and other
+    labeled transaction identifiers that _extract_utr_from_text may miss
+    when the label and value are on separate lines.
+    """
+    # PhonePe-style T-prefix transaction ID (T followed by 15-30 digits)
+    m = re.search(r'\b(T\d{15,30})\b', text)
+    if m:
+        return m.group(1)
+    # Labeled: "Transaction ID" possibly on a separate line from the value
+    m = re.search(
+        r'(?:Transaction|Txn)\s*(?:ID|Id|id)\s*[:\s]*\n?\s*([A-Za-z0-9]{10,30})',
+        text,
+        re.IGNORECASE,
+    )
+    if m:
+        return m.group(1)
+    # Google Pay style "UPI transaction ID" or just transaction reference
+    m = re.search(
+        r'(?:UPI\s+)?[Tt]ransaction\s*(?:ID|Id|id|ref|reference)\s*[:\s]*([A-Za-z0-9]{10,30})',
+        text,
+        re.IGNORECASE,
+    )
     if m:
         return m.group(1)
     return ""
@@ -473,33 +503,35 @@ def _extract_receiver_phone_from_text(text: str) -> str:
 def _ocr_regex_extraction(ocr_text: str) -> dict[str, Any] | None:
     """Try to extract payment details from OCR text using regex only.
 
-    Returns a filled dict if we can get amount + (UTR or status=success).
+    Returns a filled dict if we can get amount + (UTR or transaction ID or status=success).
     """
     amount = _extract_amount_from_text(ocr_text)
     if amount < 500:
         return None  # Not a meaningful payment amount
 
     utr = _extract_utr_from_text(ocr_text)
+    transaction_id = _extract_transaction_id_from_text(ocr_text)
     status = _detect_status(ocr_text)
     app = _detect_payment_app(ocr_text)
     pay_date = _extract_date_from_text(ocr_text)
     receiver_upi = _extract_receiver_upi_from_text(ocr_text)
     receiver_phone = _extract_receiver_phone_from_text(ocr_text)
 
-    # Need at least amount + one of (UTR, success status) to trust regex
-    if not utr and status != "success":
+    # Need at least amount + one of (UTR, transaction ID, success status) to trust regex
+    if not utr and not transaction_id and status != "success":
         return None
 
     result = _empty_extraction()
     result["amount"] = int(amount)
     result["utr_number"] = utr
+    result["transaction_id"] = transaction_id
     result["status"] = status
     result["payment_app"] = app
     result["payment_date"] = pay_date
     result["receiver_upi_id"] = receiver_upi
     result["receiver_phone"] = receiver_phone
     result["is_payment_screenshot"] = True
-    result["confidence_score"] = min(85, 40 + (20 if utr else 0) + (15 if status == "success" else 0) + (10 if app else 0))
+    result["confidence_score"] = min(85, 40 + (20 if utr else 0) + (15 if transaction_id else 0) + (15 if status == "success" else 0) + (10 if app else 0))
     result["extraction_source"] = "ocr_regex"
     result["extraction_method"] = "regex_fast"
     result["primary_model"] = "tesseract+regex"
@@ -781,6 +813,9 @@ def extract_payment_with_ollama(
         if ocr_text:
             result["raw_detected_text"] = ocr_text[:1000]
             result["utr_number"] = result.get("utr_number") or _extract_utr_from_text(ocr_text)
+            result["transaction_id"] = (
+                result.get("transaction_id") or _extract_transaction_id_from_text(ocr_text)
+            )
             result["receiver_upi_id"] = (
                 result.get("receiver_upi_id") or _extract_receiver_upi_from_text(ocr_text)
             )
@@ -796,6 +831,7 @@ def extract_payment_with_ollama(
     if ocr_text:
         fallback["amount"] = int(_extract_amount_from_text(ocr_text))
         fallback["utr_number"] = _extract_utr_from_text(ocr_text)
+        fallback["transaction_id"] = _extract_transaction_id_from_text(ocr_text)
         fallback["status"] = _detect_status(ocr_text)
         fallback["payment_app"] = _detect_payment_app(ocr_text)
         fallback["payment_date"] = _extract_date_from_text(ocr_text)
