@@ -16151,12 +16151,10 @@ html:has(.app-shell--view-candidates)::-webkit-scrollbar-thumb:active {
   position: relative;
   z-index: 1;
   width: 100%;
-  /* Desktop was pinned to 450px, which left the booking form a narrow column
-     on a 1366px+ screen while its inputs, dropdowns and CTA are all width:100%
-     and had nothing to fill. `width:100%` still governs below this cap, so
-     phones are unaffected - the card simply stops growing at 820px and stays
-     centred by .sbs-screen's align-items:center. */
-  max-width: 820px;
+  /* A form this shape reads better as a column than a wide band, and on a
+     phone the cap is never reached anyway. The cramping people actually hit
+     is vertical - see the touch-target and spacing rules below. */
+  max-width: 450px;
   background: rgba(15,17,23,0.85);
   border: 1px solid rgba(148,163,184,0.1);
   border-radius: 0.75rem;
@@ -16167,7 +16165,7 @@ html:has(.app-shell--view-candidates)::-webkit-scrollbar-thumb:active {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.65rem 0.85rem 0;
+  padding: 0.9rem 1rem 0;
 }
 .sbs-header__title {
   margin: 0 0 0.1rem;
@@ -16231,8 +16229,8 @@ html:has(.app-shell--view-candidates)::-webkit-scrollbar-thumb:active {
   margin-left: 0.3rem;
 }
 .sbs-loading { display: flex; justify-content: center; padding: 2rem 0; }
-.sbs-body { padding: 0.5rem 0.85rem 0.75rem; display: flex; flex-direction: column; gap: 0.45rem; }
-.sbs-form { display: flex; flex-direction: column; gap: 0.38rem; }
+.sbs-body { padding: 0.85rem 1rem 1rem; display: flex; flex-direction: column; gap: 0.85rem; }
+.sbs-form { display: flex; flex-direction: column; gap: 0.85rem; }
 .sbs-section { display: flex; flex-direction: column; gap: 0.45rem; }
 .sbs-step-head {
   display: flex;
@@ -16463,14 +16461,18 @@ html:has(.app-shell--view-candidates)::-webkit-scrollbar-thumb:active {
   white-space: nowrap;
 }
 /* Fields */
-.sbs-field { display: flex; flex-direction: column; gap: 0.18rem; }
+.sbs-field { display: flex; flex-direction: column; gap: 0.4rem; }
 .sbs-label { font-size: 0.7rem; font-weight: 600; color: var(--text,#eef2f7); letter-spacing: 0.01em; }
 .sbs-required { color: #f87171; margin-left: 0.1rem; }
 .sbs-hint { font-size: 0.65rem; color: var(--text-muted,#a8b4c4); line-height: 1.25; }
 .sbs-hint--warn { color: #f87171; font-weight: 500; }
 .sbs-input {
   width: 100%;
-  padding: 0.42rem 0.65rem;
+  padding: 0.7rem 0.75rem;
+  /* 44px is the minimum comfortable touch target. This was 40px, set by font
+     metrics plus 6.7px of padding, so it drifted whenever the font did.
+     min-height pins it independently. */
+  min-height: 2.75rem;
   border-radius: 0.5rem;
   background: rgba(255,255,255,0.04);
   border: 1px solid rgba(148,163,184,0.15);
@@ -16703,8 +16705,10 @@ html:has(.app-shell--view-candidates)::-webkit-scrollbar-thumb:active {
 /* CTA button */
 .sbs-cta {
   width: 100%;
-  padding: 0.55rem 0.75rem;
-  min-height: 2.35rem;
+  padding: 0.85rem 0.9rem;
+  /* The primary action was the smallest target on the page at 38px - and the
+     one every booking has to hit. */
+  min-height: 3rem;
   border-radius: 0.55rem;
   font-size: 0.85rem;
   font-weight: 600;
