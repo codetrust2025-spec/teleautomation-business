@@ -5,8 +5,15 @@ validation. Tesseract is a cross-check, not a dependency, and
 ``OCR_ENABLED=false`` is a supported production state.
 
 Production defect (2026-08-27): a PhonePe receipt showing Transaction ID
-``T260519149403948648792``, UTR ``800409041280`` and ₹20,000 was rejected with
+``T2605191149403948648792``, UTR ``800409041280`` and ₹20,000 was rejected with
 "A valid UTR or transaction ID is required." while OCR was disabled.
+
+Those values are read off the receipt image itself. Note the ``11`` after
+``T260519`` — the id is 23 characters. It was transcribed by hand during the
+investigation as ``T260519149403948648792`` (one ``1`` short), and that shorter
+string reached this file, the sibling PhonePe tests and a code comment. A
+self-consistent mock happily asserts a wrong id forever, so the constants below
+are now the ones verified against the actual image.
 
 The parser was never at fault. Measured against the live models with that
 screenshot:
@@ -37,7 +44,7 @@ from features.payment_fraud_detection import (
     payment_transaction_identities,
 )
 
-TXN_ID = "T260519149403948648792"
+TXN_ID = "T2605191149403948648792"
 UTR = "800409041280"
 AMOUNT = 20000
 
@@ -145,7 +152,7 @@ def test_a_truncated_identifier_is_not_silently_accepted(monkeypatch, ocr_off):
     value that does not match the real payment."""
     _vision_returns(monkeypatch, json.dumps({
         "payment_status": "SUCCESS", "amount": AMOUNT,
-        "transaction_id": "T2605191494", "utr": "", "is_payment_screenshot": True,
+        "transaction_id": TXN_ID[:12], "utr": "", "is_payment_screenshot": True,
     }))
 
     result = extractor.extract_payment_with_ollama(IMAGE) or {}
