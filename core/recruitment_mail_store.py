@@ -8,7 +8,7 @@ import re
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from core.db.connection import get_connection, use_postgres
@@ -563,11 +563,47 @@ def enqueue_historical_rescan(mailbox_id: str, *, requested_by: str, range_start
         cur.execute("SELECT * FROM mailbox_sync_jobs WHERE mailbox_id=%s AND job_type='HISTORICAL_RESCAN' AND status IN('QUEUED','RUNNING') ORDER BY created_at DESC LIMIT 1 FOR UPDATE", (mailbox_id,))
         existing = _rows(cur) if cur.description else []
         if existing:
-            return existing[0]
+            # A rescan already in flight for this mailbox is the answer, not a
+            # reason to queue a second pass over the same month. Callers that
+            # batch this across every mailbox need to be able to tell a resumed
+            # run from a fresh one, so say which this was.
+            return {**existing[0], "reused_existing_job": True}
         cur.execute("""INSERT INTO mailbox_sync_jobs(id,mailbox_id,status,scheduled_for,requested_by,job_type,range_start,range_end,created_at)
           VALUES(%s,%s,'QUEUED',now(),%s,'HISTORICAL_RESCAN',%s,%s,now()) RETURNING *""",
           (job_id, mailbox_id, requested_by, range_start, range_end))
-        return _rows(cur)[0]
+        return {**_rows(cur)[0], "reused_existing_job": False}
+
+
+def sync_jobs_by_ids(job_ids: list[str]) -> list[dict[str, Any]]:
+    """Current state of specific queued work, for a caller waiting on a batch."""
+    if not job_ids:
+        return []
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            f"SELECT * FROM mailbox_sync_jobs WHERE id IN ({', '.join('%s' for _ in job_ids)})"
+            " ORDER BY created_at ASC",
+            list(job_ids),
+        )
+        return _rows(cur)
+
+
+def pending_ai_message_count(*, range_start: date, range_end: date) -> int:
+    """Messages in range still owed a classification by the AI recovery worker.
+
+    A rescan is not finished when its Gmail jobs complete: ingestion defers
+    every message to the durable AI queue, and the alerts appear only once that
+    queue drains. Reporting at job completion would count a month of unread mail
+    as a month with no findings.
+    """
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT count(*) FROM mailbox_messages
+               WHERE sent_at >= %s AND sent_at < %s
+                 AND processing_status IN ('AI_QUEUED','AI_RETRY_PENDING')""",
+            (range_start, range_end + timedelta(days=1)),
+        )
+        row = cur.fetchone()
+        return int(row[0] if row else 0)
 
 
 def claim_job() -> dict[str, Any] | None:
@@ -1623,6 +1659,11 @@ def create_monitoring_notification(event: dict[str, Any], analysis: dict[str, An
     Only auto interview slot booking and job confirmed monitoring mails produce
     notifications. Other classifications are still processed for candidate status
     updates and offer tracking but do not generate notifications.
+
+    The returned row carries ``is_new_alert``: True when this call created the
+    alert, False when an alert for the same message and classification was
+    already on the screen. A rescan re-reads mail an operator has already been
+    told about, and only the first telling is news worth making a noise for.
     """
     message_id = event.get("mailbox_message_id")
     structured = event.get("structured_result") or {}
@@ -1651,6 +1692,16 @@ def create_monitoring_notification(event: dict[str, Any], analysis: dict[str, An
         if not should_route_to_mail_alert(event, analysis, source=source_row):
             return {}
 
+        # Whether this alert already existed decides whether it is news.  The
+        # upsert below cannot answer that afterwards -- it returns the row
+        # either way -- and the caller needs the answer to know if an operator
+        # has yet to hear about it.
+        cur.execute(
+            "SELECT id FROM mail_monitoring_notifications WHERE gmail_message_id=%s AND classification=%s",
+            (provider_id, classification),
+        )
+        already = cur.fetchone()
+
         name, email = _candidate_snapshot(str(event["candidate_id"]), structured)
         notification_id = _id()
         company = structured.get("company") or {}
@@ -1669,7 +1720,9 @@ def create_monitoring_notification(event: dict[str, Any], analysis: dict[str, An
            classification,candidate_status,company.get('name') or event.get('company_name'),job.get('title') or event.get('job_title'),
            subject,sender_name,sender_email,sent_at,confidence,str(event.get('summary') or structured.get('summary') or '')[:1000],
            reason,action,priority))
-        return _rows(cur)[0]
+        row = _rows(cur)[0]
+        row["is_new_alert"] = already is None
+        return row
 
 
 def finalize_detection(event: dict[str, Any], *, result: dict[str, Any], model: str, duration_ms: int) -> dict[str, Any]:
@@ -1731,6 +1784,120 @@ def list_realtime_events(*, after_id: str | None = None, limit: int = 100) -> li
     params.append(max(1, min(limit, 500)))
     with get_connection() as conn, conn.cursor() as cur:
         cur.execute(f"SELECT * FROM mail_realtime_events {where} ORDER BY created_at ASC LIMIT %s", params)
+        return _rows(cur)
+
+
+def alert_sound_event(notification_id: str) -> dict[str, Any] | None:
+    """The real-time event that made an alert audible, if one was published.
+
+    The browser plays the alert sound on `notification_created`; nothing else
+    reaches it. So this row -- not the alert row -- is the evidence that an
+    operator was actually told, and its absence is the evidence that an alert
+    went out in silence.
+    """
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT * FROM mail_realtime_events
+               WHERE notification_id=%s AND event_type='notification_created'
+               ORDER BY created_at ASC LIMIT 1""",
+            (notification_id,),
+        )
+        rows = _rows(cur)
+    return rows[0] if rows else None
+
+
+def mark_alert_sound_delivery(notification_id: str, *, status: str, event_id: str | None = None) -> dict[str, Any] | None:
+    """Record whether an alert's sound event was published, and which one."""
+    delivered = str(status).upper() == "DELIVERED"
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """UPDATE mail_monitoring_notifications
+               SET sound_delivery_status=%s,
+                   sound_delivery_event_id=%s,
+                   sound_delivered_at=CASE WHEN %s THEN now() ELSE NULL END,
+                   updated_at=now()
+               WHERE id=%s RETURNING *""",
+            (str(status).upper(), event_id, delivered, notification_id),
+        )
+        rows = _rows(cur)
+    return rows[0] if rows else None
+
+
+def alerts_in_range(
+    *,
+    range_start: date,
+    range_end: date,
+    classifications: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Reachable Mail Alerts for mail received inside a date range.
+
+    Filtered on when the *email* arrived rather than when the alert row was
+    written, because that is what a rescan of a month is scoped by: an alert
+    created today for a mail from the 4th belongs to the 4th.
+
+    Only rows the Mail Alerts screen can actually show are returned. A report
+    that counted rows an operator cannot reach would repeat the mismatch that
+    once had the summary cards advertising 129 alerts above a table of 17.
+    """
+    rows_clause, params = notification_visibility_sql()
+    where = [rows_clause, "email_received_at >= %s", "email_received_at < %s"]
+    params = list(params) + [range_start, range_end + timedelta(days=1)]
+    if classifications:
+        ordered = sorted(classifications)
+        where.append(f"classification IN ({', '.join('%s' for _ in ordered)})")
+        params.extend(ordered)
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            f"""SELECT * FROM mail_monitoring_notifications
+                WHERE {' AND '.join(where)}
+                ORDER BY email_received_at ASC, created_at ASC""",
+            params,
+        )
+        return _rows(cur)
+
+
+def messages_in_range(*, range_start: date, range_end: date) -> list[dict[str, Any]]:
+    """Every stored mailbox message received in a date range, with its candidate.
+
+    Used by the rescan report to say how much mail was actually examined, per
+    candidate, rather than how much a scanner claimed to have looked at.
+    """
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT m.id,m.mailbox_id,m.candidate_id,m.provider_message_id,m.provider_thread_id,
+                      m.subject,m.sender_name,m.sender_email,m.sent_at,m.processing_status,
+                      m.ignore_reason,b.email_address
+               FROM mailbox_messages m
+               JOIN candidate_mailboxes b ON b.id=m.mailbox_id
+               WHERE m.sent_at >= %s AND m.sent_at < %s
+               ORDER BY m.sent_at ASC""",
+            (range_start, range_end + timedelta(days=1)),
+        )
+        return _rows(cur)
+
+
+def unclassified_messages_in_range(*, range_start: date, range_end: date) -> list[dict[str, Any]]:
+    """Mail in range the pipeline could not decide about.
+
+    A message left waiting on the AI queue, retrying, or parked for manual
+    review is not a message that was cleared -- it is one nobody has an answer
+    for yet, and a rescan that reports only its confident findings hides them.
+    """
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT m.id,m.candidate_id,m.provider_message_id,m.subject,m.sender_email,
+                      m.sent_at,m.processing_status,m.ignore_reason,b.email_address,
+                      e.primary_status,e.confidence
+               FROM mailbox_messages m
+               JOIN candidate_mailboxes b ON b.id=m.mailbox_id
+               LEFT JOIN ai_recruitment_events e ON e.mailbox_message_id=m.id
+               WHERE m.sent_at >= %s AND m.sent_at < %s
+                 AND (m.processing_status IN
+                        ('AI_QUEUED','AI_RETRY_PENDING','PENDING','FILTERED','MANUAL_REVIEW_REQUIRED')
+                      OR e.primary_status='MANUAL_REVIEW_REQUIRED')
+               ORDER BY m.sent_at ASC""",
+            (range_start, range_end + timedelta(days=1)),
+        )
         return _rows(cur)
 
 

@@ -2015,7 +2015,12 @@ def process_message(mailbox: dict[str, Any], decoded: dict[str, Any], attachment
         _publish("mail_needs_review" if common["classification"] == "needs_review" else "important_mail_detected", **common)
     if event.get("candidate_status_updated"):
         _publish("candidate_status_updated", **common)
-    if notification:
+    # `notification_created` is what makes the browser play the alert sound, so
+    # it announces an alert an operator has not seen rather than every time a
+    # message is read again. A historical rescan walks months of mail whose
+    # alerts already exist; re-announcing them would fire hundreds of chimes
+    # for news nobody is hearing for the first time.
+    if notification and notification.get("is_new_alert", True):
         _publish("notification_created", **common)
     if common["classification"] in {"interview_confirmed", "interview_rescheduled", "interview_cancelled"}:
         interview = result.get("interview") or {}
