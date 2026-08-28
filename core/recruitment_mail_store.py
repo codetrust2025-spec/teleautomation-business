@@ -1736,11 +1736,9 @@ def list_realtime_events(*, after_id: str | None = None, limit: int = 100) -> li
 
 def list_notifications(*, filters: dict[str, Any] | None = None, limit: int = 50, offset: int = 0) -> tuple[list[dict[str, Any]], int]:
     filters = filters or {}
-    where: list[str] = [
-        "dismissed_at IS NULL",
-        "COALESCE(booking_status,'') <> 'Historical Skipped'",
-    ]
-    params: list[Any] = []
+    rows_clause, rows_params = visible_rows_sql()
+    where: list[str] = [rows_clause]
+    params: list[Any] = list(rows_params)
     exact = {"candidate_id", "candidate_status", "priority"}
     # When no specific classification filter is provided, default to tracked
     # notification classifications (auto interview booking + job confirmed).
@@ -1762,13 +1760,13 @@ def list_notifications(*, filters: dict[str, Any] | None = None, limit: int = 50
             where.append(f"classification IN ({placeholders})")
             params.extend(sorted(group))
         else:
-            placeholders = ", ".join("%s" for _ in TRACKED_NOTIFICATION_CLASSIFICATIONS)
-            where.append(f"classification IN ({placeholders})")
-            params.extend(TRACKED_NOTIFICATION_CLASSIFICATIONS)
+            tracked_clause, tracked_params = tracked_classification_sql()
+            where.append(tracked_clause)
+            params.extend(tracked_params)
     else:
-        placeholders = ", ".join("%s" for _ in TRACKED_NOTIFICATION_CLASSIFICATIONS)
-        where.append(f"classification IN ({placeholders})")
-        params.extend(TRACKED_NOTIFICATION_CLASSIFICATIONS)
+        tracked_clause, tracked_params = tracked_classification_sql()
+        where.append(tracked_clause)
+        params.extend(tracked_params)
     # `exact` was assigned here and never read, so candidate_id, candidate_status
     # and priority were accepted by the API, forwarded by the screen, and then
     # silently dropped — every query returned the unfiltered set. Nothing failed:
@@ -1837,7 +1835,40 @@ def list_notification_candidates() -> list[dict[str, Any]]:
         return _rows(cur)
 
 
+def visible_rows_sql() -> tuple[str, list[Any]]:
+    """Not dismissed, and not a historical row the tool deliberately skipped."""
+    return (
+        "dismissed_at IS NULL AND COALESCE(booking_status,'') <> 'Historical Skipped'",
+        [],
+    )
+
+
+def tracked_classification_sql() -> tuple[str, list[Any]]:
+    """Only classifications the screen is built to act on."""
+    placeholders = ", ".join("%s" for _ in TRACKED_NOTIFICATION_CLASSIFICATIONS)
+    return f"classification IN ({placeholders})", list(TRACKED_NOTIFICATION_CLASSIFICATIONS)
+
+
+def notification_visibility_sql() -> tuple[str, list[Any]]:
+    """The rows an operator can actually reach on the Mail Alerts screen.
+
+    Composed from the two pieces below because it used to be written twice.
+    `notification_summary` counted every non-dismissed row while
+    `list_notifications` also required a tracked classification, so the cards
+    advertised 129 / 116 / 122 above a table that could only ever show
+    17 / 4 / 10 — and clicking a card produced a number nothing on screen
+    explained.
+
+    Both callers build from the same pieces now, so the counts and the rows
+    cannot describe different sets again.
+    """
+    rows_clause, rows_params = visible_rows_sql()
+    tracked_clause, tracked_params = tracked_classification_sql()
+    return f"{rows_clause} AND {tracked_clause}", rows_params + tracked_params
+
+
 def notification_summary() -> dict[str, Any]:
+    visibility, params = notification_visibility_sql()
     with get_connection() as conn, conn.cursor() as cur:
         cur.execute("""SELECT count(*) FILTER(WHERE dismissed_at IS NULL) visible_total,
           count(*) FILTER(WHERE NOT is_read AND dismissed_at IS NULL) unread,
@@ -1850,7 +1881,7 @@ def notification_summary() -> dict[str, Any]:
           count(*) FILTER(WHERE classification IN ('offer_received','offer_accepted','job_selection_confirmed') AND dismissed_at IS NULL) job_confirmed_count,
           count(*) FILTER(WHERE classification IN ('interview_confirmed','interview_rescheduled','interview_cancelled') AND dismissed_at IS NULL) interview_booking_count
           FROM mail_monitoring_notifications
-          WHERE COALESCE(booking_status,'') <> 'Historical Skipped'""")
+          WHERE """ + visibility, params)
         names = [d.name for d in cur.description]
         return dict(zip(names, cur.fetchone()))
 
