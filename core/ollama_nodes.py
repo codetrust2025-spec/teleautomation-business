@@ -555,6 +555,7 @@ def select_available_node(
     model: str,
     timeout: float = 5,
     require_inference: bool = False,
+    exclude: set[str] | frozenset[str] | None = None,
 ) -> dict[str, Any]:
     """Pick where this request should run.
 
@@ -563,9 +564,22 @@ def select_available_node(
     primary: routing around a sick node is a per-request decision, so a blip
     cannot move production's configured primary. Changing that stays an
     explicit admin action.
+
+    `exclude` is the caller's request-scoped set of nodes already known to have
+    failed this request. The breaker needs three consecutive failures before it
+    cools a node, which is right for the global view but useless inside one
+    request: the node that just refused this exact call would be chosen again
+    immediately. Excluding it is per-request and leaves the breaker's own
+    counting untouched.
     """
     attempts: list[dict[str, Any]] = []
-    order = candidate_order(model)
+    excluded = {str(node) for node in (exclude or ())}
+    order = [nid for nid in candidate_order(model) if nid not in excluded]
+    if not order:
+        raise RuntimeError(
+            "No Ollama node is left for this request; already tried: "
+            + ", ".join(sorted(excluded))
+        )
     cooling = [nid for nid in order if in_cooldown(nid)]
     # If every node is cooling there is nothing to be gained by refusing; try
     # them anyway so a total outage still gets probed rather than hard-failing.

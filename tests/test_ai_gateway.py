@@ -3,6 +3,7 @@ import json
 import pytest
 
 from core import ai_gateway
+from core import ollama_nodes
 
 
 def test_health_reports_model_availability(monkeypatch):
@@ -105,7 +106,14 @@ def test_timeout_retries_three_times_then_falls_back(monkeypatch):
     with pytest.raises(ai_gateway.AIGatewayError) as error:
         ai_gateway.chat_structured(messages=[{"role": "user", "content": "x"}], schema={}, model="qwen3.6")
     assert error.value.code == "OLLAMA_REQUEST_TIMEOUT"
-    assert len(calls) == 4
+    # A timeout now names the machine, so the request moves rather than
+    # spending its whole retry budget on the node that just timed out. Each
+    # node gets one attempt while somewhere else is left to try; the last one
+    # keeps the retries, because on a pool of one, backoff is still the best
+    # move available for a transient timeout.
+    nodes = ollama_nodes.candidate_order("qwen3.6")
+    assert len(calls) == (len(nodes) - 1) + 4
+    assert len(calls) > 4, "failover must add attempts, not replace them"
 
 
 def test_invalid_json_is_not_retried(monkeypatch):
