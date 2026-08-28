@@ -125,6 +125,13 @@ export function PaymentProofUploader({
   const [aiResult, setAiResult] = w.useState(null);
   const [uploadJobs, setUploadJobs] = w.useState([]);
   const m = w.useRef(null);
+  // `n` below is the same "busy" signal, but it is state: it stays false for
+  // the rest of the tick, so two change events batched into one task both pass
+  // the guard and both POST. Production saw exactly that - the first request
+  // stored the proof, the second was refused by the fraud check, and the panel
+  // rendered the refusal over a payment that had in fact been saved. A ref
+  // updates synchronously, so the second caller sees it immediately.
+  const uploadInFlightRef = w.useRef(false);
   const uploadRequestRef = w.useRef(null);
   const stallTimerRef = w.useRef(null);
   const mountedRef = w.useRef(true);
@@ -318,9 +325,54 @@ export function PaymentProofUploader({
     },
     [armStallTimer, c, clearStallTimer, e, r, updateJob],
   );
+  const reconcileJob = w.useCallback(
+    async (job) => {
+      // A refusal does not always mean nothing was saved. If a duplicate
+      // request raced this one, or the response was lost after the server
+      // committed, the proof is on the record and the upload the operator
+      // performed did succeed. Reporting failure then is worse than useless:
+      // it invites someone to "fix" a payment that is already correct.
+      //
+      // So ask the server what it actually holds rather than trusting the
+      // response we happened to get. Nothing is invented locally - the job is
+      // only promoted if a matching proof really exists, which leaves a
+      // genuine rejection (entitlement, duplicate, unreadable) showing as the
+      // error it is.
+      if (!e || !job?.file) return false;
+      try {
+        const response = await fetch(`${ve}/candidates/${e}`, {
+          credentials: "include",
+        });
+        const payload = await response.json();
+        if (!response.ok || payload.status !== "ok" || !payload.candidate) {
+          return false;
+        }
+        const currentProofs = normalizePaymentProofs(payload.candidate);
+        const existing = currentProofs.find(
+          (proof) =>
+            proof.original_name === job.file.name &&
+            (!proof.size || Number(proof.size) === Number(job.file.size)),
+        );
+        if (!existing) return false;
+        if (r) r(currentProofs, payload.candidate, payload.payment_summary);
+        updateJob(job.id, {
+          status: "success",
+          progress: 100,
+          proof: existing,
+          error: "",
+          slow: false,
+        });
+        return true;
+      } catch {
+        // No reconciliation available - leave the failure standing.
+        return false;
+      }
+    },
+    [e, r, updateJob],
+  );
   const M = w.useCallback(
     async (b) => {
-      if (!e || n || !b || b.length === 0) {
+      if (!e || n || uploadInFlightRef.current || !b || b.length === 0) {
         return;
       }
       const selectedFiles = Array.from(b);
@@ -336,6 +388,9 @@ export function PaymentProofUploader({
         l(`${oversizedFile.name} is larger than the ${bx / 1048576} MB limit.`);
         return;
       }
+      // Claimed synchronously, before the first await, so a second event in
+      // the same task cannot get past the guard above.
+      uploadInFlightRef.current = true;
       const jobs = selectedFiles.map(createProofUploadJob);
       jobs.forEach((job) => previewUrlsRef.current.add(job.previewUrl));
       l("");
@@ -347,18 +402,22 @@ export function PaymentProofUploader({
         for (let O = 0; O < jobs.length; O++) {
           const job = jobs[O];
           if (cancelledJobsRef.current.has(job.id)) continue;
-          await y(job, {
+          const uploaded = await y(job, {
             clearNote: O === jobs.length - 1,
           });
+          if (!uploaded && !cancelledJobsRef.current.has(job.id)) {
+            await reconcileJob(job);
+          }
         }
       } finally {
+        uploadInFlightRef.current = false;
         a(false);
         if (m.current) {
           m.current.value = "";
         }
       }
     },
-    [e, n, y],
+    [e, n, reconcileJob, y],
   );
   const retryJob = w.useCallback(
     async (job) => {
