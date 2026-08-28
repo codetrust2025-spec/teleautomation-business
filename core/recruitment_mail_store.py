@@ -1769,6 +1769,17 @@ def list_notifications(*, filters: dict[str, Any] | None = None, limit: int = 50
         placeholders = ", ".join("%s" for _ in TRACKED_NOTIFICATION_CLASSIFICATIONS)
         where.append(f"classification IN ({placeholders})")
         params.extend(TRACKED_NOTIFICATION_CLASSIFICATIONS)
+    # `exact` was assigned here and never read, so candidate_id, candidate_status
+    # and priority were accepted by the API, forwarded by the screen, and then
+    # silently dropped — every query returned the unfiltered set. Nothing failed:
+    # a filter that does nothing looks exactly like a filter matching everything.
+    # Found by checking the live totals per candidate rather than trusting that
+    # the name in the set meant the value was used.
+    for field in sorted(exact):
+        value = filters.get(field)
+        if value not in (None, ""):
+            where.append(f"{field}=%s")
+            params.append(value)
     for field in ("is_read", "is_reviewed"):
         if filters.get(field) is not None:
             where.append(f"{field}=%s")
