@@ -21,7 +21,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 INSTRUCTIONS = ROOT / "CLAUDE.md"
 
-STAGES = ["preflight", "pin", "pin_ci", "pin_merge", "sync", "build", "deploy", "verify"]
+STAGES = [
+    "ops_pr", "ops_ci", "ops_merge",
+    "preflight", "pin", "pin_ci", "pin_merge",
+    "sync", "build", "deploy", "verify",
+]
 
 
 def body() -> str:

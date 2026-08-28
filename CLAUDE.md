@@ -10,7 +10,7 @@ Carry on through the whole pipeline without being asked and without pausing for
 approval between stages:
 
 ```
-code → tests → PR → CI → merge → pin → CI → sync → build → deploy → verify
+change → tests → Operations PR → CI → merge → pin PR → CI → merge → sync → build → deploy → verify
 ```
 
 Do not stop at code, tests, PR, CI, merge, pin, or build. Those are steps, not
@@ -44,11 +44,14 @@ Being unsure whether a change is worth deploying is not one of these. Ship it.
 
 Operations is deployed **from the Marketing repository**, which owns
 `docker-compose.production.yml` and the release anchor pinning the Operations
-commit. Check both out side by side, merge the Operations PR carrying the
-change, then:
+commit. Check both out side by side, push your branch, then:
 
 ```bash
 cd ../teleautomation-messaging
+# from a branch: opens the Operations PR, merges it, then ships it
+OPERATIONS_BRANCH=fix/thing KVM1_SSH=user@host bash scripts/fix_and_deploy.sh
+
+# or from a commit already on Operations main
 OPERATIONS_SHA=<40-hex> KVM1_SSH=user@host bash scripts/fix_and_deploy.sh
 ```
 
@@ -56,15 +59,23 @@ Stages, each idempotent and recorded so an interrupted run resumes rather than
 repeating work or double-merging:
 
 ```
-preflight pin pin_ci pin_merge sync build deploy verify
+ops_pr ops_ci ops_merge preflight pin pin_ci pin_merge sync build deploy verify
 ```
 
 `--dry-run` prints the plan and changes nothing. `--restart` discards recorded
 progress.
 
-The script does **not** open or merge the Operations PR carrying the change
-itself — that one needs a human-readable description and review. Everything
-after it is mechanical, which is why it is automated.
+Given a branch, the script opens the Operations PR itself, with a description
+assembled from that branch's commits, polls its checks, merges it when green
+and carries straight on to the pin and the deploy. There is no manual gap.
+
+It stops on a **merge conflict** rather than guessing: resolving one means
+choosing which side of the change survives, and that is not a decision to
+automate.
+
+Re-running is safe. Every mutating stage asks the remote whether its effect is
+already there, so a restart never opens a second PR, repeats a merge, or
+redeploys work already done.
 
 Neither repository holds environment specifics: hostnames and paths come from
 the environment (`KVM1_SSH`, `KVM1_SSH_KEY`, `PROD_ENV_FILE`), never from
