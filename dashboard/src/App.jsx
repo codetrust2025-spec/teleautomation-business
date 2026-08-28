@@ -16,14 +16,21 @@ import { useAuth } from './context/AuthContext.jsx'
 // Reconciliation, BGV Register, Handler Kit and Settings were decommissioned;
 // their panels and backend routes are gone, not hidden, so there is no view id
 // left for them to be reached through.
+// Ordered the way the day runs: what needs doing now, then what has come in,
+// then the records behind it.
 const VIEWS = [
   { id: 'daily-ops', label: 'Daily Ops', icon: '▤', badge: 'interviews' },
+  { id: 'mail-notifications', label: 'Mail Alerts', icon: '🔔' },
+  { id: 'ai-recruitment', label: 'AI Mail Review', icon: 'AI' },
   { id: 'candidates', label: 'Candidates', icon: '▣', badge: 'works' },
   { id: 'slot-booking', label: 'Slot Booking', icon: '▦', external: '/submit-slot' },
-  { id: 'mail-notifications', label: 'Mail Alerts', icon: '🔔' },
   { id: 'data-room', label: 'Data Room', icon: '▥' },
-  { id: 'ai-recruitment', label: 'AI Mail Review', icon: 'AI' },
 ]
+
+// The view the shell opens on. There is no routing or persistence behind the
+// sidebar - the id lives only in this state - so this one value is what login,
+// a refresh and the Operations root all land on.
+const DEFAULT_VIEW = 'daily-ops'
 
 function countLabel(value) {
   return value > 99 ? '99+' : value
@@ -250,7 +257,7 @@ function OperationsShell({ view, onNavigate }) {
 }
 
 export default function App() {
-  const [view, setView] = useState('candidates')
+  const [view, setView] = useState(DEFAULT_VIEW)
 
   return (
     <PendingWorksProvider mainView={view}>
