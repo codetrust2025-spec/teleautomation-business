@@ -114,6 +114,21 @@ describe('selects keep a dropdown indicator', () => {
   })
 })
 
+describe('the filter row fits its controls', () => {
+  it('declares a column for each of the three filters', () => {
+    // Mail Alerts renders search, candidate and alert type. A grid declared for
+    // two leaves the third wrapping onto a row of its own, which is how the
+    // "compact" variants were wrong in the first place.
+    const block = css.split('.mail-filters--compact {')[1].split('}')[0]
+    const columns = block.match(/grid-template-columns:([^;]+);/)[1]
+    expect(columns.match(/minmax\(/g).length).toBe(3)
+  })
+
+  it('stacks them on narrow viewports', () => {
+    expect(/@media[^{]*max-width: 900px[^{]*\{\s*\.mail-filters--compact\s*\{\s*grid-template-columns: 1fr/.test(css)).toBe(true)
+  })
+})
+
 describe('the monitoring page keeps its rules', () => {
   const page = read('components/MailMonitoringNotifications.jsx')
   const structural = [...page.matchAll(/className="([^"{]+)"/g)]

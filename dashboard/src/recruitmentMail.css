@@ -2150,8 +2150,18 @@
 .mail-summary--compact {
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 }
+/* Search, candidate, alert type. Declared for the three controls the screen
+   actually renders: the previous two-column version left the third wrapping
+   onto a row of its own while the other two shared the first. */
 .mail-filters--compact {
-  grid-template-columns: minmax(240px, 2fr) minmax(160px, 1fr);
+  grid-template-columns: minmax(220px, 2fr) minmax(150px, 1fr) minmax(150px, 1fr);
+}
+/* Narrow viewports stack them instead, since three controls across a phone
+   leaves each too small to read its own label. */
+@media (max-width: 900px) {
+  .mail-filters--compact {
+    grid-template-columns: 1fr;
+  }
 }
 
 .mail-live--live {
