@@ -50,6 +50,15 @@ def test_offer_statement_is_offer_received():
     assert result["lifecycle_event"] == "OFFER_LETTER_RECEIVED"
 
 
+def test_released_offer_body_is_offer_received_even_with_future_joining_date():
+    result = classify_context(
+        "Offer has been released",
+        "Your offer has been successfully released. The expected joining date is 14 September 2026.",
+    )
+    assert result["email_intent"] == "OFFER_LETTER"
+    assert result["lifecycle_event"] == "OFFER_LETTER_RECEIVED"
+
+
 def test_offer_question_is_not_an_offer_event():
     result = classify_context("Candidate details", "Do you currently have an offer in hand?")
     assert result["lifecycle_event"] == "NONE"
