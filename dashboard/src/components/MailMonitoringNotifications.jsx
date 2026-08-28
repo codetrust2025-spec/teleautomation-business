@@ -54,6 +54,21 @@ const plainEmailBody = (value) => {
   return new DOMParser().parseFromString(source, "text/html").body.textContent || "";
 };
 
+// Which of the two filter groups an alert belongs to, for colour.
+//
+// Derived from CLASSIFICATION_GROUPS rather than a second list of its own, so
+// the colour on a row always agrees with the filter that would select it. A
+// third group added later gets a colour by adding one CSS rule, not by editing
+// a mapping here that nothing would fail if you forgot.
+export function mailAlertCategory(item = {}) {
+  const classification = String(item?.classification || "").trim();
+  if (!classification) return "";
+  const group = CLASSIFICATION_GROUPS.find((entry) =>
+    entry.classifications.includes(classification),
+  );
+  return group ? group.value : "";
+}
+
 export function mailStatusTone(item = {}) {
   const status = [item.candidate_status, item.booking_status, item.classification]
     .filter(Boolean)
@@ -373,7 +388,7 @@ export function MailMonitoringNotifications() {
     <div className={`mail-table-wrap${loading ? " is-loading" : ""}`}>{loading && <OverlayLoader label="Loading notifications…" />}<table className="mail-table"><thead><tr><th>Candidate</th><th>Company</th><th>Detected status</th><th>Email subject</th><th>Confidence</th><th>Mail received</th><th>Tool detected</th><th>Review</th><th>Action</th></tr></thead><tbody>
       {items.map((item) => <tr
         key={item.id}
-        className={`${item.is_read ? "" : "is-unread"} mail-notification-row`}
+        className={`${item.is_read ? "" : "is-unread"} mail-notification-row${mailAlertCategory(item) ? ` mail-notification-row--${mailAlertCategory(item)}` : ""}`}
         tabIndex={0}
         aria-label={`Open email notification: ${item.email_subject || "no subject"}`}
         onClick={() => openNotification(item)}
@@ -382,7 +397,7 @@ export function MailMonitoringNotifications() {
           event.preventDefault();
           openNotification(item);
         }}
-      ><td><strong>{item.candidate_name || "Candidate"}</strong><small>{item.candidate_email || ""}</small></td><td>{item.company_name || "—"}<small>{item.job_role || ""}</small></td><td><span className={`mail-status mail-status--${mailStatusTone(item)}`}>{item.candidate_status || human(item.classification)}</span>{(() => {
+      ><td><strong>{item.candidate_name || "Candidate"}</strong><small>{item.candidate_email || ""}</small></td><td>{item.company_name || "—"}<small>{item.job_role || ""}</small></td><td><span className={`mail-status mail-status--${mailStatusTone(item)}${mailAlertCategory(item) ? ` mail-status--${mailAlertCategory(item)}` : ""}`}>{item.candidate_status || human(item.classification)}</span>{(() => {
         const reason = blockingReason(item);
         if (!reason) return null;
         // Shown in the row itself: a blocked booking is unusable information
