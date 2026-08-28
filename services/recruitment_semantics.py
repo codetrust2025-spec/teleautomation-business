@@ -424,7 +424,8 @@ def classify_context(
         "pleased to extend an offer", "pleased to extend our offer", "offer letter attached",
         "offer letter inside", "offer letter has been", "appointment letter attached",
         "letter of appointment", "formal offer of employment", "intent offer letter",
-        "intent to offer", "offer released", "congratulations – you have been selected",
+        "intent to offer", "offer released", "offer has been released",
+        "offer has been successfully released", "congratulations – you have been selected",
         "interview result – selected", "extending an offer of employment",
     )) or any(re.search(pattern, lowered) for pattern in (
         r"\boffer letter\b", r"\bappointment letter\b", r"\bcongratulations, you're in!\b",

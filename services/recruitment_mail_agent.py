@@ -256,7 +256,13 @@ STATUS_SIGNALS = [
     ("INTERVIEW_UPDATE", ("interview invitation", "interview scheduled", "interview has been scheduled", "interview confirmed", "interview rescheduled", "interview cancelled", "technical interview", "technical round", "managerial interview", "hr interview", "hr round")),
     ("CANDIDATE_REJECTED", ("regret to inform", "not moving forward", "not selected for the role", "application was unsuccessful")),
     ("APPOINTMENT_LETTER_RECEIVED", ("appointment letter attached", "letter of appointment", "appointment letter")),
-    ("OFFER_LETTER_RECEIVED", ("offer letter attached", "find your offer letter", "offer letter has been released", "employment offer attached", "offer of employment", "offer letter inside", "congratulations, you're in! offer letter", "deployment with", "fulltime with")),
+    ("OFFER_LETTER_RECEIVED", (
+        "offer letter attached", "find your offer letter",
+        "offer letter has been released", "offer has been released",
+        "offer has been successfully released", "employment offer attached",
+        "offer of employment", "offer letter inside",
+        "congratulations, you're in! offer letter", "deployment with", "fulltime with",
+    )),
     ("OFFER_APPROVED", ("offer has been approved", "offer is approved", "offer approved")),
     ("OFFER_IN_PROGRESS", ("offer is currently being processed", "processing your offer", "offer is being prepared", "offer under preparation")),
     ("FINAL_SELECTION_CONFIRMED", ("final selection confirmed", "selection has been confirmed", "finally selected")),
@@ -764,6 +770,9 @@ _JOINING_FAMILY = {
     "JOINING_CONFIRMED", "JOINING_DATE_UPDATED", "JOINED",
     "POST_SELECTION_ONBOARDING",
 }
+_ASSERTIVE_EMPLOYMENT_LIFECYCLE = {
+    "SELECTED", "FINAL_SELECTION_CONFIRMED", *_OFFER_FAMILY, *_JOINING_FAMILY,
+}
 
 
 def _needs_review_status(proposed: str) -> str | None:
@@ -918,6 +927,52 @@ def validate_result(value: dict[str, Any], message: dict[str, Any] | None = None
         safe_status, rejection_reason = validate_interview_event(value["status"], context)
     else:
         safe_status, rejection_reason = validate_lifecycle_event(value["status"], context)
+    # An independent validator can over-promote an offer letter to
+    # JOINING_CONFIRMED merely because the letter states a future joining date.
+    # Reconciliation historically selected that later stage; the safety layer
+    # then rejected it and demoted the whole message to an untracked review
+    # classification. Preserve the different positive stage that the original
+    # source independently proves instead.
+    supported_status = str(context.get("lifecycle_event") or "NONE").upper()
+    if (
+        safe_status == "NONE"
+        and proposed_status in _ASSERTIVE_EMPLOYMENT_LIFECYCLE
+        and supported_status in _ASSERTIVE_EMPLOYMENT_LIFECYCLE
+    ):
+        recovered_status, _ = validate_lifecycle_event(supported_status, context)
+        if recovered_status != "NONE":
+            safe_status = recovered_status
+            classification = store._STATUS_CLASSIFICATION[safe_status]
+            value.update(
+                status=safe_status,
+                classification=classification,
+                candidate_status=store._CLASSIFICATION_STATUS[classification],
+                normalised_from=proposed_status,
+                normalisation_reason="ASSERTIVE_SOURCE_LIFECYCLE",
+            )
+            offer = value.setdefault("offer", {})
+            if safe_status in _OFFER_FAMILY:
+                offer["offer_detected"] = True
+                offer["offer_letter_detected"] = safe_status == "OFFER_LETTER_RECEIVED"
+                offer["appointment_letter_detected"] = safe_status == "APPOINTMENT_LETTER_RECEIVED"
+
+            # Mail Alerts requires typed evidence when model disagreement keeps
+            # manual review enabled. Add the deterministic source quote with its
+            # canonical meaning while retaining the model evidence for audit.
+            source_decision = prefilter_decision(
+                str((message or {}).get("subject") or ""),
+                str((message or {}).get("body") or ""),
+                str((message or {}).get("sender_name") or ""),
+                str((message or {}).get("sender_email") or ""),
+                attachments,
+                (message or {}).get("thread_context"),
+            )
+            typed_evidence = [
+                item for item in source_decision.get("evidence") or []
+                if str(item.get("meaning") or "").upper() == safe_status
+            ]
+            value["evidence"] = typed_evidence + list(value.get("evidence") or [])
+            rejection_reason = None
     review_status_for = _needs_review_status(proposed_status)
     if safe_status == "NONE" and review_status_for:
         # Same rule as the interview downgrade: the backend may distrust an
