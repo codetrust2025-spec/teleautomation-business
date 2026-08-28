@@ -139,3 +139,60 @@ def test_an_unknown_group_falls_back_to_tracked_rather_than_nothing(captured):
     params = bound(captured)
     for value in store.TRACKED_NOTIFICATION_CLASSIFICATIONS:
         assert value in params
+
+
+class CountingCursor(FakeCursor):
+    """Returns a row wide enough for the summary's column list."""
+
+    def __init__(self):
+        super().__init__()
+
+        class Col:
+            def __init__(self, name):
+                self.name = name
+
+        self.description = [Col(n) for n in ("visible_total", "unread")]
+
+    def fetchone(self):
+        return (0, 0)
+
+
+def test_the_cards_and_the_table_describe_the_same_rows(monkeypatch):
+    """The counts above the table used to include rows the table could never
+    show: 129 / 116 / 122 over a list of 17 / 4 / 10. Both now build their
+    WHERE from the same pieces, so the same constraints must appear in both.
+    """
+    list_cursor = FakeCursor()
+    monkeypatch.setattr(store, "get_connection", lambda: FakeConn(list_cursor))
+    store.list_notifications(filters={})
+    list_sql = list_cursor.executed[0][0]
+
+    summary_cursor = CountingCursor()
+    monkeypatch.setattr(store, "get_connection", lambda: FakeConn(summary_cursor))
+    store.notification_summary()
+    summary_sql = summary_cursor.executed[0][0]
+
+    rows_clause, _ = store.visible_rows_sql()
+    tracked_clause, _ = store.tracked_classification_sql()
+    for clause in (rows_clause, tracked_clause):
+        assert clause in list_sql, "the table stopped using the shared visibility rule"
+        assert clause in summary_sql, "the cards stopped using the shared visibility rule"
+
+
+def test_the_summary_binds_the_tracked_classifications(monkeypatch):
+    cursor = CountingCursor()
+    monkeypatch.setattr(store, "get_connection", lambda: FakeConn(cursor))
+    store.notification_summary()
+    params = cursor.executed[0][1]
+    for value in store.TRACKED_NOTIFICATION_CLASSIFICATIONS:
+        assert value in params
+
+
+def test_the_shared_rule_is_composed_not_restated():
+    """If either half is inlined again the two can drift apart silently."""
+    combined, params = store.notification_visibility_sql()
+    rows_clause, _ = store.visible_rows_sql()
+    tracked_clause, tracked_params = store.tracked_classification_sql()
+    assert rows_clause in combined
+    assert tracked_clause in combined
+    assert params == tracked_params
