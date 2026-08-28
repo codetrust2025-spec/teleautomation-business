@@ -70,6 +70,11 @@ def test_validate_result_keeps_supported_and_drops_the_rest():
     src = inspect.getsource(agent.validate_result)
     assert "supported = [item for item in value[\"evidence\"] if _evidence_supported" in src
     assert "if not supported:" in src
-    assert 'value["evidence"] = supported' in src
+    # `supported` is what survives, whether assigned straight through or mapped
+    # over on the way (meanings are normalised there now). Asserting the exact
+    # assignment broke the moment that mapping was added, while the property
+    # being guarded — only supported items survive — was never at risk.
+    assert "supported]" in src or 'value["evidence"] = supported' in src
+    assert "for item in supported" in src or 'value["evidence"] = supported' in src
     # the all-or-nothing form must be gone
     assert "not all(_evidence_supported" not in src
