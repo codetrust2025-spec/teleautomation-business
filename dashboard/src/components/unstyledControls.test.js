@@ -14,9 +14,17 @@
  *   Mail Alerts      button.mail-clear-all, select (no class)
  *   AI Mail Review   select (no class), the Linked / Pending Gmail tablist
  *
- * Daily Ops, Candidates, Slot Booking and Data Room were clean, which is why
- * the fix had to be narrow: whatever restored these four could not disturb the
- * screens that were already right.
+ * Candidates, Slot Booking and Data Room were clean, which is why the fix had
+ * to be narrow: whatever restored these four could not disturb screens that
+ * were already right.
+ *
+ * Re-running the same scan after deploying that fix found one more, which no
+ * amount of reading would have surfaced: five Daily Ops selects with
+ * `appearance: none`, 28px of padding reserved for an arrow, and no arrow.
+ * `.ops-roster-control .cand-input` sets the `background:` shorthand and
+ * outranks the `select.cand-input` rule that draws the chevron. Same bulk
+ * import, same class of bug, and it survived the first pass because a missing
+ * background-image is invisible to a scan looking for browser defaults.
  */
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
@@ -88,6 +96,21 @@ describe('base control styling', () => {
     // re-pad them, breaking four screens to fix two. Buttons whose classes were
     // never written get an explicit rule instead.
     expect(/:where\(button\)\s*\{/.test(css)).toBe(false)
+  })
+})
+
+describe('selects keep a dropdown indicator', () => {
+  // Three rules in this codebase set `background:` — the shorthand — on a
+  // control whose arrow is drawn with background-image elsewhere. Each one
+  // silently erased it, leaving a select with reserved space and no indicator.
+  // The pattern is easy to reintroduce, so each fix is pinned here.
+  it('restores the chevron the Daily Ops roster rule wipes', () => {
+    // .ops-roster-control .cand-input (0,2,0) beats select.cand-input (0,1,1).
+    expect(/\.ops-roster-control\s+select\.cand-input\s*\{[^}]*background-image/.test(css)).toBe(true)
+  })
+
+  it('restores the chevron the mail filter and detail rules wipe', () => {
+    expect(/\.mail-filters\s+select[^{]*\{[^}]*background-image/.test(css)).toBe(true)
   })
 })
 

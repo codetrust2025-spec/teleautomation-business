@@ -1689,3 +1689,21 @@
 @media(max-width:1200px){.ops-booking-pie{min-width:310px}.ops-booking-pie__legend{grid-template-columns:repeat(2,minmax(85px,1fr))}}
 @media(max-width:900px){.ops-booking-pie{min-width:0;min-height:0;padding:5px}.ops-booking-pie__details{display:none}.ops-booking-pie__chart{width:48px;height:48px}.ops-booking-pie__chart>span{width:32px;height:32px}.ops-booking-pie__chart strong{font-size:12px}.ops-booking-pie__chart small{display:none}}
 @media(max-width:600px){.ops-roster-controls{border-radius:8px}.ops-roster-controls__range,.ops-roster-controls__filters{align-items:stretch;padding:10px;gap:8px}.ops-roster-controls .ops-date-range__presets{width:100%;overflow-x:auto}.ops-roster-controls .ops-date-range__inputs--redesigned{width:100%;padding-left:0;border-left:0}.ops-roster-control{flex:1 1 calc(50% - 4px);min-width:130px}.ops-roster-search{min-width:100%;flex-basis:100%}.ops-roster-controls__actions{width:100%;justify-content:flex-end}.ops-roster-refresh{flex:1;justify-content:center}.ops-booking-pie{display:none}}
+
+/* `.ops-roster-control .cand-input` (0,2,0) sets `background:` — the shorthand
+   — which beats `select.cand-input` (0,1,1) and wipes the chevron it draws.
+   The result is a select reserving 28px on the right for an indicator that is
+   never painted. Restore the arrow at (0,2,1) without touching the colour.
+
+   Same shape as the other two caught in this sweep: a component rule using the
+   background shorthand silently removes a background-image set elsewhere. */
+.ops-roster-control select.cand-input {
+  background-image:
+    linear-gradient(45deg, transparent 50%, #94a3b8 50%),
+    linear-gradient(135deg, #94a3b8 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) calc(50% - 2px),
+    calc(100% - 9px) calc(50% - 2px);
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
