@@ -470,7 +470,8 @@ def install_recruitment_mail_routes(app):
     async def mail_notifications(
         request:Request, response:Response, search:str|None=None,
         candidate_id:str|None=None, company:str|None=None,
-        classification:str|None=None, candidate_status:str|None=None,
+        classification:str|None=None, classification_group:str|None=None,
+        candidate_status:str|None=None,
         priority:str|None=None, is_read:bool|None=None, is_reviewed:bool|None=None,
         confidence_min:float|None=None, confidence_max:float|None=None,
         date_from:date|None=None, date_to:date|None=None, sort:str='newest',
@@ -479,7 +480,8 @@ def install_recruitment_mail_routes(app):
         _guard();require_fleet_admin(request)
         filters={
             'search':search,'candidate_id':candidate_id,'company':company,
-            'classification':classification,'candidate_status':candidate_status,
+            'classification':classification,'classification_group':classification_group,
+            'candidate_status':candidate_status,
             'priority':priority,'is_read':is_read,'is_reviewed':is_reviewed,
             'confidence_min':confidence_min,'confidence_max':confidence_max,
             'date_from':date_from,'date_to':date_to,'sort':sort,
@@ -487,6 +489,14 @@ def install_recruitment_mail_routes(app):
         rows,total=await asyncio.to_thread(store.list_notifications,filters=filters,limit=limit,offset=offset)
         response.headers['Cache-Control']='no-store, max-age=0'
         return {'status':'ok','notifications':rows,'total':total,'limit':min(max(limit,1),100),'offset':max(offset,0)}
+
+    @app.get('/api/mail-monitoring/candidates')
+    async def mail_notification_candidates(request:Request,response:Response):
+        # Powers the Mail Alerts candidate filter. Read-only, and scoped to
+        # candidates that actually have visible alerts so every option returns
+        # rows when picked.
+        _guard();require_fleet_admin(request);response.headers['Cache-Control']='no-store, max-age=0'
+        return {'status':'ok','candidates':await asyncio.to_thread(store.list_notification_candidates)}
 
     @app.get('/api/mail-monitoring/summary')
     async def mail_notification_summary(request:Request,response:Response):
