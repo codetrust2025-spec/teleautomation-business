@@ -81,7 +81,10 @@ describe("mail monitoring notifications", () => {
     expect(await screen.findByText("Formal employment offer")).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Mail received" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Tool detected" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Classification filter")).toBeInTheDocument();
+    // The eighteen-classification dropdown was replaced by two groups plus a
+    // candidate filter; see MailAlertsFilters.test.jsx for their behaviour.
+    expect(screen.getByLabelText("Alert type filter")).toBeInTheDocument();
+    expect(screen.getByLabelText("Candidate filter")).toBeInTheDocument();
     expect(screen.queryByLabelText("Candidate status filter")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Priority filter")).not.toBeInTheDocument();
     fireEvent.click(screen.getByLabelText("Open email notification: Formal employment offer"));

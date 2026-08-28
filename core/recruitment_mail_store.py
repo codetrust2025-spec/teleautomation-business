@@ -41,6 +41,24 @@ TRACKED_NOTIFICATION_CLASSIFICATIONS = {
     "interview_cancelled", "candidate_rejected",
     "final_round_cleared", "hr_confirmation",
 }
+# The two groups the Mail Alerts filter offers in place of eighteen individual
+# classifications. They partition TRACKED_NOTIFICATION_CLASSIFICATIONS exactly:
+# every tracked classification belongs to one group and none to both, so
+# "Selection Related" plus "Interview Related" shows the same set as no filter
+# at all. A test asserts that, because a classification added later would
+# otherwise become invisible to both filters without anything failing.
+INTERVIEW_RELATED_CLASSIFICATIONS = {
+    "interview_shortlisted", "interview_confirmed",
+    "interview_rescheduled", "interview_cancelled",
+}
+SELECTION_RELATED_CLASSIFICATIONS = (
+    TRACKED_NOTIFICATION_CLASSIFICATIONS - INTERVIEW_RELATED_CLASSIFICATIONS
+)
+CLASSIFICATION_GROUPS = {
+    "selection": SELECTION_RELATED_CLASSIFICATIONS,
+    "interview": INTERVIEW_RELATED_CLASSIFICATIONS,
+}
+
 IMPORTANT_ALERT_EVIDENCE_MEANINGS = {
     "SELECTED", "FINAL_SELECTION_CONFIRMED", "JOB_SELECTION_CONFIRMED",
     "FINAL_ROUND_CLEARED", "INTERVIEW_CLEARED",
@@ -1730,6 +1748,23 @@ def list_notifications(*, filters: dict[str, Any] | None = None, limit: int = 50
     if filters.get("classification"):
         where.append("classification=%s")
         params.append(filters["classification"])
+    elif filters.get("classification_group"):
+        # The Mail Alerts screen filters by group rather than by the eighteen
+        # individual classifications. Exact `classification` is left untouched
+        # above so existing callers behave identically; an unknown group falls
+        # through to the tracked default rather than returning nothing, because
+        # a filter that silently empties the screen reads as "no alerts".
+        group = CLASSIFICATION_GROUPS.get(
+            str(filters["classification_group"]).strip().lower()
+        )
+        if group:
+            placeholders = ", ".join("%s" for _ in sorted(group))
+            where.append(f"classification IN ({placeholders})")
+            params.extend(sorted(group))
+        else:
+            placeholders = ", ".join("%s" for _ in TRACKED_NOTIFICATION_CLASSIFICATIONS)
+            where.append(f"classification IN ({placeholders})")
+            params.extend(TRACKED_NOTIFICATION_CLASSIFICATIONS)
     else:
         placeholders = ", ".join("%s" for _ in TRACKED_NOTIFICATION_CLASSIFICATIONS)
         where.append(f"classification IN ({placeholders})")
@@ -1759,6 +1794,36 @@ def list_notifications(*, filters: dict[str, Any] | None = None, limit: int = 50
         cur.execute(f"SELECT * FROM mail_monitoring_notifications WHERE {clause} ORDER BY created_at {order} LIMIT %s OFFSET %s", params + [max(1,min(limit,100)),max(0,offset)])
         rows = _rows(cur)
     return rows, total
+
+
+def list_notification_candidates() -> list[dict[str, Any]]:
+    """Candidates that actually have visible alerts, for the Mail Alerts filter.
+
+    Deliberately sourced from the notifications themselves rather than the
+    candidate store: the filter matches on `candidate_id`, so the options have
+    to be ids this table really holds, and an operator filtering alerts has no
+    use for candidates that have never raised one.
+
+    Mirrors the visibility rules of `list_notifications` — dismissed rows and
+    historical skips excluded, tracked classifications only — so every option
+    offered returns at least one row when selected.
+    """
+    placeholders = ", ".join("%s" for _ in TRACKED_NOTIFICATION_CLASSIFICATIONS)
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            f"""SELECT candidate_id,
+                       max(candidate_name) AS candidate_name,
+                       count(*) AS alert_count
+                  FROM mail_monitoring_notifications
+                 WHERE dismissed_at IS NULL
+                   AND COALESCE(booking_status,'') <> 'Historical Skipped'
+                   AND classification IN ({placeholders})
+                   AND COALESCE(candidate_id,'') <> ''
+              GROUP BY candidate_id
+              ORDER BY lower(coalesce(max(candidate_name), candidate_id))""",
+            list(TRACKED_NOTIFICATION_CLASSIFICATIONS),
+        )
+        return _rows(cur)
 
 
 def notification_summary() -> dict[str, Any]:

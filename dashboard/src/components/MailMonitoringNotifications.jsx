@@ -7,7 +7,7 @@ import { useConfirm } from "../context/ConfirmContext.jsx";
 import { InlineLoader, OverlayLoader } from "../Loader.jsx";
 
 // Important candidate employment outcomes and actionable interview activity.
-const TRACKED_CLASSIFICATIONS = [
+export const TRACKED_CLASSIFICATIONS = [
   "job_selection_confirmed", "offer_received", "final_round_cleared",
   "hr_confirmation", "offer_accepted",
   "offer_declined", "offer_revoked", "joining_confirmed",
@@ -28,6 +28,19 @@ const AUTO_BOOKING_CLASSIFICATIONS = [
   "interview_shortlisted", "interview_confirmed", "interview_rescheduled",
   "interview_cancelled",
 ];
+
+// The filter offers two groups instead of eighteen classifications. Built from
+// the lists above rather than restating them, so the screen and the server
+// cannot drift apart; the server derives "selection" the same way, as
+// everything tracked that is not interview-related.
+export const CLASSIFICATION_GROUPS = [
+  { value: "selection", label: "Selection Related", classifications: JOB_CONFIRMED_CLASSIFICATIONS },
+  { value: "interview", label: "Interview Related", classifications: AUTO_BOOKING_CLASSIFICATIONS },
+];
+// Above this many options a native select stops being browsable and the filter
+// needs real type-ahead.
+const CANDIDATE_TYPEAHEAD_THRESHOLD = 20;
+const candidateLabel = (row) => row.candidate_name || row.candidate_id;
 const human = (value) => String(value || "").replaceAll("_", " ").replace(/\b\w/g, (c) => c.toUpperCase());
 const when = (value) => formatIstDateTime(value, {
   day: "numeric",
@@ -239,10 +252,14 @@ export function MailMonitoringNotifications() {
   const [clearing, setClearing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
-  const [filters, setFilters] = useState({ search: "", classification: "", priority: "", read: "" });
+  const [filters, setFilters] = useState({ search: "", classificationGroup: "", candidateId: "", priority: "", read: "" });
+  // Candidates that actually have alerts. Fetched once; the filter matches on
+  // candidate_id, so the options have to be ids this table really holds.
+  const [candidates, setCandidates] = useState([]);
+  const [candidateQuery, setCandidateQuery] = useState("");
   const query = useMemo(() => {
     const params = new URLSearchParams({ limit: "20", offset: String(page * 20), sort: "newest" });
-    for (const [key, value] of Object.entries({ search:filters.search,classification:filters.classification,priority:filters.priority,is_read:filters.read })) if (value !== "") params.set(key, String(value));
+    for (const [key, value] of Object.entries({ search:filters.search,classification_group:filters.classificationGroup,candidate_id:filters.candidateId,priority:filters.priority,is_read:filters.read })) if (value !== "") params.set(key, String(value));
     return params.toString();
   }, [filters, page]);
   const load = useCallback(async ({ silent = false } = {}) => {
@@ -252,6 +269,19 @@ export function MailMonitoringNotifications() {
   }, [query]);
   useMailLive((event) => ["notification_created","important_mail_detected","mail_needs_review","connected"].includes(event?.event) && load({ silent:true }));
   useEffect(() => { load(); }, [load]);
+  // Loaded once, not per filter change: the option list is the set of
+  // candidates with alerts, which does not depend on what is filtered. A
+  // failure here leaves the dropdown empty rather than blocking the table.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await request("/api/mail-monitoring/candidates");
+        if (!cancelled) setCandidates(data.candidates || []);
+      } catch { /* filter degrades to All candidates */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
   const set = (key) => (event) => { setPage(0); setFilters((value) => ({ ...value, [key]: event.target.value })); };
   const act = async (item, action) => { await request(`/api/mail-monitoring/notifications/${item.id}/${action}`, { method:"POST", body:"{}" }); load({ silent:true }); };
   const openNotification = useCallback(async (item) => {
@@ -307,7 +337,38 @@ export function MailMonitoringNotifications() {
     </div>
     <div className="mail-filters mail-filters--compact">
       <input aria-label="Search notifications" placeholder="Search candidate, email, company or subject" value={filters.search} onChange={set("search")} />
-      <select aria-label="Classification filter" value={filters.classification} onChange={set("classification")}><option value="">All notification types</option>{TRACKED_CLASSIFICATIONS.map((value) => <option value={value} key={value}>{human(value)}</option>)}</select>
+      {/* Beyond this many options a native select is unusable, so switch to a
+          datalist, which gives substring type-ahead while staying a plain
+          input the existing control styling already covers. */}
+      {candidates.length > CANDIDATE_TYPEAHEAD_THRESHOLD ? (
+        <>
+          <input
+            aria-label="Candidate filter"
+            list="mail-candidate-options"
+            placeholder="All candidates"
+            value={candidateQuery}
+            onChange={(event) => {
+              const text = event.target.value;
+              setCandidateQuery(text);
+              const match = candidates.find((row) => candidateLabel(row) === text);
+              setPage(0);
+              setFilters((value) => ({ ...value, candidateId: match ? match.candidate_id : "" }));
+            }}
+          />
+          <datalist id="mail-candidate-options">
+            {candidates.map((row) => <option value={candidateLabel(row)} key={row.candidate_id} />)}
+          </datalist>
+        </>
+      ) : (
+        <select aria-label="Candidate filter" value={filters.candidateId} onChange={set("candidateId")}>
+          <option value="">All candidates</option>
+          {candidates.map((row) => <option value={row.candidate_id} key={row.candidate_id}>{candidateLabel(row)}</option>)}
+        </select>
+      )}
+      <select aria-label="Alert type filter" value={filters.classificationGroup} onChange={set("classificationGroup")}>
+        <option value="">All alert types</option>
+        {CLASSIFICATION_GROUPS.map((group) => <option value={group.value} key={group.value}>{group.label}</option>)}
+      </select>
     </div>
     <div className={`mail-table-wrap${loading ? " is-loading" : ""}`}>{loading && <OverlayLoader label="Loading notifications…" />}<table className="mail-table"><thead><tr><th>Candidate</th><th>Company</th><th>Detected status</th><th>Email subject</th><th>Confidence</th><th>Mail received</th><th>Tool detected</th><th>Review</th><th>Action</th></tr></thead><tbody>
       {items.map((item) => <tr
