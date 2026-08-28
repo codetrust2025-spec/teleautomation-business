@@ -2037,3 +2037,153 @@
   font-size: 12px;
   color: var(--muted, #94a3b8);
 }
+
+/* ── Controls that shipped without their rules ───────────────────────────────
+   These components arrived in the bulk `resync Operations from current main`
+   import; the markup came, the stylesheet did not, so the classes below have
+   never matched a rule and the controls fell through to browser defaults —
+   grey `2px outset` buttons on an otherwise dark page.
+
+   Both follow patterns this file already establishes, because the markup was
+   written against them: the tablist is the same shape as `.sot-tabs` (buttons
+   carrying `class="active"`), and the clear button sits beside `.mail-live`
+   in the monitoring header. */
+
+.sot-mailbox-view-tabs {
+  display: flex;
+  gap: 14px;
+  margin: 18px 0 0;
+  border-bottom: 1px solid var(--sot-border, #21344d);
+}
+.sot-mailbox-view-tabs button {
+  position: relative;
+  border: 0;
+  padding: 12px 18px 14px;
+  background: transparent;
+  color: #9cacc2;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.sot-mailbox-view-tabs button:hover,
+.sot-mailbox-view-tabs button.active {
+  color: #54a0ff;
+}
+/* The count and the "N active" hint are separate elements inside the button,
+   so they need spacing of their own or they run into the label — which is why
+   the tabs read "Linked 1616 active" with no gaps at all. */
+.sot-mailbox-view-tabs button span {
+  margin-left: 6px;
+  border-radius: 999px;
+  padding: 1px 7px;
+  background: rgba(148, 163, 184, 0.16);
+  color: inherit;
+  font-size: 11px;
+}
+.sot-mailbox-view-tabs button small {
+  margin-left: 6px;
+  color: #6f8199;
+  font-size: 11px;
+  font-weight: 500;
+}
+.sot-mailbox-view-tabs button.active::after {
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 2px;
+  content: "";
+  background: var(--sot-blue, #3284ff);
+}
+
+.mail-clear-all {
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+  padding: 6px 12px;
+  background: rgba(148, 163, 184, 0.10);
+  color: #cbd5e1;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 120ms, border-color 120ms, color 120ms;
+}
+.mail-clear-all:hover:not(:disabled) {
+  border-color: rgba(248, 113, 113, 0.45);
+  background: rgba(248, 113, 113, 0.12);
+  color: #fca5a5;
+}
+.mail-clear-all:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* `.mail-filters select` and `.mail-detail select` set `background:` — the
+   shorthand, which resets background-image to none. With the base rule's
+   `appearance: none` removing the native arrow, these selects would be left
+   with no dropdown indicator at all, which is worse than the native one they
+   started with. Give them the chevron back explicitly. */
+.mail-filters select,
+.mail-detail select {
+  appearance: none;
+  padding-right: 30px;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath fill='%2394a3b8' d='M2.2 4.3h7.6L6 8.6z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 12px;
+}
+
+/* The monitoring header lays out the clear button beside the live pill. With
+   no rule they sat flush against each other, which is what "misaligned
+   notification controls" looked like. */
+.mail-monitoring-page__actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+/* `--compact` variants of grids whose base sets a fixed column count. The
+   monitoring page renders three summary cards and two filters into grids
+   declared for five and five, so without these the children were stretched
+   across empty columns — the misalignment, rather than anything being
+   unstyled. */
+.mail-summary--compact {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+.mail-filters--compact {
+  grid-template-columns: minmax(240px, 2fr) minmax(160px, 1fr);
+}
+
+.mail-live--live {
+  background: rgba(34, 197, 94, 0.12);
+  color: #22c55e;
+}
+
+.mail-status__reason {
+  display: block;
+  margin-top: 2px;
+  color: #94a3b8;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.mail-detail__email-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  color: #94a3b8;
+  font-size: 11px;
+}
+.mail-detail__original {
+  max-height: 260px;
+  overflow: auto;
+  margin-top: 8px;
+  border: 1px solid var(--border-color, rgba(148, 163, 184, 0.18));
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: rgba(15, 23, 42, 0.55);
+  color: #cbd5e1;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
