@@ -310,6 +310,65 @@ _JOB_BOARD_SENDERS = (
     "no-reply@monsterindia.com", "jobs@shine.com",
 )
 
+# Aggregators and career-marketing platforms. No employer lifecycle mail
+# originates from these domains: they send "your profile was shortlisted",
+# "jobs found for you" and profile-completion nags, phrased exactly like a real
+# status update because that is what makes them worth opening.
+#
+# Matched by domain, not address. The list above is by address, which is why it
+# missed every one of these in production: it names `jobs@shine.com` while the
+# mail actually arrives from `alerts@jobs.shine.com`, and talent500 alone sent
+# 29 of them from `aditi@talent500.co`. Any new mailbox at the same company
+# would have needed its own entry.
+#
+# Deliberately excluded, because these are real senders whose mail must keep
+# flowing: employer domains, and applicant-tracking systems such as ripplehire,
+# curatal, myworkday, ambitionhire and wecreateproblems. An ATS relays genuine
+# employer decisions and is not an aggregator.
+_JOB_BOARD_DOMAINS = (
+    "talent500.co",
+    "timesjobs.com",
+    "shine.com",
+    "indeed.com",
+    "naukri.com",
+    "monsterindia.com",
+    "abekus.co",
+    "yocket.in",
+)
+
+# LinkedIn is kept to specific mailboxes rather than the whole domain: a
+# recruiter's InMail can carry a real conversation, so blocking linkedin.com
+# outright would lose genuine mail to stop notification digests.
+_JOB_BOARD_ADDRESSES = _JOB_BOARD_SENDERS + (
+    "notifications-noreply@linkedin.com",
+    "messages-noreply@linkedin.com",
+)
+
+
+def job_board_notification(sender_email: str) -> bool:
+    """True when the sender is an aggregator, not an employer or its ATS.
+
+    These mails are the single largest source of false lifecycle statuses. A
+    talent500 "Shortlisted but your profile is incomplete" and a timesjobs
+    "Your profile has been Shortlisted for EMBA" both read to a model as a
+    genuine shortlisting, and were classified as one; the routing gate then
+    refused them for lack of corroborating evidence, which is why they never
+    reached an operator. Stopping them here means the gate no longer has to be
+    the thing standing between marketing and the alert queue.
+    """
+    address = str(sender_email or "").strip().casefold()
+    if not address:
+        return False
+    if address in _JOB_BOARD_ADDRESSES:
+        return True
+    domain = address.rpartition("@")[2]
+    if not domain:
+        return False
+    return any(
+        domain == known or domain.endswith("." + known)
+        for known in _JOB_BOARD_DOMAINS
+    )
+
 
 def job_advertisement_digest(
     subject: str, body: str, sender_email: str = "",
@@ -761,6 +820,68 @@ def _evidence_supported(item: dict[str, Any], sources: dict[str, list[str]]) -> 
     return bool(needle) and any(needle in value.casefold() for value in sources.get(str(item.get("source") or ""), []))
 
 
+# Unambiguous employer language, mapped to the meaning codes the routing gate
+# recognises.
+#
+# The model is asked for a `meaning` code and returns a sentence instead - 950
+# prose values against 55 coded ones in production - so genuine employer mail
+# was dropped for want of a code it never produced. Rather than teach the gate
+# to accept prose, which would also admit the marketing that phrases itself the
+# same way, only these phrases are promoted.
+#
+# Kept deliberately short and specific. "Shortlisted" is absent because it is
+# the single most common word in job-board marketing: "Shortlisted but your
+# profile is incomplete", "Shortlisted for EMBA". A phrase earns a place here
+# only if an aggregator would have no reason to send it.
+_MEANING_PHRASES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("OFFER_LETTER_RECEIVED", (
+        "offer letter has been sent", "offer letter has been released",
+        "offer has been released", "released the offer",
+        "offer letter is attached", "offer letter attached",
+        "we are pleased to offer you",
+    )),
+    ("SELECTED", (
+        "has been selected for the position", "has been selected for the role",
+        "selected for the position of", "confirming your selection",
+        "candidate has been selected",
+    )),
+    ("CANDIDATE_REJECTED", (
+        "not matching the requirements", "profile not matching",
+        "has been declined", "regret to inform", "we will not be moving forward",
+    )),
+    ("JOINING_CONFIRMED", (
+        "joining has been confirmed", "expected to join on",
+        "date of joining is", "confirmed your date of joining",
+    )),
+)
+
+
+def normalise_evidence_meaning(item: dict[str, Any]) -> dict[str, Any]:
+    """Promote unambiguous employer prose to a recognised meaning code.
+
+    The original wording is kept in `meaning_text`, because the prose is the
+    audit trail: it is what the model actually said about the mail, and a code
+    derived from it is an interpretation.
+
+    Anything that does not match stays exactly as it was, so the routing gate
+    still refuses it. That is the point - this recovers genuine mail without
+    becoming a general-purpose way around the gate.
+    """
+    meaning = str(item.get("meaning") or "").strip()
+    if not meaning:
+        return item
+    if meaning.upper() in store.IMPORTANT_ALERT_EVIDENCE_MEANINGS:
+        return item
+    haystack = f"{meaning} {item.get('text') or ''}".casefold()
+    for code, phrases in _MEANING_PHRASES:
+        if any(phrase in haystack for phrase in phrases):
+            promoted = dict(item)
+            promoted["meaning_text"] = meaning
+            promoted["meaning"] = code
+            return promoted
+    return item
+
+
 _OFFER_FAMILY = {
     "OFFER_INDICATION", "OFFER_IN_PROGRESS", "OFFER_APPROVED",
     "OFFER_LETTER_RECEIVED", "APPOINTMENT_LETTER_RECEIVED", "OFFER_ACCEPTED",
@@ -1059,7 +1180,9 @@ def validate_result(value: dict[str, Any], message: dict[str, Any] | None = None
     supported = [item for item in value["evidence"] if _evidence_supported(item, sources)]
     if not supported:
         raise ValueError("selection/offer evidence is missing or unsupported")
-    value["evidence"] = supported
+    # Promote unambiguous employer phrasing to a meaning code before the value
+    # is persisted, so the routing gate sees a code without being loosened.
+    value["evidence"] = [normalise_evidence_meaning(item) for item in supported]
     auto_threshold = max(0.8, min(0.99, float(os.getenv("AI_RECRUITMENT_AUTO_ACCEPT_THRESHOLD", "0.90"))))
     review_threshold = max(0.0, min(1.0, float(os.getenv("OLLAMA_CONFIDENCE_THRESHOLD", "0.75"))))
     if confidence < review_threshold:
@@ -1828,6 +1951,13 @@ def process_message(mailbox: dict[str, Any], decoded: dict[str, Any], attachment
         result = _failure_review_result(decoded, RuntimeError("Critical employment attachment extraction failed"))
         result["reason"] = "A potentially important employment attachment could not be extracted"
         result["risk_flags"] = ["ATTACHMENT_EXTRACTION_FAILED"]
+    if job_board_notification(decoded.get("sender_email", "")):
+        # Marked not-relevant so it takes the existing ignore path: no event, no
+        # lifecycle status, no notification. The analysis is still recorded, so
+        # the decision stays auditable.
+        result["is_selection_or_offer_related"] = False
+        result["should_create_review_record"] = False
+        result["ignore_reason"] = "JOB_BOARD_NOTIFICATION"
     if not result.get("is_selection_or_offer_related") or not result.get("should_create_review_record") or result.get("primary_status") not in TRACKED_STATUSES:
         status = "IGNORED_LOW_CONFIDENCE" if result.get("primary_status") == "IGNORED_LOW_CONFIDENCE" else "IGNORED_NOT_OFFER_RELATED"
         if reprocess:
