@@ -131,19 +131,19 @@ class TestMeaningNormalisation:
 
 
 class TestGuardsAreUnchanged:
-    def test_the_routing_gate_still_refuses_unrecognised_prose(self):
-        """The fix is upstream. The gate must not have learned to accept prose,
-        or the marketing above would route the moment a sender is missed."""
-        from core.recruitment_mail_store import should_route_to_mail_alert
-        event = {
-            "primary_status": "SELECTION_NEEDS_REVIEW",
-            "requires_manual_review": True,
-            "structured_result": {
-                "evidence": [{"meaning": "PROFILE SHORTLISTED: UNLOCK INTERVIEWS", "text": "x"}],
-            },
-        }
-        analysis = {"classification": "job_selection_confirmed", "candidate_status": "Selected"}
-        assert should_route_to_mail_alert(event, analysis) is False
+    def test_job_board_marketing_is_stopped_before_ollama(self):
+        """The whole defence is upstream now.
+
+        should_route_to_mail_alert used to refuse unrecognised evidence prose,
+        which caught this marketing a second time if a sender was missed. That
+        gate is gone - it withheld 171 genuine alerts to do it - so this sender
+        check is the only thing standing between job-board marketing and an
+        alert, and it has to hold on its own.
+        """
+        assert agent.job_board_notification("aditi@talent500.co") is True
+        assert agent.job_board_notification("mail@timesjobs.com") is True
+        assert agent.job_board_notification("recruiters@jobs.shine.com") is True
+        assert agent.job_board_notification("hr@innominds.com") is False
 
     def test_a_promoted_meaning_does_pass_the_gate(self):
         """The other half: genuine employer mail now carries a code the gate

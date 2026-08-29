@@ -1545,10 +1545,24 @@ def should_route_to_mail_alert(
 ) -> bool:
     """Return whether a persisted event belongs on the Mail Alerts screen.
 
-    Pending-review infrastructure failures are not useful by themselves.  The
-    source still needs strong employment evidence, and interview alerts must
-    refer to a current or future schedule.  This keeps historical interviews
-    and the old Ollama-timeout false positives out of the administrator queue.
+    A valid tracked classification is now enough. This used to demand that the
+    model's evidence `meaning` fields matched a fixed vocabulary whenever the
+    event needed review, and that second opinion silently withheld 171 real
+    events: flocareer interview reminders, an owlsure L1 discussion, an
+    Innominds "complete the pre-onboarding formalities", a digiverifier
+    employment-BGV invitation. Each was classified correctly, persisted
+    correctly, and never shown to anyone. The failure left no trace, because a
+    withheld notification logs nothing.
+
+    Precision belongs upstream, where it can be reasoned about: banking,
+    job-board, promotional and service-ad mail is excluded deterministically by
+    `routing_decision` and `job_board_notification` before Ollama is called at
+    all. Judging the model's own vocabulary after the fact could only ever
+    reject work that had already passed those checks.
+
+    Interview alerts still need a current or future schedule - a rescan must not
+    reopen last month's interviews - and an invalid or errored classification
+    still goes to Needs Review rather than being dropped.
     """
     structured = event.get("structured_result") or {}
     if isinstance(structured, str):
@@ -1563,32 +1577,10 @@ def should_route_to_mail_alert(
     if not notification_is_tracked(classification):
         return False
 
-    evidence = structured.get("evidence") or []
-    meanings = {
-        str(item.get("meaning") or "").strip().upper()
-        for item in evidence
-        if isinstance(item, dict)
-    }
-    expected_meanings = {
-        key
-        for key, value in _STATUS_CLASSIFICATION.items()
-        if value == classification
-    }
-    expected_meanings.add(classification.upper())
-
-    requires_review = bool(
-        event.get("requires_manual_review")
-        or structured.get("requires_manual_review")
-        or str(event.get("validation_status") or "").upper()
-        in {"NEEDS_REVIEW", "RETRY_PENDING"}
-    )
-    if requires_review and not (
-        meanings.intersection(expected_meanings)
-        or meanings.intersection(IMPORTANT_ALERT_EVIDENCE_MEANINGS)
-    ):
-        return False
-
     if classification.startswith("interview_"):
+        # The one check that survives, and it is temporal rather than semantic:
+        # a rescan of August must not reopen interviews that have already
+        # happened. It says nothing about whether the classification is right.
         interview = structured.get("interview") or {}
         raw_date = str(interview.get("date") or event.get("interview_date") or "").strip()
         try:
@@ -1598,18 +1590,17 @@ def should_route_to_mail_alert(
         if scheduled_date < (today or date.today()):
             return False
 
-        # A trusted calendar event is authoritative.  For fallback-only rows,
-        # also demand an explicit interview subject so newsletter dates/links
-        # cannot become interview alerts during an AI outage.
+        # "Trust the classification" means trust Ollama's. These two sources are
+        # what the pipeline writes when Ollama produced nothing: during an
+        # outage the fallback derives a status from routing context alone, so a
+        # newsletter carrying a date could otherwise become an interview alert
+        # with no model having read it. A real Ollama classification never
+        # reaches this check.
         source_name = str(structured.get("classification_source") or "").upper()
-        if requires_review and source_name not in {
-            "ICALENDAR_VERIFIED",
-            "CALENDAR_VERIFIED",
-        }:
+        if source_name in {"FALLBACK", "FAILURE_REVIEW"}:
             subject = str((source or {}).get("subject") or event.get("subject") or "")
-            subject_text = subject.casefold()
             if not any(
-                cue in subject_text
+                cue in subject.casefold()
                 for cue in ("interview", "technical screening", "screening round")
             ):
                 return False
