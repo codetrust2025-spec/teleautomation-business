@@ -853,6 +853,27 @@ _MEANING_PHRASES: tuple[tuple[str, tuple[str, ...]], ...] = (
         "joining has been confirmed", "expected to join on",
         "date of joining is", "confirmed your date of joining",
     )),
+    # Onboarding paperwork only ever follows an accepted offer. Innominds'
+    # "please complete the pre-onboarding formalities" classified correctly as
+    # joining_confirmed and was then refused by the routing gate, because the
+    # model wrote its evidence meaning as prose and none of it matched
+    # POST_SELECTION_ONBOARDING. Kept to wording no job advert uses: an advert
+    # describes a role, it does not ask you to complete your own onboarding.
+    ("POST_SELECTION_ONBOARDING", (
+        "pre-onboarding formalities", "pre onboarding formalities",
+        "onboarding formalities", "complete the pre-onboarding",
+        "as our valuable new employee",
+    )),
+    # Employment BGV is commissioned after selection, never before. The phrases
+    # name an initiated check on a specific person; a JD that merely warns
+    # "background verification is mandatory" matches none of them, so it still
+    # stops at the gate.
+    ("BACKGROUND_VERIFICATION", (
+        "digital employment bgv", "employment bgv",
+        "background verification has been initiated",
+        "initiated your background verification",
+        "third party verification on behalf of",
+    )),
 )
 
 
