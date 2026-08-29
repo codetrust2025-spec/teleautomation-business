@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+from collections import OrderedDict
 from typing import Any
 
 from fastapi import WebSocket
@@ -71,7 +72,124 @@ def publish(event_type: str, **payload: Any) -> dict[str, Any]:
     loop = _loop
     if loop and loop.is_running():
         try:
+            _mark_delivered(event["id"])
             asyncio.run_coroutine_threadsafe(_broadcast(envelope), loop)
         except RuntimeError:
             logger.info("Mail WebSocket loop closed before event delivery event_id=%s", event["id"])
+    else:
+        # No loop here means this process holds no WebSocket clients - an
+        # operational script, a cron, or a second uvicorn worker. The row is
+        # durable either way, and the tailer running inside the API process
+        # picks it up and delivers it. Before that existed, a publish from
+        # anywhere else wrote the event and reached nobody until the browser
+        # happened to reconnect, with nothing logged to say so.
+        logger.info(
+            "Mail event published from a process with no WebSocket loop; "
+            "the API tailer will deliver it event_id=%s type=%s",
+            event["id"], event_type,
+        )
     return envelope
+
+
+# Events this process has already put on the wire. The tailer reads the same
+# durable table every publisher writes to, so without this it would send a
+# second copy of everything published locally.
+_delivered: OrderedDict[str, None] = OrderedDict()
+_DELIVERED_LIMIT = 2000
+
+
+def _mark_delivered(event_id: str) -> None:
+    with _lock:
+        _delivered[event_id] = None
+        while len(_delivered) > _DELIVERED_LIMIT:
+            _delivered.popitem(last=False)
+
+
+def _already_delivered(event_id: str) -> bool:
+    with _lock:
+        return event_id in _delivered
+
+
+async def _tail_events(poll_seconds: float = 2.0) -> None:
+    """Deliver events written by any process to the clients held by this one.
+
+    `publish` can only broadcast from the process that owns the WebSockets.
+    Everything else - the recovery scripts used for the August rescan, a cron,
+    a second uvicorn worker - wrote a durable row that no connected browser
+    ever saw. This closes that gap without new infrastructure: the table is
+    already the replay log clients use on reconnect, so tailing it is the same
+    mechanism, read continuously instead of once.
+    """
+    from core import recruitment_mail_store as store
+
+    cursor: str | None = None
+    try:
+        latest = await asyncio.to_thread(store.list_realtime_events, limit=1)
+        # Start at the present. Older events are already the client's business
+        # via the last_event_id replay it performs on connect.
+        cursor = latest[-1]["id"] if latest else None
+    except Exception:
+        logger.exception("Mail event tailer could not read its starting position")
+
+    while True:
+        try:
+            await asyncio.sleep(poll_seconds)
+            if not _connections:
+                # Keep the cursor moving so a client connecting later is not
+                # met with a backlog it has already replayed for itself.
+                try:
+                    latest = await asyncio.to_thread(store.list_realtime_events, limit=1)
+                    if latest:
+                        cursor = latest[-1]["id"]
+                except Exception:
+                    logger.exception("Mail event tailer could not advance its cursor")
+                continue
+            rows = await asyncio.to_thread(
+                store.list_realtime_events, after_id=cursor, limit=200,
+            )
+            for row in rows:
+                cursor = row["id"]
+                if _already_delivered(row["id"]):
+                    continue
+                _mark_delivered(row["id"])
+                await _broadcast({
+                    "event": row["event_type"],
+                    "event_id": row["id"],
+                    **(row.get("payload") or {}),
+                    "created_at": str(row.get("created_at") or ""),
+                })
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # A tailer that dies takes live delivery with it and says nothing.
+            logger.exception("Mail event tailer iteration failed; continuing")
+
+
+_tailer: asyncio.Task | None = None
+
+
+def start_tailer() -> None:
+    """Start the tailer on the running loop, once per process."""
+    global _tailer
+    if _tailer is not None and not _tailer.done():
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        logger.info("No running loop; mail event tailer not started")
+        return
+    configure_loop(loop)
+    _tailer = loop.create_task(_tail_events())
+    logger.info("Mail event tailer started")
+
+
+async def stop_tailer() -> None:
+    global _tailer
+    task, _tailer = _tailer, None
+    if task is None:
+        return
+    task.cancel()
+    try:
+        await task
+    except (asyncio.CancelledError, Exception):
+        pass

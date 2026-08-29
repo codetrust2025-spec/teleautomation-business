@@ -177,8 +177,14 @@ async def startup() -> None:
     from services.messaging_client import start_outbox_dispatcher
     from workers.recruitment_mail_worker import recruitment_mail_worker
 
+    from core import recruitment_realtime
+
     apply_migrations()
     ensure_schema()
+    # Started here rather than on first WebSocket connect: the tailer delivers
+    # events written by any process, and it needs the loop registered before a
+    # publisher runs, not after a browser happens to arrive.
+    recruitment_realtime.start_tailer()
     recruitment_mail_worker.start()
     start_interview_reminder_loop()
     start_gmail_watch_renewal_loop()
@@ -192,9 +198,12 @@ async def shutdown() -> None:
     from services.messaging_client import stop_outbox_dispatcher
     from workers.recruitment_mail_worker import recruitment_mail_worker
 
+    from core import recruitment_realtime
+
     await stop_gmail_watch_renewal_loop()
     await stop_interview_reminder_loop()
     await stop_outbox_dispatcher()
+    await recruitment_realtime.stop_tailer()
     await recruitment_mail_worker.stop()
 
 
