@@ -176,22 +176,32 @@ def test_validate_result_accepts_an_iso_timestamp_date():
 
 
 def test_validate_result_still_rejects_a_schedule_the_source_never_stated():
-    """The guard that matters: nothing is invented when the source is silent."""
+    """The guard that matters: nothing is invented when the source is silent.
+
+    This used to raise, which also deleted the detection - an Accenture
+    interview confirmation was parked and never surfaced. It now downgrades:
+    the time is still not invented and booking still cannot fire, but a person
+    gets to see the mail.
+    """
     from services.recruitment_mail_agent import validate_result
     quote = "We will confirm the timing shortly"
     row = _interview_result(quote, time="sometime next week")
     message = {"subject": "Technical interview",
                "body": f"Your interview is scheduled. {quote}."}
 
-    with pytest.raises(ValueError, match="12-hour time"):
-        validate_result(row, message)
+    validate_result(row, message)
+    assert row["interview"]["time"] is None, "a time absent from the source was invented"
+    assert row["classification"] == "needs_review"
+    assert row["requires_manual_review"] is True
 
 
 def test_validate_result_still_rejects_an_ambiguous_numeric_date():
+    """07/08/2026 is 7 August or 8 July. Still never guessed."""
     from services.recruitment_mail_agent import validate_result
     quote = "07/08/2026 at 03:00 PM IST"
     row = _interview_result(quote, date="07/08/2026")
     message = {"subject": "Technical interview",
                "body": f"Your interview is scheduled for {quote}."}
-    with pytest.raises(ValueError, match="ISO date"):
-        validate_result(row, message)
+    validate_result(row, message)
+    assert row["interview"]["date"] is None, "an ambiguous numeric date was guessed"
+    assert row["classification"] == "needs_review"

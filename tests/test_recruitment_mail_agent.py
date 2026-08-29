@@ -90,10 +90,16 @@ def test_prompt_json_serializes_provider_datetime():
     payload = {"sent_at": datetime(2026, 7, 18, 10, 0, tzinfo=timezone.utc)}
     assert '"sent_at": "2026-07-18T10:00:00+00:00"' in _prompt_json(payload)
 
-def test_non_iso_offer_dates_are_rejected():
+def test_non_iso_offer_dates_are_dropped_without_losing_the_selection():
+    """An ambiguous date is still refused - 12/07 could be July or December -
+    but it is dropped and flagged, not raised. Raising discarded the whole
+    detection, which is how an Innominds onboarding mail and a digiverifier BGV
+    invitation vanished in August. See tests/test_lifecycle_date_recovery.py."""
     row=valid_result();row['offer']['joining_date']='12/07/2026'
-    with pytest.raises(ValueError,match='invalid ISO date'):
-        validate_result(row,{'subject':'Selection update','body':'You have been selected for the role.'})
+    validate_result(row,{'subject':'Selection update','body':'You have been selected for the role.'})
+    assert row['offer']['joining_date'] is None
+    assert 'UNREADABLE_OFFER_DATE_JOINING_DATE' in row['risk_flags']
+    assert row['status']=='SELECTED'
 
 
 @pytest.mark.parametrize(
@@ -277,11 +283,17 @@ def test_assertive_interview_overrides_speculative_joining_classification():
 # fixture's body states "02:00 PM IST", so it is no longer a rejection case.
 # The rejection is pinned instead by test_a_24h_time_with_no_am_pm_in_source_fails
 # below, which strips the AM/PM from the source.
-@pytest.mark.parametrize(("field","value","match"),[("date",None,"ISO date"),("timezone",None,"timezone")])
+@pytest.mark.parametrize(("field","value","match"),[("date",None,"date"),("timezone",None,"timezone")])
 def test_confirmed_interview_requires_explicit_schedule(field,value,match):
+    """An incomplete schedule still never becomes a confirmed interview - but
+    it is downgraded for review rather than discarded, which used to lose the
+    mail entirely. See tests/test_lifecycle_date_recovery.py."""
     row=interview_result();row['interview'][field]=value
     message={'subject':'Technical interview','body':'Your interview is scheduled for July 20, 2026 at 03:00 PM IST.'}
-    with pytest.raises(ValueError,match=match):validate_result(row,message)
+    validate_result(row,message)
+    assert row['classification']=='needs_review'
+    assert row['requires_manual_review'] is True
+    assert match in row['reason']
 
 
 def test_shortlist_without_schedule_remains_informational():
@@ -447,7 +459,9 @@ def test_a_24h_time_with_no_recoverable_source_time_fails():
     row['evidence']=[{'source':'EMAIL_SUBJECT','meaning':'interview','text':'Technical interview'}]
     message={'subject':'Technical interview',
              'body':'Your interview is scheduled for July 20, 2026. We will share the timing separately.'}
-    with pytest.raises(ValueError,match="12-hour time"):validate_result(row,message)
+    validate_result(row,message)
+    assert row['interview']['time'] is None, 'a time the source never stated was invented'
+    assert row['classification']=='needs_review'
 
 
 def test_a_source_stated_am_pm_time_is_recovered_from_a_24h_model_value():
