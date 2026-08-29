@@ -341,6 +341,14 @@ _JOB_BOARD_DOMAINS = (
     "foundit.in",
     "ziprecruiter.in",
     "ambitionbox.com",
+    # Found by benchmarking the verifier: Jobrapido's "A new company is showing
+    # interest in your profile" was the one false positive qwen3:14b let
+    # through as job_selection_confirmed. An aggregator that survives to the
+    # last gate should not have reached the first one.
+    "jobrapido.com",
+    "jobrapidoalert.com",
+    "instahyre.com",
+    "hirist.tech",
 )
 
 # Not job boards - banks, travel sites, telcos, course marketing. They reach
