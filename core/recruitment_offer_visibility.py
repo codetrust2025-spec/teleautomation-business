@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 
@@ -68,16 +69,31 @@ def should_show_in_selection_offer_review(event: dict[str, Any]) -> bool:
     # can still make a genuinely important message visible.
     manual_review_visible = manual_audit_keep
     if status == "MANUAL_REVIEW_REQUIRED" and not manual_review_visible:
-        meanings = {
-            str(item.get("meaning") or "").upper()
-            for item in evidence if isinstance(item, dict)
-        }
-        strong_meanings=(set(ALLOWED_STATUSES)-{"MANUAL_REVIEW_REQUIRED"}) | {
-            "JOB_SELECTION_CONFIRMED","OFFER_RECEIVED","OFFER_ACCEPTED",
-            "JOINING_CONFIRMED","ONBOARDING_STARTED",
-        }
-        if not meanings.intersection(strong_meanings):
-            return False
+        # The vocabulary check below is for rows where no model ran. When
+        # Ollama did run and asked for review - an Accenture "Your Interview
+        # has been successfully Scheduled" whose time nobody could parse - the
+        # request for review IS the finding, and judging its evidence wording
+        # hid it from the queue that exists to receive it. Nothing logged,
+        # because an invisible row is still a row.
+        structured = event.get("structured_result") or {}
+        if isinstance(structured, str):
+            try:
+                structured = json.loads(structured)
+            except ValueError:
+                structured = {}
+        source_name = str(structured.get("classification_source") or "").upper()
+        ai_reviewed = source_name == "OLLAMA" and validation != "RETRY_PENDING"
+        if not ai_reviewed:
+            meanings = {
+                str(item.get("meaning") or "").upper()
+                for item in evidence if isinstance(item, dict)
+            }
+            strong_meanings=(set(ALLOWED_STATUSES)-{"MANUAL_REVIEW_REQUIRED"}) | {
+                "JOB_SELECTION_CONFIRMED","OFFER_RECEIVED","OFFER_ACCEPTED",
+                "JOINING_CONFIRMED","ONBOARDING_STARTED",
+            }
+            if not meanings.intersection(strong_meanings):
+                return False
     if not manual_review_visible and (not evidence or float(event.get("confidence") or 0) < 0.8):
         return False
 
