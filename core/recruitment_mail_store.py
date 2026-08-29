@@ -1452,6 +1452,36 @@ def _candidate_snapshot(candidate_id: str, structured: dict[str, Any]) -> tuple[
     return (row.get("name") or candidate.get("name"), candidate.get("email"))
 
 
+_CLASSIFICATIONS_BY_STATUS_LABEL: dict[str, set[str]] = {}
+for _cls, _label in _CLASSIFICATION_STATUS.items():
+    _CLASSIFICATIONS_BY_STATUS_LABEL.setdefault(_label, set()).add(_cls)
+
+
+def _agreeing_candidate_status(result: dict[str, Any], classification: str) -> str:
+    """The label shown on the alert, forced to agree with the classification.
+
+    `status` and `candidate_status` are separate fields in the model's answer
+    and they can contradict each other. An Innominds "Welcome aboard, please
+    complete the pre-onboarding formalities" came back as JOINING_CONFIRMED
+    with a candidate_status of "Profile Active" - the label belonging to
+    not_relevant - so a Selection Related alert was headed with the words for
+    nothing having happened.
+
+    Grouping, filtering and the alert sound all key on the classification, so
+    the label has to key on it too. A label that belongs to other
+    classifications is replaced; one this map has never heard of is left alone,
+    since the model may be more specific than the map.
+    """
+    proposed = str(result.get("candidate_status") or "").strip()
+    canonical = _CLASSIFICATION_STATUS[classification]
+    if not proposed:
+        return canonical
+    owners = _CLASSIFICATIONS_BY_STATUS_LABEL.get(proposed)
+    if owners is not None and classification not in owners:
+        return canonical
+    return proposed
+
+
 def apply_candidate_job_status(event: dict[str, Any], classification: str, candidate_status: str, *, force: bool = False, updated_by: str = "system", review_notes: str = "") -> bool:
     """Apply only high-confidence, monotonic candidate status transitions."""
     confidence = float(event.get("confidence") or 0)
@@ -1666,7 +1696,7 @@ def create_monitoring_notification(event: dict[str, Any], analysis: dict[str, An
 def finalize_detection(event: dict[str, Any], *, result: dict[str, Any], model: str, duration_ms: int) -> dict[str, Any]:
     """Persist analysis, safe candidate state and notification after the event."""
     classification = canonical_classification(result)
-    candidate_status = str(result.get("candidate_status") or _CLASSIFICATION_STATUS[classification])
+    candidate_status = _agreeing_candidate_status(result, classification)
     result["classification"] = classification
     result["candidate_status"] = candidate_status
     try:
