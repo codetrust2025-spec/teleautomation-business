@@ -41,6 +41,20 @@ class TestNoiseIsStoppedBeforeInference:
         "support@hackingflix.com",
         "hyrefast@m.hyrefast.io",
         "news@talenttitanletters.com",
+        # Second pass: the long tail. resumeworded produced a live false
+        # Selection alert during the July run before it was listed.
+        "team@cs.resumeworded.com",
+        "info@money.hindustantimes.com",
+        "offers@safeopt.com",
+        "support@confirmtkt.com",
+        "offers@federalbank.co.in",
+        "alerts@axis.bank.in",
+        "noreply@g.joinhandshake.com",
+        "alerts@alerts.joinhyra.com",
+        "jobs@abekus.co.in",
+        "hello@primepathway.in",
+        "info@ibrowsejobs.com",
+        "hiring@sernexuss.in",
     ])
     def test_it_never_reaches_the_model(self, sender):
         assert job_board_notification(sender) is True
