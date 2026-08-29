@@ -334,6 +334,44 @@ _JOB_BOARD_DOMAINS = (
     "monsterindia.com",
     "abekus.co",
     "yocket.in",
+    # foundit sends "Your CV was downloaded", which a model reads as a
+    # selection: it came back job_selection_confirmed three times in the first
+    # 140 messages of the July rescan. It was the largest single sender still
+    # reaching inference, at 49 messages.
+    "foundit.in",
+    "ziprecruiter.in",
+    "ambitionbox.com",
+)
+
+# Not job boards - banks, travel sites, telcos, course marketing. They reach
+# inference only because they say nothing about jobs either way, so routing has
+# no reason to refuse them, and then the classifier is asked to judge a credit
+# card offer as a career event. It answers, because the schema requires an
+# answer.
+#
+# This list is separate from the one above on purpose: they are reviewed
+# against different questions. "Is this an aggregator?" and "is this a company
+# we would ever hear from about a candidate?" are not the same test, and
+# merging them makes both harder to audit.
+#
+# Every entry here was read from the July-August population with a sample
+# subject, never inferred from the name. Employer and ATS domains that look
+# like noise are deliberately absent: google.com carries Google's own
+# recruiting, and read.ai carries interview meeting notes.
+_SERVICE_NOISE_DOMAINS = (
+    "bankbazaar.com",
+    "icici.bank.in",
+    "easemytrip.com",
+    "jio.com",
+    "cdr.bsnl.co.in",
+    "miteshkhatri.com",
+    "namastedev.com",
+    "students.udemy.com",
+    "email.openai.com",
+    "infomails.microsoft.com",
+    "hackingflix.com",
+    "hyrefast.io",
+    "talenttitanletters.com",
 )
 
 # LinkedIn is kept to specific mailboxes rather than the whole domain: a
@@ -366,7 +404,7 @@ def job_board_notification(sender_email: str) -> bool:
         return False
     return any(
         domain == known or domain.endswith("." + known)
-        for known in _JOB_BOARD_DOMAINS
+        for known in _JOB_BOARD_DOMAINS + _SERVICE_NOISE_DOMAINS
     )
 
 
