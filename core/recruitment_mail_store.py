@@ -38,9 +38,14 @@ TRACKED_NOTIFICATION_CLASSIFICATIONS = {
     "joining_date_updated", "onboarding_started", "background_verification",
     "document_verification", "compensation_confirmation",
     "interview_shortlisted", "interview_confirmed", "interview_rescheduled",
-    "interview_cancelled", "candidate_rejected",
+    "interview_cancelled",
     "final_round_cleared", "hr_confirmation",
 }
+# candidate_rejected is deliberately absent. A rejection is an outcome to
+# record, not something to interrupt an administrator for: it needs no action,
+# and an alert queue that announces them buries the offers and interviews that
+# do. The event, the candidate status and the history are all still written -
+# only the notification, the sound and the counters are not.
 # The two groups the Mail Alerts filter offers in place of eighteen individual
 # classifications. They partition TRACKED_NOTIFICATION_CLASSIFICATIONS exactly:
 # every tracked classification belongs to one group and none to both, so

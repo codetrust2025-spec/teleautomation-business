@@ -54,7 +54,6 @@ class TestProseMeaningsNoLongerWithholdAnAlert:
         ("joining_confirmed", "Request to complete pre-onboarding formalities"),
         ("joining_confirmed", "Invitation - Digital Employment BGV_18310757"),
         ("offer_received", "The offer letter is attached for review"),
-        ("candidate_rejected", "They decided not to move forward"),
         ("job_selection_confirmed", "Candidate cleared the final round"),
     ])
     def test_selection_alerts_are_raised(self, classification, prose):
