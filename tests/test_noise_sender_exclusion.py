@@ -55,6 +55,12 @@ class TestNoiseIsStoppedBeforeInference:
         "hello@primepathway.in",
         "info@ibrowsejobs.com",
         "hiring@sernexuss.in",
+        # Third pass, from the verifier benchmark: Jobrapido reached the final
+        # gate and one verifier let it through as a selection.
+        "alert@jobrapidoalert.com",
+        "noreply@jobrapido.com",
+        "alerts@instahyre.com",
+        "info@hirist.tech",
     ])
     def test_it_never_reaches_the_model(self, sender):
         assert job_board_notification(sender) is True
