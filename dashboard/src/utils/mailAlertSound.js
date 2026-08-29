@@ -10,12 +10,20 @@
  * business rules and are unchanged.
  */
 
-/** Candidate got picked — offer/selection/joining mails. */
+/**
+ * Candidate got picked — offer/selection/joining mails.
+ *
+ * This must stay in step with SELECTION_RELATED_CLASSIFICATIONS in
+ * core/recruitment_mail_store.py. `final_round_cleared` and `hr_confirmation`
+ * were missing from both lists here, so isTrackedMailAlert rejected them and
+ * they arrived on the Selection Related tab in silence — visible only to
+ * someone already looking at the screen.
+ */
 export const SELECTION_CLASSIFICATIONS = [
-  'job_selection_confirmed', 'offer_received', 'offer_accepted',
-  'offer_declined', 'offer_revoked', 'joining_confirmed',
+  'job_selection_confirmed', 'final_round_cleared', 'offer_received',
+  'offer_accepted', 'offer_declined', 'offer_revoked', 'joining_confirmed',
   'joining_date_updated', 'onboarding_started', 'background_verification',
-  'document_verification', 'compensation_confirmation',
+  'document_verification', 'compensation_confirmation', 'hr_confirmation',
   'candidate_rejected',
 ]
 

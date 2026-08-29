@@ -1200,13 +1200,31 @@ def validate_result(value: dict[str, Any], message: dict[str, Any] | None = None
         value["requires_manual_review"] = bool(value.get("requires_manual_review") or value.get("risk_flags"))
         value["ignore_reason"] = None
         value["validation_status"] = "NEEDS_REVIEW" if value["requires_manual_review"] else "AUTO_VALIDATED"
+    # A date the model mis-spelled in one auxiliary field is a formatting slip,
+    # not grounds to throw away a correct classification. Raising here sent the
+    # message back down the deterministic-failure path, where two retries said
+    # the same thing and it was parked: an Innominds "Welcome aboard, complete
+    # the pre-onboarding formalities" and a digiverifier BGV invitation were
+    # both lost this way and never reached Mail Alerts.
+    #
+    # Interview dates have had `_normalise_interview_date` for exactly this
+    # since ValueMomentum's "20-Jul-2026"; offer dates never got it. Read what
+    # can be read, drop what cannot, and record that it was dropped. An
+    # all-numeric "12/07/2026" is still refused rather than guessed, because
+    # day-first and month-first cannot be told apart and the wrong joining date
+    # is worse than none.
+    offer = value.get("offer") or {}
     for field in ("offer_date", "joining_date", "offer_expiry_date"):
-        raw = (value.get("offer") or {}).get(field)
-        if raw:
-            try:
-                date.fromisoformat(raw)
-            except (TypeError, ValueError) as exc:
-                raise ValueError(f"invalid ISO date: offer.{field}") from exc
+        raw = offer.get(field)
+        if not raw:
+            continue
+        normalised = _normalise_interview_date(raw)
+        offer[field] = normalised or None
+        if not normalised:
+            value["risk_flags"] = list(dict.fromkeys(
+                (value.get("risk_flags") or []) + [f"UNREADABLE_OFFER_DATE_{field.upper()}"]
+            ))
+    value["offer"] = offer
     if value.get("classification") in {"interview_confirmed", "interview_rescheduled"}:
         interview = value.get("interview") or {}
         date_valid = True
@@ -1258,8 +1276,27 @@ def validate_result(value: dict[str, Any], message: dict[str, Any] | None = None
             if not date_valid: missing.append("date")
             if not time_valid: missing.append("time")
             if not tz_valid: missing.append("timezone")
-            labels={"date":"ISO date","time":"12-hour time","timezone":"timezone"}
-            raise ValueError("interview requires valid " + ", ".join(labels[item] for item in missing))
+            # Booking still must not fire on a schedule nobody could read, but
+            # raising discarded the whole detection: an Accenture "Your
+            # Interview has been successfully Scheduled" looped on
+            # OLLAMA_SCHEMA_VALIDATION_FAILED and was parked, so the interview
+            # never surfaced anywhere. Downgrading keeps the finding and puts a
+            # human on it, and the classification is no longer
+            # interview_confirmed, so auto-booking cannot pick it up.
+            for field, usable in (("date", date_valid), ("time", time_valid), ("timezone", tz_valid)):
+                if not usable:
+                    interview[field] = None
+            value["interview"] = interview
+            value.update(
+                status="MANUAL_REVIEW_REQUIRED", classification="needs_review",
+                candidate_status="Needs Review", should_create_review_record=True,
+                requires_manual_review=True, ignore_reason=None,
+                reason="Interview schedule could not be read: " + ", ".join(missing),
+            )
+            value["validation_status"] = "NEEDS_REVIEW"
+            value["risk_flags"] = list(dict.fromkeys(
+                (value.get("risk_flags") or []) + ["INTERVIEW_SCHEDULE_UNREADABLE"]
+            ))
 
 
 _MONTH_NAMES = {
