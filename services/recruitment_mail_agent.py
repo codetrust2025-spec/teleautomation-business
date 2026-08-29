@@ -372,6 +372,23 @@ _SERVICE_NOISE_DOMAINS = (
     "hackingflix.com",
     "hyrefast.io",
     "talenttitanletters.com",
+    # Second pass over the long tail of the same population. The first pass
+    # read the high-volume senders and stopped; resumeworded sends one mail a
+    # week and produced a live false Selection alert within 105 messages of
+    # starting the July run - "CS#367: I love being nervous (+ more)" came back
+    # job_selection_confirmed.
+    "resumeworded.com",
+    "money.hindustantimes.com",
+    "safeopt.com",
+    "confirmtkt.com",
+    "federalbank.co.in",
+    "axis.bank.in",
+    "joinhandshake.com",
+    "joinhyra.com",
+    "abekus.co.in",
+    "primepathway.in",
+    "ibrowsejobs.com",
+    "sernexuss.in",
 )
 
 # LinkedIn is kept to specific mailboxes rather than the whole domain: a
