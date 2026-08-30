@@ -2266,6 +2266,58 @@
   box-shadow: inset 3px 0 0 rgba(167, 139, 250, 0.6);
 }
 
+/* Selection Related is grouped by candidate: one <tbody> per candidate, whose
+   first row is the parent. The parent must not inherit `.mail-table th`'s
+   sticky positioning - every group heading would then pile up under the column
+   headings instead of staying with its own mails. */
+.mail-group + .mail-group {
+  border-top: 1px solid rgba(148, 163, 184, 0.22);
+}
+.mail-group__head th {
+  position: static;
+  padding: 14px 12px 10px;
+  background: rgba(124, 58, 237, 0.09);
+  color: var(--text, #e2e8f0);
+  font-size: 13px;
+  text-transform: none;
+  letter-spacing: 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+}
+.mail-group__head strong {
+  font-size: 13px;
+  font-weight: 700;
+}
+.mail-group__head small {
+  display: inline;
+  margin-left: 8px;
+  color: var(--muted, #94a3b8);
+  font-weight: 400;
+}
+.mail-group__count {
+  float: right;
+  color: var(--muted, #94a3b8);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+/* The candidate name lives on the parent, so the row's first cell carries only
+   the rail that ties it back to that parent. Kept as a real cell so the column
+   widths stay aligned with the flat view. */
+.mail-table--grouped .mail-row__nested {
+  width: 34px;
+  padding-right: 0;
+}
+.mail-row__thread {
+  display: block;
+  width: 12px;
+  height: 12px;
+  margin-left: 8px;
+  border-left: 1px solid rgba(148, 163, 184, 0.35);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.35);
+  border-bottom-left-radius: 4px;
+}
+
 /* Option text colour is honoured by Chrome on Windows and ignored elsewhere,
    so this is a hint rather than the differentiation itself - the badges and
    row accents carry that. */

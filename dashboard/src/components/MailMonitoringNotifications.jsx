@@ -29,12 +29,15 @@ const AUTO_BOOKING_CLASSIFICATIONS = [
   "interview_cancelled",
 ];
 
+// The Selection view is the grouped one. Named rather than spelled inline so
+// the filter option, the request and the render cannot drift apart.
+export const SELECTION_GROUP = "selection";
 // The filter offers two groups instead of eighteen classifications. Built from
 // the lists above rather than restating them, so the screen and the server
 // cannot drift apart; the server derives "selection" the same way, as
 // everything tracked that is not interview-related.
 export const CLASSIFICATION_GROUPS = [
-  { value: "selection", label: "Selection Related", classifications: JOB_CONFIRMED_CLASSIFICATIONS },
+  { value: SELECTION_GROUP, label: "Selection Related", classifications: JOB_CONFIRMED_CLASSIFICATIONS },
   { value: "interview", label: "Interview Related", classifications: AUTO_BOOKING_CLASSIFICATIONS },
 ];
 // Above this many options a native select stops being browsable and the filter
@@ -274,7 +277,7 @@ export function MailMonitoringNotifications() {
   const [candidateQuery, setCandidateQuery] = useState("");
   const query = useMemo(() => {
     const params = new URLSearchParams({ limit: "20", offset: String(page * 20), sort: "newest" });
-    for (const [key, value] of Object.entries({ search:filters.search,classification_group:filters.classificationGroup,candidate_id:filters.candidateId,priority:filters.priority,is_read:filters.read })) if (value !== "") params.set(key, String(value));
+    for (const [key, value] of Object.entries({ search:filters.search,classification_group:filters.classificationGroup,candidate_id:filters.candidateId,priority:filters.priority,is_read:filters.read,group_by:filters.classificationGroup === SELECTION_GROUP ? "candidate" : "" })) if (value !== "") params.set(key, String(value));
     return params.toString();
   }, [filters, page]);
   const load = useCallback(async ({ silent = false } = {}) => {
@@ -297,6 +300,30 @@ export function MailMonitoringNotifications() {
     })();
     return () => { cancelled = true; };
   }, []);
+  // The Selection view is grouped; the Interview view and the unfiltered view
+  // stay flat. Interview mails cannot appear here at all - `classification_group
+  // =selection` is applied on the server, and the two groups are disjoint by
+  // construction, so nothing interview-related reaches this list to be grouped.
+  const grouped = filters.classificationGroup === SELECTION_GROUP;
+  // One parent per candidate, in the order the server returned them, holding
+  // every one of that candidate's mails as its own row. Nothing is merged or
+  // deduplicated: two mails from the same company on the same day are two
+  // alerts and must both stay readable and actionable.
+  const candidateGroups = useMemo(() => {
+    const order = [];
+    const byCandidate = new Map();
+    for (const item of items) {
+      // candidate_id is NOT NULL in the table; the fallbacks only stop a row
+      // with a missing id from being merged into one nameless parent.
+      const key = item.candidate_id || item.candidate_email || item.id;
+      if (!byCandidate.has(key)) {
+        byCandidate.set(key, { key, name: item.candidate_name || "Candidate", email: item.candidate_email || "", items: [] });
+        order.push(key);
+      }
+      byCandidate.get(key).items.push(item);
+    }
+    return order.map((key) => byCandidate.get(key));
+  }, [items]);
   const set = (key) => (event) => { setPage(0); setFilters((value) => ({ ...value, [key]: event.target.value })); };
   const act = async (item, action) => { await request(`/api/mail-monitoring/notifications/${item.id}/${action}`, { method:"POST", body:"{}" }); load({ silent:true }); };
   const openNotification = useCallback(async (item) => {
@@ -327,10 +354,16 @@ export function MailMonitoringNotifications() {
     }
   }, [load]);
   const clearAll = async () => {
-    const count=summary.visible_total ?? total;
+    // `total` counts candidates while the Selection view is grouped, so it is
+    // not a usable fallback here: this dialog deletes notifications across
+    // every filter, and understating how many would be a destructive prompt
+    // with the wrong number on it. Better to omit the count than to invent it.
+    const count=summary.visible_total ?? (grouped ? null : total);
     const confirmed = await confirm({
       title: "Clear all mail notifications?",
-      message: `Remove all ${count} notifications from this list across every filter?`,
+      message: count === null
+        ? "Remove every notification from this list across every filter?"
+        : `Remove all ${count} notifications from this list across every filter?`,
       confirmLabel: "Clear notifications",
       cancelLabel: "Keep notifications",
       variant: "danger",
@@ -385,8 +418,18 @@ export function MailMonitoringNotifications() {
         {CLASSIFICATION_GROUPS.map((group) => <option value={group.value} key={group.value}>{group.label}</option>)}
       </select>
     </div>
-    <div className={`mail-table-wrap${loading ? " is-loading" : ""}`}>{loading && <OverlayLoader label="Loading notifications…" />}<table className="mail-table"><thead><tr><th>Candidate</th><th>Company</th><th>Detected status</th><th>Email subject</th><th>Confidence</th><th>Mail received</th><th>Tool detected</th><th>Review</th><th>Action</th></tr></thead><tbody>
-      {items.map((item) => <tr
+    <div className={`mail-table-wrap${loading ? " is-loading" : ""}`}>{loading && <OverlayLoader label="Loading notifications…" />}<table className={`mail-table${grouped ? " mail-table--grouped" : ""}`}><thead><tr><th>Candidate</th><th>Company</th><th>Detected status</th><th>Email subject</th><th>Confidence</th><th>Mail received</th><th>Tool detected</th><th>Review</th><th>Action</th></tr></thead>
+      {/* One <tbody> per candidate when grouped, so the parent is a real table
+          section rather than a row pretending to be a heading. The row itself is
+          the same in both modes - only the candidate cell differs, because in
+          grouped mode the name is already on the parent above it. */}
+      {(grouped ? candidateGroups : [{ key: "all", items }]).map((group) => <tbody key={group.key} className={grouped ? "mail-group" : undefined}>
+      {grouped && <tr className="mail-group__head"><th colSpan={9} scope="colgroup">
+        <strong>{group.name}</strong>
+        {group.email && <small>{group.email}</small>}
+        <span className="mail-group__count">{group.items.length} selection {group.items.length === 1 ? "mail" : "mails"}</span>
+      </th></tr>}
+      {group.items.map((item) => <tr
         key={item.id}
         className={`${item.is_read ? "" : "is-unread"} mail-notification-row${mailAlertCategory(item) ? ` mail-notification-row--${mailAlertCategory(item)}` : ""}`}
         tabIndex={0}
@@ -397,7 +440,9 @@ export function MailMonitoringNotifications() {
           event.preventDefault();
           openNotification(item);
         }}
-      ><td><strong>{item.candidate_name || "Candidate"}</strong><small>{item.candidate_email || ""}</small></td><td>{item.company_name || "—"}<small>{item.job_role || ""}</small></td><td><span className={`mail-status mail-status--${mailStatusTone(item)}${mailAlertCategory(item) ? ` mail-status--${mailAlertCategory(item)}` : ""}`}>{item.candidate_status || human(item.classification)}</span>{(() => {
+      ><td className={grouped ? "mail-row__nested" : undefined}>{grouped
+        ? <span className="mail-row__thread" aria-hidden="true" />
+        : <><strong>{item.candidate_name || "Candidate"}</strong><small>{item.candidate_email || ""}</small></>}</td><td>{item.company_name || "—"}<small>{item.job_role || ""}</small></td><td><span className={`mail-status mail-status--${mailStatusTone(item)}${mailAlertCategory(item) ? ` mail-status--${mailAlertCategory(item)}` : ""}`}>{item.candidate_status || human(item.classification)}</span>{(() => {
         const reason = blockingReason(item);
         if (!reason) return null;
         // Shown in the row itself: a blocked booking is unusable information
@@ -407,9 +452,10 @@ export function MailMonitoringNotifications() {
           title={reason.internal ? `${reason.text} (${reason.code} / ${reason.internal})` : `${reason.text} (${reason.code})`}
         >Reason: {reason.text}</span>;
       })()}</td><td>{item.email_subject || "(no subject)"}</td><td>{confidence(item.ai_confidence)}</td><td>{when(item.email_received_at)}</td><td>{when(item.created_at)}</td><td>{item.is_reviewed ? "Reviewed" : "Pending"}</td><td onClick={(event) => event.stopPropagation()}><button onClick={() => openNotification(item)}>Open</button><button onClick={() => act(item,item.is_read ? "unread" : "read")}>{item.is_read ? "Unread" : "Read"}</button><button onClick={() => act(item,"dismiss")}>Dismiss</button></td></tr>)}
-      {!loading && !items.length && <tr><td colSpan={9} className="mail-empty">No notifications match these filters.</td></tr>}
-    </tbody></table></div>
-    {total > 20 && <footer className="mail-pagination"><span>{total} notifications</span><button disabled={page===0} onClick={() => setPage((value) => value-1)}>Previous</button><span>Page {page+1}</span><button disabled={(page+1)*20>=total} onClick={() => setPage((value) => value+1)}>Next</button></footer>}
+      </tbody>)}
+      {!loading && !items.length && <tbody><tr><td colSpan={9} className="mail-empty">No notifications match these filters.</td></tr></tbody>}
+    </table></div>
+    {total > 20 && <footer className="mail-pagination"><span>{total} {grouped ? "candidates" : "notifications"}</span><button disabled={page===0} onClick={() => setPage((value) => value-1)}>Previous</button><span>Page {page+1}</span><button disabled={(page+1)*20>=total} onClick={() => setPage((value) => value+1)}>Next</button></footer>}
     {selected && <NotificationDetail item={selected} onClose={() => setSelected(null)} onChanged={load} />}
   </section>;
 }
