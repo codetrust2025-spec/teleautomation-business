@@ -125,7 +125,7 @@ def test_offer_letter_subject_body_and_pdf_patterns_are_routed(subject, body, at
     assert route["context"]["status"] == "OFFER_LETTER_RECEIVED"
 
 
-def test_unsupported_joining_prediction_recovers_source_proven_offer_letter():
+def test_unsupported_joining_prediction_with_disagreement_fails_closed():
     row = valid_result()
     row.update(
         status='JOINING_CONFIRMED', classification='joining_confirmed',
@@ -160,21 +160,13 @@ def test_unsupported_joining_prediction_recovers_source_proven_offer_letter():
 
     validate_result(row, message, attachments)
 
-    assert row['status'] == 'OFFER_LETTER_RECEIVED'
-    assert row['classification'] == 'offer_received'
-    assert row['candidate_status'] == 'Offer Received'
-    assert row['normalised_from'] == 'JOINING_CONFIRMED'
+    assert row['status'] == 'MANUAL_REVIEW_REQUIRED'
+    assert row['classification'] == 'needs_review'
+    assert row['should_create_review_record'] is False
+    assert row['lifecycle_event'] == 'NONE'
     assert row['requires_manual_review'] is True
-    assert any(item['meaning'] == 'OFFER_LETTER_RECEIVED' for item in row['evidence'])
-    assert should_route_to_mail_alert(
-        {
-            'primary_status': row['status'], 'structured_result': row,
-            'requires_manual_review': row['requires_manual_review'],
-            'validation_status': row['validation_status'],
-        },
-        {'classification': row['classification']},
-        source={'subject': message['subject']},
-    ) is True
+    assert row['backend_transition_validated'] is False
+    assert row['backend_validation_reason'] == 'MODEL_DISAGREEMENT'
 
 
 def test_central_recruitment_model_routes_use_required_defaults(monkeypatch):
@@ -456,7 +448,10 @@ def test_a_24h_time_with_no_recoverable_source_time_fails():
     one. The model's bare 17:00 must then be rejected exactly as before.
     """
     row=interview_result();row['interview']['time']='17:00'
-    row['evidence']=[{'source':'EMAIL_SUBJECT','meaning':'interview','text':'Technical interview'}]
+    row['evidence']=[{
+        'source':'EMAIL_BODY','meaning':'INTERVIEW_CONFIRMED',
+        'text':'Your interview is scheduled for July 20, 2026.',
+    }]
     message={'subject':'Technical interview',
              'body':'Your interview is scheduled for July 20, 2026. We will share the timing separately.'}
     validate_result(row,message)
@@ -467,12 +462,13 @@ def test_a_24h_time_with_no_recoverable_source_time_fails():
 def test_a_source_stated_am_pm_time_is_recovered_from_a_24h_model_value():
     """The Altimetrik case: model reformatted to 24-hour, source stated AM/PM."""
     row=interview_result();row['interview']['time']='14:00 - 15:00'
-    row['evidence']=[{'source':'EMAIL_SUBJECT','meaning':'interview',
-                      'text':'Interview scheduled on Fri, July 20, 2:00 PM - 3:00 PM IST'}]
+    row['evidence']=[{'source':'EMAIL_BODY','meaning':'INTERVIEW_CONFIRMED',
+                      'text':'Your interview is scheduled for July 20, 2026 at 02:00 PM IST.'}]
     message={'subject':'Interview scheduled on Fri, July 20, 2:00 PM - 3:00 PM IST',
              'body':'Your interview is scheduled for July 20, 2026 at 02:00 PM IST.'}
     validate_result(row,message)
     assert row['interview']['time']=='02:00 PM'
+    assert row['backend_transition_validated'] is True
 
 
 def test_selection_outcome_detection():

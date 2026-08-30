@@ -65,16 +65,20 @@ def test_the_wrong_source_bucket_is_not_supported():
 
 
 def test_validate_result_keeps_supported_and_drops_the_rest():
-    import inspect
     from services import recruitment_mail_agent as agent
-    src = inspect.getsource(agent.validate_result)
-    assert "supported = [item for item in value[\"evidence\"] if _evidence_supported" in src
-    assert "if not supported:" in src
-    # `supported` is what survives, whether assigned straight through or mapped
-    # over on the way (meanings are normalised there now). Asserting the exact
-    # assignment broke the moment that mapping was added, while the property
-    # being guarded — only supported items survive — was never at risk.
-    assert "supported]" in src or 'value["evidence"] = supported' in src
-    assert "for item in supported" in src or 'value["evidence"] = supported' in src
-    # the all-or-nothing form must be gone
-    assert "not all(_evidence_supported" not in src
+    from tests.test_recruitment_pipeline import structured
+
+    row = structured(
+        "OFFER_INDICATION", .95,
+        "We are delighted to offer you the position of Senior Software Engineer",
+    )
+    row["evidence"] = [
+        {**row["evidence"][0], "source": "EMAIL_BODY"},
+        {"source": "EMAIL_BODY", "meaning": "OFFER_INDICATION", "text": "invented offer details"},
+    ]
+    agent.validate_result(row, {"subject": SUBJECT, "body": BODY})
+
+    assert row["status"] == "OFFER_INDICATION"
+    assert row["backend_transition_validated"] is True
+    assert len(row["evidence"]) == 1
+    assert row["evidence"][0]["text"].startswith("We are delighted")

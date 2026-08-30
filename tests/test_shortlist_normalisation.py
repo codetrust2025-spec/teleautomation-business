@@ -47,19 +47,31 @@ def _ollama_result(**overrides):
     return base
 
 
-def test_the_exact_infoshare_result_becomes_the_canonical_shortlist():
+def test_role_shortlist_without_interview_process_is_not_promoted():
     result = _ollama_result()
-    assert normalise_shortlist_status(result, INFOSHARE_MESSAGE) is True
-    assert result["status"] == "INTERVIEW_SHORTLISTED"
-    assert result["is_selection_or_offer_related"] is True
-    assert result["should_create_review_record"] is True
-    assert result["requires_manual_review"] is False
-    assert result["shortlist_normalised_from"] == "MANUAL_REVIEW_REQUIRED"
+    assert normalise_shortlist_status(result, INFOSHARE_MESSAGE) is False
+    assert result["status"] == "MANUAL_REVIEW_REQUIRED"
 
 
-def test_shortlist_wording_with_the_selection_flag_is_promoted():
+def test_role_shortlist_wording_is_not_mislabeled_as_interview_shortlist():
     result = _ollama_result(status="INTERVIEW_UPDATE", candidate_status="Shortlisted")
     message = {"subject": "Update", "body": "You have been shortlisted for the role."}
+    assert normalise_shortlist_status(result, message) is False
+    assert result["status"] == "INTERVIEW_UPDATE"
+
+
+def test_explicit_interview_shortlist_is_promoted():
+    result = _ollama_result(
+        status="INTERVIEW_UPDATE", candidate_status="Interview Shortlisted",
+        evidence=[{
+            "source": "EMAIL_BODY", "meaning": "INTERVIEW_SHORTLISTED",
+            "text": "You have been shortlisted for the technical interview",
+        }],
+    )
+    message = {
+        "subject": "Interview update",
+        "body": "You have been shortlisted for the technical interview. We will contact you with the schedule.",
+    }
     assert normalise_shortlist_status(result, message) is True
     assert result["status"] == "INTERVIEW_SHORTLISTED"
 
@@ -84,15 +96,23 @@ def test_an_ambiguous_recruitment_update_stays_in_manual_review():
 
 def test_reprocessing_the_same_result_is_idempotent():
     """A retry must reach the same status, never a second differing outcome."""
-    first = _ollama_result()
-    assert normalise_shortlist_status(first, INFOSHARE_MESSAGE) is True
+    message = {
+        "subject": "Interview update",
+        "body": "You have been shortlisted for the technical interview.",
+    }
+    evidence = [{
+        "source": "EMAIL_BODY", "meaning": "INTERVIEW_SHORTLISTED",
+        "text": "You have been shortlisted for the technical interview",
+    }]
+    first = _ollama_result(evidence=evidence)
+    assert normalise_shortlist_status(first, message) is True
     # Re-running over an already-normalised result changes nothing further:
     # INTERVIEW_SHORTLISTED is not promotable, so it cannot be rewritten.
-    assert normalise_shortlist_status(first, INFOSHARE_MESSAGE) is False
+    assert normalise_shortlist_status(first, message) is False
     assert first["status"] == "INTERVIEW_SHORTLISTED"
 
-    second = _ollama_result()
-    normalise_shortlist_status(second, INFOSHARE_MESSAGE)
+    second = _ollama_result(evidence=evidence)
+    normalise_shortlist_status(second, message)
     assert second["status"] == first["status"]
 
 

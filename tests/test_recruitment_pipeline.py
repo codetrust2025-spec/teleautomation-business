@@ -375,7 +375,7 @@ def test_critical_validator_never_falls_back_to_lightweight_model(monkeypatch):
     assert calls == ["qwen2.5:7b","validator-model"]
 
 
-def test_validator_recovers_primary_false_negative_for_joining_confirmation(monkeypatch):
+def test_validator_disagreement_never_overrides_primary_or_creates_lifecycle(monkeypatch):
     source=message(
         "Congratulations and Next Steps - Data Engineer Role",
         "Congratulations on being shortlisted for the role of Data Engineer. Your date of joining will be 15th July 2026.",
@@ -393,8 +393,11 @@ def test_validator_recovers_primary_false_negative_for_joining_confirmation(monk
     monkeypatch.setattr(agent,"configured_models",lambda:{"primary":"qwen3.6","validator":"gemma4"})
     monkeypatch.setattr(agent,"chat_structured",lambda **kwargs:Response(next(outputs),kwargs["model"]))
     result,_,_=agent.analyze(source,[])
-    assert result["primary_status"] == "JOINING_CONFIRMED"
+    assert result["primary_status"] == "MANUAL_REVIEW_REQUIRED"
     assert result["requires_manual_review"] is True
+    assert result["should_create_review_record"] is False
+    assert result["lifecycle_event"] == "NONE"
+    assert result["backend_transition_validated"] is False
     assert "MODEL_DISAGREEMENT" in result["risk_flags"]
 
 
@@ -405,8 +408,10 @@ def test_validation_enforces_evidence_and_manual_review_confidence():
     assert medium["status"] == "MANUAL_REVIEW_REQUIRED"
     assert medium["confidence"] == .85
     unsupported=structured("SELECTED",.95,"invented evidence")
-    with pytest.raises(ValueError,match="unsupported"):
-        agent.validate_result(unsupported,message("Congratulations","You have been selected."),[])
+    agent.validate_result(unsupported,message("Congratulations","You have been selected."),[])
+    assert unsupported["status"] == "IGNORED_NOT_OFFER_RELATED"
+    assert unsupported["backend_transition_validated"] is False
+    assert unsupported["ignore_reason"] == "EVIDENCE_DOES_NOT_ENTAIL_TRANSITION"
 
 
 def test_low_confidence_result_requires_review_without_status_overwrite():

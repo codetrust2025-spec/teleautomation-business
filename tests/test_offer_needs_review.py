@@ -40,26 +40,27 @@ class TestNoSideEffects:
         assert "OFFER_NEEDS_REVIEW" not in agent.OFFER_CASE_STATUSES
         assert "JOINING_NEEDS_REVIEW" not in agent.OFFER_CASE_STATUSES
 
-    def test_downgrade_sets_manual_review(self):
-        import inspect
-        src = inspect.getsource(agent.validate_result)
-        block = src.split("review_status_for = _needs_review_status")[1].split("return")[0]
-        assert "requires_manual_review=True" in block
-        assert "should_create_review_record=True" in block
+    @staticmethod
+    def _unsupported_offer():
+        from tests.test_recruitment_pipeline import structured
+        return structured("OFFER_LETTER_RECEIVED", .95, "Live session at 7 PM")
 
-    def test_downgrade_does_not_touch_confidence_or_evidence(self):
-        import inspect
-        src = inspect.getsource(agent.validate_result)
-        block = src.split("review_status_for = _needs_review_status")[1].split("return")[0]
-        # no assignment to either field — the comment may mention them
-        assert "confidence=" not in block
-        assert "evidence=" not in block
+    def test_unsupported_offer_is_not_a_review_record(self):
+        row = self._unsupported_offer()
+        agent.validate_result(row, {"subject": "Public session", "body": "Live session at 7 PM"})
+        assert row["status"] == "IGNORED_NOT_OFFER_RELATED"
+        assert row["should_create_review_record"] is False
+        assert row["backend_transition_validated"] is False
+
+    def test_unsupported_offer_keeps_model_confidence_for_audit(self):
+        row = self._unsupported_offer()
+        agent.validate_result(row, {"subject": "Public session", "body": "Live session at 7 PM"})
+        assert row["confidence"] == .95
 
     def test_candidate_facing_label_does_not_read_as_a_real_offer(self):
-        import inspect
-        src = inspect.getsource(agent.validate_result)
-        assert "Offer — needs review" in src
-        assert "Joining — needs review" in src
+        row = self._unsupported_offer()
+        agent.validate_result(row, {"subject": "Public session", "body": "Live session at 7 PM"})
+        assert row["candidate_status"] == "Profile Active"
 
 
 class TestVisibility:
