@@ -244,6 +244,38 @@ def test_every_tracked_transition_has_an_explicit_closed_world_validator():
     assert reason == "UNHANDLED_TRACKED_STATUS"
 
 
+def test_validator_uses_primary_stage_contract_without_primary_anchoring():
+    assert agent.VALIDATOR_PROMPT.startswith(agent.CLASSIFIER_PROMPT)
+    prompt = " ".join(agent.VALIDATOR_PROMPT.split())
+    assert "not given the primary model's conclusion" in prompt
+    assert "return INTERVIEW_CONFIRMED, not INTERVIEW_SHORTLISTED" in agent.VALIDATOR_PROMPT
+
+
+def test_backend_forces_classification_to_match_validated_status():
+    value = _model_result(
+        "INTERVIEW_SHORTLISTED",
+        "You have been shortlisted for the technical interview.",
+    )
+    value.update(
+        classification="candidate_rejected",
+        candidate_status=store._CLASSIFICATION_STATUS["candidate_rejected"],
+    )
+
+    agent.validate_result(
+        value,
+        _message(
+            "Interview shortlist",
+            "You have been shortlisted for the technical interview.",
+        ),
+        [],
+    )
+
+    assert value["status"] == "INTERVIEW_SHORTLISTED"
+    assert value["classification"] == "interview_shortlisted"
+    assert value["candidate_status"] == "Interview Shortlisted"
+    assert value["backend_transition_validated"] is True
+
+
 def test_record_analysis_writes_each_decision_layer_to_its_own_column(monkeypatch):
     calls = []
 

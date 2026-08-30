@@ -1245,6 +1245,14 @@ def validate_result(
             downgraded_from=proposed_status,
         )
         return
+    # The status is the validated transition. Model-supplied classification and
+    # candidate labels are descriptive duplicates and must not contradict it.
+    classification = store._STATUS_CLASSIFICATION[safe_status]
+    value.update(
+        status=safe_status,
+        classification=classification,
+        candidate_status=store._CLASSIFICATION_STATUS[classification],
+    )
     is_interview_event = safe_status in interview_statuses
     value["lifecycle_event"] = "NONE" if is_interview_event else safe_status
     value["interview_event"] = safe_status if is_interview_event else "NONE"
@@ -1606,17 +1614,22 @@ and a concise evidence_summary/reason. Never include bank, PAN, Aadhaar, UAN, PF
 or other financial/government identifiers. Return only JSON matching
 selection_offer_event_v1."""
 
-VALIDATOR_PROMPT = """You are an independent second reader for a high-impact employment
-outcome. You are not given the primary model's conclusion. Re-read the complete source
-and the already-established recruitment-relevance decision, then classify from scratch.
+VALIDATOR_PROMPT = CLASSIFIER_PROMPT + """
+
+You are now the independent second reader for this high-impact employment outcome.
+Apply the exact lifecycle-stage definitions above. You are not given the primary
+model's conclusion. Re-read the complete source and the already-established
+recruitment-relevance decision, then classify from scratch.
 Date, time, duration, timezone, meeting links, greetings, sender domain, live-session
 structure, and event logistics never establish an interview. They may only refine an
 interview that the source explicitly ties to this recipient's hiring process.
 
 INTERVIEW_SHORTLISTED requires source text showing that this candidate was shortlisted
-or invited into an interview process. A public session schedule is not shortlist
-evidence. Return a complete selection_offer_event_v1 JSON result supported by short
-verbatim source evidence."""
+or invited into an interview process without a confirmed schedule. When the source
+explicitly says this candidate's interview is scheduled or confirmed and supplies a
+date, time, and timezone, return INTERVIEW_CONFIRMED, not INTERVIEW_SHORTLISTED. A public
+session schedule is not shortlist evidence. Return a complete selection_offer_event_v1
+JSON result supported by short verbatim source evidence."""
 
 
 def _analysis_payload(message: dict[str, Any], attachment_texts: list[dict[str, str]] | None) -> dict[str, Any]:
