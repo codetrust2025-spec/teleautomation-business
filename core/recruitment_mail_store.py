@@ -1417,6 +1417,17 @@ def record_analysis(
     error_message: str | None = None,
 ) -> dict[str, Any]:
     value = dict(result or {})
+    trace = dict(value.get("_decision_trace") or {})
+    deterministic_context = trace.get("deterministic_context")
+    relevance_result = trace.get("recruitment_relevance_result")
+    primary_result = trace.get("primary_model_result")
+    validator_result = trace.get("validator_model_result")
+    reconciled_result = trace.get("reconciled_result")
+    backend_result = trace.get("backend_validated_final_result") or value
+
+    def json_value(item: Any) -> str | None:
+        return json.dumps(item, default=str) if item is not None else None
+
     classification = canonical_classification(value)
     confidence = max(0.0, min(1.0, float(value.get("confidence") or 0)))
     candidate_status = str(value.get("candidate_status") or _CLASSIFICATION_STATUS[classification])
@@ -1425,19 +1436,30 @@ def record_analysis(
         cur.execute("""INSERT INTO mail_ai_analyses(
           id,mailbox_message_id,candidate_id,model_name,model_version,classification,candidate_status,
           confidence,summary,reason,recommended_action,raw_ai_response,validated_response,
+          deterministic_context,recruitment_relevance_result,primary_model_result,
+          validator_model_result,reconciled_result,backend_validated_final_result,
           processing_status,error_code,error_message,created_at,updated_at)
-          VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s,%s,%s,now(),now())
+          VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,
+          %s::jsonb,%s::jsonb,%s::jsonb,%s::jsonb,%s::jsonb,%s::jsonb,%s,%s,%s,now(),now())
           ON CONFLICT(mailbox_message_id) DO UPDATE SET model_name=EXCLUDED.model_name,
             model_version=EXCLUDED.model_version,classification=EXCLUDED.classification,
             candidate_status=EXCLUDED.candidate_status,confidence=EXCLUDED.confidence,
             summary=EXCLUDED.summary,reason=EXCLUDED.reason,recommended_action=EXCLUDED.recommended_action,
             raw_ai_response=EXCLUDED.raw_ai_response,validated_response=EXCLUDED.validated_response,
+            deterministic_context=EXCLUDED.deterministic_context,
+            recruitment_relevance_result=EXCLUDED.recruitment_relevance_result,
+            primary_model_result=EXCLUDED.primary_model_result,
+            validator_model_result=EXCLUDED.validator_model_result,
+            reconciled_result=EXCLUDED.reconciled_result,
+            backend_validated_final_result=EXCLUDED.backend_validated_final_result,
             processing_status=EXCLUDED.processing_status,error_code=EXCLUDED.error_code,
             error_message=EXCLUDED.error_message,updated_at=now() RETURNING *""",
           (analysis_id,message_id,candidate_id,model,(value.get('schema_version') or 'selection_offer_event_v1'),classification,
            candidate_status,confidence,str(value.get('summary') or '')[:1000],str(value.get('reason') or value.get('ignore_reason') or '')[:1000],
-           str(value.get('recommended_action') or '')[:1000],json.dumps(value,default=str),json.dumps(value,default=str),
-           processing_status,error_code,str(error_message or '')[:400] or None))
+            str(value.get('recommended_action') or '')[:1000],json_value(primary_result or value),json_value(backend_result),
+            json_value(deterministic_context),json_value(relevance_result),json_value(primary_result),
+            json_value(validator_result),json_value(reconciled_result),json_value(backend_result),
+            processing_status,error_code,str(error_message or '')[:400] or None))
         row=_rows(cur)[0]
         cur.execute("""UPDATE mail_ai_analyses SET ai_status=%s,validation_status=%s,
           email_intent=%s,document_type=%s,evidence_summary=%s WHERE id=%s RETURNING *""",(
@@ -1612,6 +1634,18 @@ def should_route_to_mail_alert(
     if not notification_is_tracked(classification):
         return False
 
+    # Model-produced lifecycle alerts fail closed. A status is routable only
+    # when the separate relevance gate established an actual recipient hiring
+    # process and the backend's explicit status validator proved the transition.
+    # Trusted RFC calendar sources keep their existing independent path.
+    source_name = str(structured.get("classification_source") or "").upper()
+    if source_name == "OLLAMA":
+        relevance = structured.get("recruitment_relevance_result") or {}
+        if str(relevance.get("decision") or "").upper() != "ESTABLISHED":
+            return False
+        if structured.get("backend_transition_validated") is not True:
+            return False
+
     if classification.startswith("interview_"):
         # The one check that survives, and it is temporal rather than semantic:
         # a rescan of August must not reopen interviews that have already
@@ -1631,7 +1665,6 @@ def should_route_to_mail_alert(
         # newsletter carrying a date could otherwise become an interview alert
         # with no model having read it. A real Ollama classification never
         # reaches this check.
-        source_name = str(structured.get("classification_source") or "").upper()
         if source_name in {"FALLBACK", "FAILURE_REVIEW"}:
             subject = str((source or {}).get("subject") or event.get("subject") or "")
             if not any(

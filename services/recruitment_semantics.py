@@ -37,12 +37,169 @@ LIFECYCLE_EVENTS = {
     "OFFER_LETTER_RECEIVED", "APPOINTMENT_LETTER_RECEIVED", "OFFER_ACCEPTED",
     "OFFER_RECEIVED", "JOINING_CONFIRMED", "JOINED", "POST_SELECTION_ONBOARDING",
     "BACKGROUND_VERIFICATION", "DOCUMENT_VERIFICATION", "HR_CONFIRMATION",
-    "COMPENSATION_CONFIRMATION",
+    "COMPENSATION_CONFIRMATION", "OFFER_DECLINED", "OFFER_REVOKED",
+    "JOINING_DATE_UPDATED", "INTERVIEW_SHORTLISTED", "INTERVIEW_UPDATE",
+    "CANDIDATE_REJECTED",
 }
 
 INTERVIEW_EVENTS = {
     "NONE", "INTERVIEW_CONFIRMED", "INTERVIEW_RESCHEDULED", "INTERVIEW_CANCELLED",
 }
+
+# A closed set of positive assertions that can entail a tracked transition.
+# These are not routing or negative-keyword rules: they are the backend proof
+# obligations for a status the models have already proposed.  A public event's
+# date, duration, meeting link, greeting, or sender domain satisfies none of
+# these obligations by itself.
+_TRANSITION_ASSERTIONS: dict[str, tuple[str, ...]] = {
+    "SELECTED": (
+        r"\b(?:you (?:have been|are)|your candidature has been) selected\b",
+        r"\bselected for (?:the )?(?:role|position|post)\b",
+        r"\bcongratulations.{0,50}\bselected\b",
+    ),
+    "FINAL_SELECTION_CONFIRMED": (
+        r"\bfinal selection (?:is |has been )?confirmed\b",
+        r"\bselection has been confirmed\b",
+        r"\bfinally selected\b",
+    ),
+    "FINAL_ROUND_CLEARED": (
+        r"\b(?:you (?:have )?|successfully )?cleared (?:the )?(?:final|technical|hr|l[1-5]|all) (?:interview )?rounds?\b",
+        r"\bfinal round cleared\b",
+    ),
+    "OFFER_INDICATION": (
+        r"\b(?:we (?:are|would be) (?:pleased|delighted)|we would like) to offer you\b",
+        r"\bintent to offer\b",
+        r"\bplanning to release your offer\b",
+    ),
+    "OFFER_IN_PROGRESS": (
+        r"\b(?:your )?offer (?:is|is currently|has been) (?:being )?(?:processed|prepared)\b",
+        r"\boffer (?:is )?under preparation\b",
+    ),
+    "OFFER_APPROVED": (r"\b(?:your )?offer (?:has been|is) approved\b",),
+    "OFFER_LETTER_RECEIVED": (
+        r"\b(?:your (?:official )?|official )?offer letter (?:is |has been )?(?:attached|released|enclosed)\b",
+        r"\b(?:find|review).{0,35}\b(?:your |the )?(?:official )?offer letter\b",
+        r"\byour (?:formal )?offer of employment\b",
+    ),
+    "OFFER_RECEIVED": (
+        r"\b(?:we (?:are|would be) (?:pleased|delighted)|we would like) to offer you\b",
+        r"\b(?:your (?:official )?|official )?offer letter (?:is |has been )?(?:attached|released|enclosed)\b",
+        r"\byour (?:formal )?offer of employment\b",
+    ),
+    "APPOINTMENT_LETTER_RECEIVED": (
+        r"\b(?:your )?appointment letter (?:is |has been )?(?:attached|released|enclosed)\b",
+        r"\bletter of appointment\b",
+    ),
+    "OFFER_ACCEPTED": (
+        r"\b(?:your )?offer acceptance (?:is |has been )?confirmed\b",
+        r"\b(?:we have received|thank you for|thanks for).{0,35}\b(?:your )?(?:offer )?acceptance\b",
+        r"\b(?:you have |you've )?accepted (?:our |the )?offer\b",
+    ),
+    "OFFER_DECLINED": (
+        r"\b(?:you have |you've )?declined (?:our |the )?offer\b",
+        r"\boffer has been declined\b",
+    ),
+    "OFFER_REVOKED": (
+        r"\boffer (?:has been|is) (?:revoked|rescinded|withdrawn)\b",
+        r"\boffer stands withdrawn\b",
+    ),
+    "JOINING_CONFIRMED": (
+        r"\byour (?:date of joining|joining date) (?:is|will be|has been confirmed)\b",
+        r"\bjoining date\s*:\s*[0-3]?\d[-/ ]?[a-z0-9]+[-/ ][0-9]{2,4}\b",
+        r"\b(?:please join|report for joining) on\b",
+        r"\bjoining (?:is )?confirmed\b",
+    ),
+    "JOINING_DATE_UPDATED": (
+        r"\b(?:revised|updated|new) (?:date of joining|joining date)\b",
+        r"\bjoining date has (?:changed|moved)\b",
+    ),
+    "JOINED": (
+        r"\b(?:you have |you've )?(?:officially )?joined (?:the company|[a-z0-9 &.'-]+)\b",
+        r"\bemployment (?:has )?commenced\b",
+        r"\breported for (?:duty|joining)\b",
+    ),
+    "POST_SELECTION_ONBOARDING": (
+        r"\b(?:you (?:are|have been) (?:invited|requested) to |please )?complete (?:the )?(?:pre[- ]?onboarding|pre[- ]?joining|onboarding) formalities\b",
+        r"\b(?:your )?(?:employee |post-selection )?onboarding (?:has )?(?:started|begun)\b",
+    ),
+    "BACKGROUND_VERIFICATION": (
+        r"\byou (?:have been|are) (?:invited|requested) to complete.{0,100}\b(?:background|digital employment (?:background )?|pre-employment) verification\b",
+        r"\bplease (?:complete|initiate|submit).{0,100}\b(?:background verification|background check|bgv)\b",
+        r"\byour (?:background verification|background check|bgv) (?:has |is )?(?:started|initiated|in progress)\b",
+    ),
+    "DOCUMENT_VERIFICATION": (
+        r"\b(?:please|you (?:must|need to)) (?:upload|submit|provide|share).{0,100}\bdocuments?\b.{0,80}\b(?:for )?verification\b",
+        r"\bdocuments? (?:are )?required for (?:candidate |employment |pre-employment )?verification\b",
+        r"\byour documents? (?:are being|have been submitted for) verification\b",
+    ),
+    "HR_CONFIRMATION": (
+        r"\b(?:selected|shortlisted).{0,100}\b(?:final )?hr (?:process|discussion|round)\b",
+        r"\bpre-offer documents?\b.{0,120}\b(?:selection|final hr|offer)\b",
+        r"\b(?:final hr|salary|ctc) discussion (?:is |has been )?(?:confirmed|completed)\b",
+    ),
+    "COMPENSATION_CONFIRMATION": (
+        r"\b(?:your )?compensation (?:is |has been )?confirmed\b",
+        r"\b(?:your )?(?:annual ctc|salary package) is\b",
+    ),
+    "INTERVIEW_UPDATE": (
+        r"\b(?:your interview invitation|you (?:have been|are) invited (?:for|to) (?:an )?interview)\b",
+        r"\b(?:update|next steps?) (?:on|for|regarding) your interview\b",
+        r"\bshortlisted for (?:the )?(?:next |technical |hr )?interview\b",
+    ),
+    "INTERVIEW_SHORTLISTED": (
+        r"\b(?:you (?:have been|are)|your (?:profile|candidature) (?:has been|is)) shortlisted.{0,100}\b(?:interview|next (?:stage|round)|hr discussion)\b",
+        r"\bshortlisted for (?:the )?(?:next |technical |hr )?interview\b",
+        r"\byou (?:have been|are) invited (?:for|to) (?:an )?interview\b",
+    ),
+    "INTERVIEW_CONFIRMED": (
+        r"\byour (?:l[1-5] )?(?:technical |managerial |hr |virtual )?interview.{0,120}\b(?:is |has been )?(?:scheduled|confirmed|arranged|booked)\b",
+        r"\b(?:scheduled|confirmed|arranged|booked).{0,120}\byour (?:l[1-5] )?(?:technical |managerial |hr |virtual )?interview\b",
+        r"\binvitation.{0,100}\bl[1-5]\s+(?:discussion|round)\b",
+        r"\bl[1-5]\s+(?:discussion|round)\b.{0,100}\b(?:candidate|interview for|discussion with)\b",
+    ),
+    "INTERVIEW_RESCHEDULED": (
+        r"\b(?:your |the )?interview.{0,100}\b(?:rescheduled|moved|postponed)\b",
+        r"\b(?:rescheduled|moved|postponed).{0,100}\b(?:your |the )?interview\b",
+    ),
+    "INTERVIEW_CANCELLED": (
+        r"\b(?:your |the )?interview.{0,80}\b(?:cancelled|canceled|called off)\b",
+        r"\b(?:cancelled|canceled|called off).{0,80}\b(?:your |the )?interview\b",
+    ),
+    "CANDIDATE_REJECTED": (
+        r"\b(?:your application|your candidature|you)\b.{0,100}\b(?:was unsuccessful|not selected|not moving forward|will not be moving forward)\b",
+        r"\bregret to inform you.{0,160}\b(?:not selected|not moving forward|unsuccessful)\b",
+    ),
+}
+
+
+def evidence_entails_transition(status: str, text: str) -> bool:
+    """Return whether a source excerpt actually states the proposed transition."""
+    proposed = str(status or "").upper()
+    source = str(text or "")
+    for pattern in _TRANSITION_ASSERTIONS.get(proposed, ()):
+        for match in re.finditer(pattern, source, re.I | re.S):
+            before = source[max(0, match.start() - 45):match.start()]
+            if re.search(r"\b(?:not|never|no)\b[^.!?\n]{0,35}$", before, re.I):
+                continue
+            if proposed.startswith("OFFER_"):
+                sentence = source[max(0, match.start() - 180):min(len(source), match.end() + 180)]
+                if re.search(
+                    r"\b(?:does not charge|never charges?|not (?:an |a )?(?:offer|commitment)|"
+                    r"not be (?:assumed|treated)|fake|fraudulent)\b",
+                    sentence,
+                    re.I,
+                ):
+                    continue
+            return True
+    return False
+
+
+def asserted_transitions(text: str) -> set[str]:
+    """Extract only transitions backed by an explicit positive assertion."""
+    return {
+        status for status in _TRANSITION_ASSERTIONS
+        if evidence_entails_transition(status, text)
+    }
 
 _QUESTIONNAIRE_FIELDS = (
     "full name", "contact no", "contact number", "email id", "date of birth",
@@ -380,6 +537,7 @@ def classify_context(
     document_type = next((item for item in documents if item != "OTHER"), "NONE" if not documents else "OTHER")
     direct = f"{subject}\n{body}"
     all_text = " ".join([direct] + [str(item.get("text") or "") for item in attachment_rows])
+    assertions = asserted_transitions(all_text)
     questionnaire = _questionnaire(direct)
     question = _is_question(direct)
     job_ad = _is_job_ad(subject, body, sender_email)
@@ -472,6 +630,17 @@ def classify_context(
         lowered,
     )) or _is_assertive_interview_invitation(subject, body)
 
+    # Preserve the stronger structured calendar interpretation. It already
+    # requires interview/round language plus an invitation and schedule; the
+    # schedule never establishes relevance on its own.
+    if interview_confirmed:
+        assertions.add("INTERVIEW_CONFIRMED")
+        assertions.add("INTERVIEW_UPDATE")
+    if interview_rescheduled:
+        assertions.add("INTERVIEW_RESCHEDULED")
+    if interview_cancelled:
+        assertions.add("INTERVIEW_CANCELLED")
+
     # Explicit invitation + schedule semantics or post-selection outcome take precedence over document
     # checklist fields embedded in the same recruiter message.
     if actual_joined or joining_confirmed or offer_received or offer_accepted or selected or final_round_cleared or hr_confirmation or interview_confirmed or interview_rescheduled or interview_cancelled:
@@ -498,6 +667,14 @@ def classify_context(
         intent, summary = "INTERVIEW_CONFIRMATION", "The message explicitly confirms a candidate interview schedule."
     elif actual_joined:
         intent, summary = "ACTUAL_JOINING_CONFIRMATION", "The message explicitly confirms that employment has started."
+    elif "BACKGROUND_VERIFICATION" in assertions:
+        intent, summary = "BACKGROUND_VERIFICATION", "The message explicitly starts or requests this candidate's background verification."
+    elif "DOCUMENT_VERIFICATION" in assertions:
+        intent, summary = "DOCUMENT_VERIFICATION", "The message explicitly requests or confirms this candidate's document verification."
+    elif "POST_SELECTION_ONBOARDING" in assertions:
+        intent, summary = "JOINING_CONFIRMATION", "The message explicitly starts this candidate's pre-joining or onboarding process."
+    elif "CANDIDATE_REJECTED" in assertions:
+        intent, summary = "REJECTION", "The message explicitly states a negative outcome for this candidate."
     elif joining_confirmed:
         intent, summary = "JOINING_CONFIRMATION", "The message confirms a joining arrangement, background verification, or onboarding."
     elif offer_accepted:
@@ -517,6 +694,22 @@ def classify_context(
     if not (questionnaire or job_ad or non_outcome_notice or transactional or question or historical):
         if actual_joined:
             lifecycle = "JOINED"
+        elif "JOINING_DATE_UPDATED" in assertions:
+            lifecycle = "JOINING_DATE_UPDATED"
+        elif "POST_SELECTION_ONBOARDING" in assertions:
+            lifecycle = "POST_SELECTION_ONBOARDING"
+        elif "BACKGROUND_VERIFICATION" in assertions:
+            lifecycle = "BACKGROUND_VERIFICATION"
+        elif "DOCUMENT_VERIFICATION" in assertions:
+            lifecycle = "DOCUMENT_VERIFICATION"
+        elif "APPOINTMENT_LETTER_RECEIVED" in assertions:
+            lifecycle = "APPOINTMENT_LETTER_RECEIVED"
+        elif "OFFER_REVOKED" in assertions:
+            lifecycle = "OFFER_REVOKED"
+        elif "OFFER_DECLINED" in assertions:
+            lifecycle = "OFFER_DECLINED"
+        elif "CANDIDATE_REJECTED" in assertions:
+            lifecycle = "CANDIDATE_REJECTED"
         elif joining_confirmed:
             lifecycle = "JOINING_CONFIRMED"
         elif offer_accepted:
@@ -529,6 +722,14 @@ def classify_context(
             lifecycle = "FINAL_ROUND_CLEARED"
         elif hr_confirmation:
             lifecycle = "HR_CONFIRMATION"
+        else:
+            for asserted in (
+                "FINAL_SELECTION_CONFIRMED", "OFFER_APPROVED", "OFFER_IN_PROGRESS",
+                "COMPENSATION_CONFIRMATION", "OFFER_INDICATION",
+            ):
+                if asserted in assertions:
+                    lifecycle = asserted
+                    break
 
     interview_event = "NONE"
     if not (questionnaire or job_ad or non_outcome_notice or transactional or question or historical):
@@ -538,8 +739,15 @@ def classify_context(
             interview_event = "INTERVIEW_RESCHEDULED"
         elif interview_confirmed:
             interview_event = "INTERVIEW_CONFIRMED"
+    interview_asserted = bool(assertions.intersection({
+        "INTERVIEW_UPDATE", "INTERVIEW_SHORTLISTED", "INTERVIEW_CONFIRMED",
+        "INTERVIEW_RESCHEDULED", "INTERVIEW_CANCELLED",
+    }))
+    non_outcome_context = bool(
+        questionnaire or job_ad or non_outcome_notice or transactional or question or historical
+    )
     business_domain = (
-        "INTERVIEW_TRACKING" if interview_event != "NONE"
+        "INTERVIEW_TRACKING" if interview_event != "NONE" or (interview_asserted and not non_outcome_context)
         else "SELECTION_TRACKING" if lifecycle != "NONE"
         else "NONE"
     )
@@ -558,42 +766,57 @@ def classify_context(
         "lifecycle_event": lifecycle,
         "interview_event": interview_event,
         "business_domain": business_domain,
+        "recruitment_relevance": "ESTABLISHED" if (
+            not non_outcome_context and (lifecycle != "NONE" or interview_event != "NONE" or bool(assertions))
+        ) else "NOT_ESTABLISHED",
+        "asserted_transitions": sorted(assertions),
         "event_reference_date": _event_date(sent_at).isoformat(),
         "evidence_summary": summary,
     }
 
 
+_LIFECYCLE_VALIDATION_REQUIREMENTS: dict[str, set[str]] = {
+    "SELECTED": {"SELECTED"},
+    "FINAL_SELECTION_CONFIRMED": {"FINAL_SELECTION_CONFIRMED"},
+    "FINAL_ROUND_CLEARED": {"FINAL_ROUND_CLEARED"},
+    "OFFER_INDICATION": {"OFFER_INDICATION", "OFFER_RECEIVED", "OFFER_LETTER_RECEIVED"},
+    "OFFER_IN_PROGRESS": {"OFFER_IN_PROGRESS"},
+    "OFFER_APPROVED": {"OFFER_APPROVED"},
+    "OFFER_LETTER_RECEIVED": {"OFFER_LETTER_RECEIVED"},
+    "OFFER_RECEIVED": {"OFFER_RECEIVED", "OFFER_LETTER_RECEIVED", "OFFER_INDICATION"},
+    "APPOINTMENT_LETTER_RECEIVED": {"APPOINTMENT_LETTER_RECEIVED"},
+    "OFFER_ACCEPTED": {"OFFER_ACCEPTED"},
+    "OFFER_DECLINED": {"OFFER_DECLINED"},
+    "OFFER_REVOKED": {"OFFER_REVOKED"},
+    "JOINING_CONFIRMED": {"JOINING_CONFIRMED"},
+    "JOINING_DATE_UPDATED": {"JOINING_DATE_UPDATED"},
+    "JOINED": {"JOINED"},
+    "POST_SELECTION_ONBOARDING": {"POST_SELECTION_ONBOARDING"},
+    "BACKGROUND_VERIFICATION": {"BACKGROUND_VERIFICATION"},
+    "DOCUMENT_VERIFICATION": {"DOCUMENT_VERIFICATION"},
+    "HR_CONFIRMATION": {"HR_CONFIRMATION"},
+    "COMPENSATION_CONFIRMATION": {"COMPENSATION_CONFIRMATION"},
+    "INTERVIEW_UPDATE": {"INTERVIEW_UPDATE", "INTERVIEW_SHORTLISTED", "INTERVIEW_CONFIRMED"},
+    "INTERVIEW_SHORTLISTED": {"INTERVIEW_SHORTLISTED"},
+    "CANDIDATE_REJECTED": {"CANDIDATE_REJECTED"},
+}
+
+
 def validate_lifecycle_event(proposed: str, context: dict[str, Any]) -> tuple[str, str | None]:
-    """Return a safe lifecycle event and a machine-readable rejection reason."""
+    """Fail closed unless an explicit validator proves the proposed transition."""
     status = str(proposed or "NONE").upper()
+    if status == "NONE":
+        return status, None
+    requirements = _LIFECYCLE_VALIDATION_REQUIREMENTS.get(status)
+    if requirements is None:
+        return "NONE", "UNHANDLED_TRACKED_STATUS"
     if any(context.get(key) for key in (
         "is_questionnaire", "is_question", "is_promotional_or_job_ad",
         "is_historical_information",
     )):
         return "NONE", str(context.get("email_intent") or "NON_OUTCOME_CONTEXT")
-    supported = str(context.get("lifecycle_event") or "NONE").upper()
-    if status == "JOINED" and supported != "JOINED":
-        return "NONE", "JOINED_REQUIRES_EXPLICIT_EMPLOYMENT_START"
-    if status == "JOINING_CONFIRMED" and supported != "JOINING_CONFIRMED":
-        return "NONE", "JOINING_CONFIRMATION_NOT_ASSERTED"
-    comparable = {
-        "SELECTED": {"SELECTED", "FINAL_SELECTION_CONFIRMED", "FINAL_ROUND_CLEARED", "SELECTION_CONFIRMATION"},
-        "FINAL_SELECTION_CONFIRMED": {"SELECTED", "FINAL_SELECTION_CONFIRMED", "FINAL_ROUND_CLEARED", "SELECTION_CONFIRMATION"},
-        "FINAL_ROUND_CLEARED": {"SELECTED", "FINAL_SELECTION_CONFIRMED", "FINAL_ROUND_CLEARED", "SELECTION_CONFIRMATION", "INTERVIEW_SHORTLISTED"},
-        "OFFER_INDICATION": {"OFFER_INDICATION", "OFFER_LETTER_RECEIVED", "OFFER_RECEIVED", "OFFER_LETTER", "OFFER_APPROVED", "OFFER_IN_PROGRESS"},
-        "OFFER_LETTER_RECEIVED": {"OFFER_INDICATION", "OFFER_LETTER_RECEIVED", "OFFER_RECEIVED", "OFFER_LETTER", "OFFER_APPROVED"},
-        "OFFER_RECEIVED": {"OFFER_INDICATION", "OFFER_LETTER_RECEIVED", "OFFER_RECEIVED", "OFFER_LETTER", "OFFER_APPROVED"},
-        "APPOINTMENT_LETTER_RECEIVED": {"OFFER_INDICATION", "OFFER_LETTER_RECEIVED", "OFFER_RECEIVED", "OFFER_LETTER"},
-        "OFFER_ACCEPTED": {"OFFER_ACCEPTED", "OFFER_ACCEPTANCE"},
-        "HR_CONFIRMATION": {"HR_CONFIRMATION", "DOCUMENT_VERIFICATION", "COMPENSATION_CONFIRMATION", "SELECTED", "DOCUMENT_SUBMISSION"},
-        "DOCUMENT_VERIFICATION": {"DOCUMENT_VERIFICATION", "HR_CONFIRMATION", "SELECTED", "DOCUMENT_SUBMISSION"},
-        "COMPENSATION_CONFIRMATION": {"COMPENSATION_CONFIRMATION", "HR_CONFIRMATION", "OFFER_LETTER_RECEIVED", "OFFER_RECEIVED"},
-        "JOINING_CONFIRMED": {"JOINING_CONFIRMED", "BACKGROUND_VERIFICATION", "POST_SELECTION_ONBOARDING", "JOINED"},
-        "BACKGROUND_VERIFICATION": {"BACKGROUND_VERIFICATION", "JOINING_CONFIRMED", "POST_SELECTION_ONBOARDING"},
-        "POST_SELECTION_ONBOARDING": {"POST_SELECTION_ONBOARDING", "JOINING_CONFIRMED", "JOINED"},
-        "JOINED": {"JOINED", "JOINING_CONFIRMED"},
-    }
-    if status in comparable and supported not in comparable[status]:
+    asserted = {str(item).upper() for item in context.get("asserted_transitions") or []}
+    if not asserted.intersection(requirements):
         return "NONE", "PROPOSED_EVENT_NOT_SUPPORTED_BY_ASSERTIVE_CONTEXT"
     return status, None
 
@@ -611,6 +834,7 @@ def validate_interview_event(proposed: str, context: dict[str, Any]) -> tuple[st
     )):
         return "NONE", str(context.get("email_intent") or "NON_OUTCOME_CONTEXT")
     supported = str(context.get("interview_event") or "NONE").upper()
-    if supported != status:
+    asserted = {str(item).upper() for item in context.get("asserted_transitions") or []}
+    if supported != status or status not in asserted:
         return "NONE", "INTERVIEW_EVENT_NOT_SUPPORTED_BY_ASSERTIVE_CONTEXT"
     return status, None

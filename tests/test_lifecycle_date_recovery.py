@@ -30,19 +30,19 @@ def selection_result():
     return {
         "schema_version": "selection_offer_event_v1", "is_recruitment_related": True,
         "is_selection_or_offer_related": True, "should_create_review_record": True,
-        "status": "OFFER_LETTER_RECEIVED", "confidence": .95, "ignore_reason": None,
+        "status": "OFFER_INDICATION", "confidence": .95, "ignore_reason": None,
         "candidate": {"name": None, "email": None},
         "company": {"name": None, "domain": None},
         "job": {"title": None, "employment_type": None, "location": None},
         "recruiter": {"name": None, "email": None},
         "interview": {k: None for k in
                       ("date", "time", "timezone", "mode", "round", "location", "meeting_link")},
-        "offer": {"offer_detected": True, "offer_letter_detected": True,
+        "offer": {"offer_detected": True, "offer_letter_detected": False,
                   "appointment_letter_detected": False, "offer_date": None,
                   "offered_ctc": None, "currency": None, "joining_date": None,
                   "offer_expiry_date": None},
         "attachments": [],
-        "evidence": [{"source": "EMAIL_BODY", "meaning": "OFFER_LETTER_RECEIVED",
+        "evidence": [{"source": "EMAIL_BODY", "meaning": "OFFER_INDICATION",
                       "text": "we are pleased to offer you"}],
         "risk_flags": [], "requires_manual_review": False,
         "summary": "Offer letter received.", "recommended_action": "Review.",
@@ -63,7 +63,7 @@ class TestABadOfferDateNoLongerDiscardsTheFinding:
         row = selection_result()
         row["offer"]["offer_date"] = "as per offer letter"
         validate_result(row, MESSAGE)
-        assert row["status"] == "OFFER_LETTER_RECEIVED"
+        assert row["status"] == "OFFER_INDICATION"
         assert row["is_selection_or_offer_related"] is True
 
     def test_the_unreadable_date_is_dropped_not_kept(self):

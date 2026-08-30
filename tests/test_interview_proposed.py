@@ -80,28 +80,33 @@ class TestProposedIsAVisibleStatus:
         assert "INTERVIEW_PROPOSED" in agent.TRACKED_STATUSES
 
 
-class TestDowngradeNeverDeletes:
-    """The core rule: distrust the detail, keep the record."""
+class TestUnsupportedModelInterviewFailsClosed:
+    """A model-only interview conclusion is audit-only, never a lifecycle row."""
 
-    def test_the_downgrade_branch_preserves_the_record(self):
-        import inspect
-        src = inspect.getsource(agent.validate_result)
-        assert 'status="INTERVIEW_PROPOSED"' in src
-        assert "should_create_review_record=True" in src
-        assert "downgraded_from=proposed_status" in src
+    @staticmethod
+    def _unsupported_result():
+        from tests.test_recruitment_mail_agent import interview_result
+        return interview_result()
 
-    def test_the_downgrade_only_applies_to_interview_statuses(self):
-        """A rejected joining/offer claim must still be ignored, not promoted."""
-        import inspect
-        src = inspect.getsource(agent.validate_result)
-        assert 'if safe_status == "NONE" and proposed_status in interview_statuses:' in src
+    def test_unsupported_interview_is_neutral(self):
+        row = self._unsupported_result()
+        agent.validate_result(
+            row,
+            {"subject": "Public live session", "body": "Join today at 03:00 PM IST for 60 minutes."},
+        )
+        assert row["status"] == "IGNORED_NOT_OFFER_RELATED"
+        assert row["should_create_review_record"] is False
+        assert row["backend_transition_validated"] is False
 
-    def test_evidence_and_confidence_are_not_cleared_by_the_downgrade(self):
+    def test_unsupported_interview_never_becomes_proposed(self):
+        row = self._unsupported_result()
+        agent.validate_result(row, {"subject": "Event", "body": "A public event starts at 03:00 PM IST."})
+        assert row["status"] != "INTERVIEW_PROPOSED"
+        assert row["lifecycle_event"] == "NONE"
+
+    def test_the_model_output_remains_available_in_the_decision_trace_layer(self):
         import inspect
-        src = inspect.getsource(agent.validate_result)
-        head = src.split('status="INTERVIEW_PROPOSED"')[1].split("return")[0]
-        assert "evidence" not in head, "downgrade must not touch evidence"
-        assert "confidence" not in head, "downgrade must not touch confidence"
+        assert '"primary_model_result"' in inspect.getsource(agent.analyze)
 
 
 class TestBookingRemainsGated:

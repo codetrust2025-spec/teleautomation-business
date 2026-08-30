@@ -43,11 +43,11 @@ def test_genuine_pre_offer_documents_is_hr_confirmation():
     ctx = classify_context(subject, body, sender_email="recruiter@company.com")
     assert ctx["lifecycle_event"] == "HR_CONFIRMATION"
 
-def test_genuine_bgv_is_joining_confirmed():
+def test_genuine_bgv_is_retained_as_bgv_not_joining_confirmed():
     subject = "Invitation - Digital Employment BGV_RH30116125"
     body = "Dear Gopichand, You have been invited to complete your digital employment background verification process."
     ctx = classify_context(subject, body, sender_email="noreply@digiverifier.com")
-    assert ctx["lifecycle_event"] == "JOINING_CONFIRMED"
+    assert ctx["lifecycle_event"] == "BACKGROUND_VERIFICATION"
 
 def test_genuine_final_round_cleared():
     subject = "EY | L2 | React JS | Reddy Charan M S"

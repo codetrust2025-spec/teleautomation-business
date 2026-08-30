@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import time
+from copy import deepcopy
 from datetime import date, datetime
 from typing import Any
 
@@ -17,6 +18,7 @@ from services.recruitment_semantics import (
     DOCUMENT_TYPES,
     EMAIL_INTENTS,
     classify_context,
+    evidence_entails_transition,
     extract_interview_schedule,
     redact_sensitive_text,
     validate_interview_event,
@@ -555,6 +557,42 @@ SCHEMA = {
 }
 
 
+RELEVANCE_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["decision", "message_kind", "confidence", "evidence", "reason"],
+    "properties": {
+        "decision": {"type": "string", "enum": ["ESTABLISHED", "NOT_ESTABLISHED"]},
+        "message_kind": {
+            "type": "string",
+            "enum": [
+                "RECIPIENT_HIRING_PROCESS", "MARKETING_OR_TRAINING",
+                "NEWSLETTER", "PUBLIC_EVENT", "JOB_ADVERTISEMENT",
+                "GENERAL", "UNKNOWN",
+            ],
+        },
+        "confidence": {"type": "number", "minimum": 0, "maximum": 100},
+        "evidence": {
+            "type": "array",
+            "maxItems": 6,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["source", "text"],
+                "properties": {
+                    "source": {
+                        "type": "string",
+                        "enum": ["EMAIL_SUBJECT", "EMAIL_BODY", "ATTACHMENT", "THREAD_CONTEXT"],
+                    },
+                    "text": {"type": "string", "minLength": 1, "maxLength": 500},
+                },
+            },
+        },
+        "reason": {"type": "string", "maxLength": 1000},
+    },
+}
+
+
 def clean_email(text: str) -> str:
     value = html.unescape(re.sub(r"<[^>]+>", " ", text or ""))
     value = re.split(r"(?im)^\s*(?:on .+ wrote:|from:|unsubscribe|confidentiality notice)", value, maxsplit=1)[0]
@@ -893,6 +931,27 @@ def _evidence_supported(item: dict[str, Any], sources: dict[str, list[str]]) -> 
     return bool(needle) and any(needle in value.casefold() for value in sources.get(str(item.get("source") or ""), []))
 
 
+def _evidence_entails_source_transition(
+    item: dict[str, Any], sources: dict[str, list[str]], status: str,
+) -> bool:
+    """Check entailment in the verbatim quote and its immediate source context."""
+    quote = clean_email(str(item.get("text") or ""))
+    if evidence_entails_transition(status, quote):
+        return True
+    needle = quote.casefold()
+    if not needle:
+        return False
+    for source in sources.get(str(item.get("source") or ""), []):
+        normalized = clean_email(source)
+        position = normalized.casefold().find(needle)
+        if position < 0:
+            continue
+        passage = normalized[max(0, position - 180):position + len(quote) + 180]
+        if evidence_entails_transition(status, passage):
+            return True
+    return False
+
+
 # Unambiguous employer language, mapped to the meaning codes the routing gate
 # recognises.
 #
@@ -1014,7 +1073,11 @@ def _needs_review_status(proposed: str) -> str | None:
     return None
 
 
-def validate_result(value: dict[str, Any], message: dict[str, Any] | None = None, attachments: list[dict[str, Any]] | None = None) -> None:
+def validate_result(
+    value: dict[str, Any], message: dict[str, Any] | None = None,
+    attachments: list[dict[str, Any]] | None = None,
+    *, deterministic_context: dict[str, Any] | None = None,
+) -> None:
     from jsonschema import Draft202012Validator
     # Backward-compatible normalization for v1 responses while the configured
     # model transitions to the canonical lowercase classification contract.
@@ -1023,7 +1086,7 @@ def validate_result(value: dict[str, Any], message: dict[str, Any] | None = None
         raise ValueError("confidence must be between 0 and 100")
     if raw_confidence > 1:
         value["confidence"] = raw_confidence / 100.0
-    context = classify_context(
+    context = deterministic_context or classify_context(
         str((message or {}).get("subject") or ""),
         str((message or {}).get("body") or ""),
         sender_email=str((message or {}).get("sender_email") or ""),
@@ -1128,112 +1191,39 @@ def validate_result(value: dict[str, Any], message: dict[str, Any] | None = None
                 lifecycle_event="NONE",
                 ignore_reason=None,
             )
+    if "MODEL_DISAGREEMENT" in {str(flag).upper() for flag in value.get("risk_flags") or []}:
+        value.update(
+            status="MANUAL_REVIEW_REQUIRED", classification="needs_review",
+            candidate_status="Needs Review", is_selection_or_offer_related=False,
+            should_create_review_record=False, requires_manual_review=True,
+            ignore_reason="MODEL_DISAGREEMENT", validation_status="NEEDS_REVIEW",
+            lifecycle_event="NONE", interview_event="NONE", business_domain="NONE",
+            is_job_outcome=False, is_current_event=False,
+            backend_transition_validated=False,
+            backend_validation_reason="MODEL_DISAGREEMENT",
+        )
+        return
     positive = bool(value["is_selection_or_offer_related"] and value["should_create_review_record"] and value["status"] in TRACKED_STATUSES)
     if not positive:
         value["status"] = "IGNORED_NOT_OFFER_RELATED"
+        value["classification"] = "not_relevant"
+        value["candidate_status"] = "Profile Active"
         value["should_create_review_record"] = False
         value["requires_manual_review"] = False
         value["ignore_reason"] = value.get("ignore_reason") or "AI_NOT_OFFER_RELATED"
         value["validation_status"] = "REJECTED"
         value["lifecycle_event"] = "NONE"
+        value["interview_event"] = "NONE"
+        value["business_domain"] = "NONE"
+        value["is_job_outcome"] = False
+        value["backend_transition_validated"] = False
+        value["backend_validation_reason"] = value["ignore_reason"]
         return
     proposed_status = str(value.get("status") or "").upper()
     if value["status"] in interview_statuses:
         safe_status, rejection_reason = validate_interview_event(value["status"], context)
     else:
         safe_status, rejection_reason = validate_lifecycle_event(value["status"], context)
-    # An independent validator can over-promote an offer letter to
-    # JOINING_CONFIRMED merely because the letter states a future joining date.
-    # Reconciliation historically selected that later stage; the safety layer
-    # then rejected it and demoted the whole message to an untracked review
-    # classification. Preserve the different positive stage that the original
-    # source independently proves instead.
-    supported_status = str(context.get("lifecycle_event") or "NONE").upper()
-    if (
-        safe_status == "NONE"
-        and proposed_status in _ASSERTIVE_EMPLOYMENT_LIFECYCLE
-        and supported_status in _ASSERTIVE_EMPLOYMENT_LIFECYCLE
-    ):
-        recovered_status, _ = validate_lifecycle_event(supported_status, context)
-        if recovered_status != "NONE":
-            safe_status = recovered_status
-            classification = store._STATUS_CLASSIFICATION[safe_status]
-            value.update(
-                status=safe_status,
-                classification=classification,
-                candidate_status=store._CLASSIFICATION_STATUS[classification],
-                normalised_from=proposed_status,
-                normalisation_reason="ASSERTIVE_SOURCE_LIFECYCLE",
-            )
-            offer = value.setdefault("offer", {})
-            if safe_status in _OFFER_FAMILY:
-                offer["offer_detected"] = True
-                offer["offer_letter_detected"] = safe_status == "OFFER_LETTER_RECEIVED"
-                offer["appointment_letter_detected"] = safe_status == "APPOINTMENT_LETTER_RECEIVED"
-
-            # Mail Alerts requires typed evidence when model disagreement keeps
-            # manual review enabled. Add the deterministic source quote with its
-            # canonical meaning while retaining the model evidence for audit.
-            source_decision = prefilter_decision(
-                str((message or {}).get("subject") or ""),
-                str((message or {}).get("body") or ""),
-                str((message or {}).get("sender_name") or ""),
-                str((message or {}).get("sender_email") or ""),
-                attachments,
-                (message or {}).get("thread_context"),
-            )
-            typed_evidence = [
-                item for item in source_decision.get("evidence") or []
-                if str(item.get("meaning") or "").upper() == safe_status
-            ]
-            value["evidence"] = typed_evidence + list(value.get("evidence") or [])
-            rejection_reason = None
-    review_status_for = _needs_review_status(proposed_status)
-    if safe_status == "NONE" and review_status_for:
-        # Same rule as the interview downgrade: the backend may distrust an
-        # offer or joining claim and withhold every side effect, but it must not
-        # delete a valid classification. Confidence and verbatim evidence are
-        # untouched; requires_manual_review keeps it out of any automated path.
-        value.update(
-            status=review_status_for,
-            classification=review_status_for.lower(),
-            candidate_status=("Offer — needs review"
-                              if review_status_for == "OFFER_NEEDS_REVIEW"
-                              else "Joining — needs review"
-                              if review_status_for == "JOINING_NEEDS_REVIEW"
-                              else "Interview — needs review"
-                              if review_status_for == "INTERVIEW_PROPOSED"
-                              else "Selection — needs review"),
-            is_selection_or_offer_related=True,
-            should_create_review_record=True,
-            requires_manual_review=True,
-            lifecycle_event=review_status_for,
-            validation_status="NEEDS_REVIEW",
-            downgraded_from=proposed_status,
-            downgrade_reason=rejection_reason or "OUTCOME_NOT_ASSERTED",
-        )
-        value.pop("ignore_reason", None)
-        return
-    if safe_status == "NONE" and proposed_status in interview_statuses:
-        # A backend semantic check may distrust the *booking detail* of an
-        # interview, but it must not delete a valid classification. Ollama is
-        # the authority on meaning; this layer is the authority on booking
-        # safety. Downgrading keeps the event, the evidence and the confidence
-        # visible for a human, while auto-booking stays gated downstream.
-        value.update(
-            status="INTERVIEW_PROPOSED",
-            classification="interview_proposed",
-            candidate_status="Interview Proposed",
-            is_selection_or_offer_related=True,
-            should_create_review_record=True,
-            requires_manual_review=True,
-            lifecycle_event="INTERVIEW_PROPOSED",
-            validation_status="NEEDS_REVIEW",
-            downgraded_from=proposed_status,
-            downgrade_reason=rejection_reason or "INTERVIEW_DETAIL_NOT_ASSERTIVE",
-        )
-        value.pop("ignore_reason", None)
-        return
     if safe_status == "NONE":
         value.update(
             status="IGNORED_NOT_OFFER_RELATED",
@@ -1248,6 +1238,11 @@ def validate_result(value: dict[str, Any], message: dict[str, Any] | None = None
             is_job_outcome=False,
             evidence_summary=context["evidence_summary"],
             summary=context["evidence_summary"],
+            interview_event="NONE",
+            business_domain="NONE",
+            backend_transition_validated=False,
+            backend_validation_reason=rejection_reason or "OUTCOME_NOT_ASSERTED",
+            downgraded_from=proposed_status,
         )
         return
     is_interview_event = safe_status in interview_statuses
@@ -1272,11 +1267,30 @@ def validate_result(value: dict[str, Any], message: dict[str, Any] | None = None
     # away a correct OFFER_IN_PROGRESS at 95% whose body quote was verbatim,
     # purely because a second item was a paraphrase.
     supported = [item for item in value["evidence"] if _evidence_supported(item, sources)]
-    if not supported:
-        raise ValueError("selection/offer evidence is missing or unsupported")
+    entailing = [
+        item for item in supported
+        if _evidence_entails_source_transition(item, sources, safe_status)
+    ]
+    if not entailing:
+        value.update(
+            status="IGNORED_NOT_OFFER_RELATED", classification="not_relevant",
+            candidate_status="Profile Active", is_selection_or_offer_related=False,
+            should_create_review_record=False, requires_manual_review=False,
+            ignore_reason="EVIDENCE_DOES_NOT_ENTAIL_TRANSITION",
+            validation_status="REJECTED", lifecycle_event="NONE",
+            interview_event="NONE", business_domain="NONE", is_job_outcome=False,
+            is_current_event=False, evidence=supported,
+            backend_transition_validated=False,
+            backend_validation_reason="EVIDENCE_DOES_NOT_ENTAIL_TRANSITION",
+            downgraded_from=proposed_status,
+            summary="Source evidence does not entail the proposed candidate lifecycle transition.",
+        )
+        return
     # Promote unambiguous employer phrasing to a meaning code before the value
     # is persisted, so the routing gate sees a code without being loosened.
-    value["evidence"] = [normalise_evidence_meaning(item) for item in supported]
+    value["evidence"] = [normalise_evidence_meaning(item) for item in entailing]
+    value["backend_transition_validated"] = True
+    value["backend_validation_reason"] = "EXPLICIT_TRANSITION_ENTAILED"
     auto_threshold = max(0.8, min(0.99, float(os.getenv("AI_RECRUITMENT_AUTO_ACCEPT_THRESHOLD", "0.90"))))
     review_threshold = max(0.0, min(1.0, float(os.getenv("OLLAMA_CONFIDENCE_THRESHOLD", "0.75"))))
     if confidence < review_threshold:
@@ -1524,10 +1538,27 @@ def parse_model_json(raw: str) -> dict[str, Any]:
         return json.loads(re.sub(r",\s*([}\]])", r"\1", value[start:end + 1]))
 
 
-CLASSIFIER_PROMPT = """You are TeleAutomation recruitment_email_status_extraction_v3.
-Analyze the complete business meaning of the subject, cleaned body, sender, recipient,
-thread context, and extracted attachment text. Do not classify from a single word.
-Choose the furthest stage that the complete evidence actually confirms.
+RELEVANCE_PROMPT = """You are the recruitment-relevance gate for TeleAutomation.
+Decide only whether the source explicitly describes this recipient's actual hiring or
+recruitment process. Return ESTABLISHED only when the message ties this recipient to a
+real application, interview process, selection, offer, verification, onboarding, or
+joining process. A personalized greeting, a jobs-domain sender, a company name, a
+date/time/timezone, a meeting link, a live session, a clinic, a cohort, or event-like
+structure is never sufficient by itself.
+
+Marketing, training, masterclasses, webinars, newsletters, public events, educational
+sessions, and promotional invitations are NOT_ESTABLISHED unless the source separately
+and explicitly states that this recipient is in an actual hiring process. Do not infer
+recruitment from audience targeting or from skills/career language. Quote only short
+verbatim evidence from the provided source. Return JSON matching the relevance schema."""
+
+
+CLASSIFIER_PROMPT = """You are TeleAutomation recruitment_email_status_extraction_v4.
+A separate relevance gate has already established that this message concerns the
+recipient's actual hiring process. Analyze the complete business meaning of the subject,
+cleaned body, sender, recipient, thread context, and extracted attachment text. Do not
+classify from a single word. Choose the furthest stage that the complete evidence
+actually confirms.
 
 Track employment outcomes and material status updates: SELECTED,
 FINAL_SELECTION_CONFIRMED, OFFER_INDICATION, OFFER_IN_PROGRESS, OFFER_APPROVED,
@@ -1545,8 +1576,12 @@ incomplete applications, recruiter introductions, application acknowledgements,
 marketing, or other non-candidate-specific activity. Interview and rejection mail
 must use their explicit informational classifications, not offer classifications.
 
+An interview classification first requires explicit text saying that this recipient
+has an actual interview/invitation/shortlist in the hiring process. Only after that is
+established may date, time, duration, timezone, meeting link, or event structure refine
+the interview details. Those schedule fields must never create an interview status.
 Use INTERVIEW_CONFIRMED only when a candidate-specific interview has an explicit
-date, 12-hour AM/PM time, and timezone. Use INTERVIEW_RESCHEDULED only when the
+date, time, and timezone. Use INTERVIEW_RESCHEDULED only when the
 message clearly changes an existing interview and includes the new schedule. Use
 INTERVIEW_CANCELLED only for an explicit cancellation. A shortlist without a
 schedule is INTERVIEW_SHORTLISTED or INTERVIEW_UPDATE and must never be confirmed.
@@ -1571,13 +1606,17 @@ and a concise evidence_summary/reason. Never include bank, PAN, Aadhaar, UAN, PF
 or other financial/government identifiers. Return only JSON matching
 selection_offer_event_v1."""
 
-VALIDATOR_PROMPT = """You are the independent validator for a high-impact employment
-outcome classifier. Re-read the complete source independently, then inspect the
-primary model result. Correct false positives and false negatives. In particular,
-shortlist plus an incomplete-application request is not an outcome, while shortlist
-plus a confirmed joining date and post-selection logistics is JOINING_CONFIRMED.
-Return a complete selection_offer_event_v1 JSON result supported by verbatim source
-evidence. Do not defer to the primary result merely because it is present."""
+VALIDATOR_PROMPT = """You are an independent second reader for a high-impact employment
+outcome. You are not given the primary model's conclusion. Re-read the complete source
+and the already-established recruitment-relevance decision, then classify from scratch.
+Date, time, duration, timezone, meeting links, greetings, sender domain, live-session
+structure, and event logistics never establish an interview. They may only refine an
+interview that the source explicitly ties to this recipient's hiring process.
+
+INTERVIEW_SHORTLISTED requires source text showing that this candidate was shortlisted
+or invited into an interview process. A public session schedule is not shortlist
+evidence. Return a complete selection_offer_event_v1 JSON result supported by short
+verbatim source evidence."""
 
 
 def _analysis_payload(message: dict[str, Any], attachment_texts: list[dict[str, str]] | None) -> dict[str, Any]:
@@ -1585,8 +1624,108 @@ def _analysis_payload(message: dict[str, Any], attachment_texts: list[dict[str, 
         "subject": message.get("subject"), "sender_name": message.get("sender_name"),
         "sender_email": message.get("sender_email"), "recipient": message.get("recipient_email"),
         "email_date": str(message.get("sent_at")), "body": clean_email(message.get("body") or ""),
+        "labels": message.get("labels") or message.get("label_ids") or [],
         "thread_context": (message.get("thread_context") or [])[-5:],
         "attachments": attachment_texts or [],
+}
+
+
+def _deterministic_relevance_result(
+    context: dict[str, Any], routing_context: dict[str, Any], payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Return a proven relevance decision, or None when a model must decide."""
+    if str(context.get("recruitment_relevance") or "") != "ESTABLISHED":
+        return None
+    sources = _source_texts(
+        str(payload.get("subject") or ""), str(payload.get("body") or ""),
+        payload.get("attachments") or [], payload.get("thread_context") or [],
+    )
+    evidence = [
+        {"source": item.get("source"), "text": item.get("text")}
+        for item in routing_context.get("evidence") or []
+        if _evidence_supported(item, sources)
+    ]
+    return {
+        "decision": "ESTABLISHED",
+        "message_kind": "RECIPIENT_HIRING_PROCESS",
+        "confidence": 100,
+        "evidence": evidence[:6],
+        "reason": "Deterministic context contains an explicit candidate lifecycle or interview assertion.",
+        "source": "DETERMINISTIC_ASSERTIVE_CONTEXT",
+    }
+
+
+def _validate_relevance_result(value: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    from jsonschema import Draft202012Validator
+
+    errors = list(Draft202012Validator(RELEVANCE_SCHEMA).iter_errors(value))
+    if errors:
+        raise ValueError("invalid recruitment-relevance JSON: " + errors[0].message)
+    sources = _source_texts(
+        str(payload.get("subject") or ""), str(payload.get("body") or ""),
+        payload.get("attachments") or [], payload.get("thread_context") or [],
+    )
+    supported = [
+        item for item in value.get("evidence") or []
+        if _evidence_supported(item, sources)
+    ]
+    value["confidence"] = float(value.get("confidence") or 0) / (
+        100.0 if float(value.get("confidence") or 0) > 1 else 1.0
+    )
+    value["evidence"] = supported
+    if value.get("decision") == "ESTABLISHED" and not supported:
+        value.update(
+            decision="NOT_ESTABLISHED",
+            message_kind="UNKNOWN",
+            reason="The relevance model did not provide source-supported evidence tying the recipient to a hiring process.",
+        )
+    value["source"] = "RELEVANCE_MODEL"
+    return value
+
+
+def _neutral_non_alert_result(
+    message: dict[str, Any], context: dict[str, Any], *, reason: str,
+    status: str = "IGNORED_NOT_OFFER_RELATED", risk_flags: list[str] | None = None,
+) -> dict[str, Any]:
+    classification = "needs_review" if status == "MANUAL_REVIEW_REQUIRED" else "not_relevant"
+    return {
+        "schema_version": "selection_offer_event_v1",
+        "is_recruitment_related": False,
+        "is_selection_or_offer_related": False,
+        "should_create_review_record": False,
+        "status": status,
+        "classification": classification,
+        "candidate_status": "Needs Review" if classification == "needs_review" else "Profile Active",
+        "confidence": 0.0,
+        "ignore_reason": "RECRUITMENT_RELEVANCE_NOT_ESTABLISHED" if classification == "not_relevant" else "MODEL_DISAGREEMENT",
+        "candidate": {"name": None, "email": message.get("recipient_email")},
+        "company": {"name": None, "domain": None},
+        "job": {"title": None, "employment_type": None, "location": None},
+        "recruiter": {"name": message.get("sender_name"), "email": message.get("sender_email")},
+        "interview": {key: None for key in ("date", "time", "end_time", "duration_minutes", "timezone", "mode", "round", "location", "meeting_link")},
+        "offer": {
+            "offer_detected": False, "offer_letter_detected": False,
+            "appointment_letter_detected": False, "offer_date": None,
+            "offered_ctc": None, "currency": None, "joining_date": None,
+            "offer_expiry_date": None,
+        },
+        "attachments": [], "evidence": [], "risk_flags": risk_flags or [],
+        "requires_manual_review": status == "MANUAL_REVIEW_REQUIRED",
+        "summary": reason, "reason": reason,
+        "recommended_action": "Review the source manually; no lifecycle transition or alert was created." if status == "MANUAL_REVIEW_REQUIRED" else "No action required.",
+        "email_intent": context.get("email_intent") or "UNKNOWN",
+        "document_type": context.get("document_type") or "NONE",
+        "is_candidate_specific": bool(context.get("is_candidate_specific")),
+        "is_job_outcome": False, "is_current_event": False,
+        "is_questionnaire": bool(context.get("is_questionnaire")),
+        "is_promotional_or_job_ad": bool(context.get("is_promotional_or_job_ad")),
+        "is_historical_information": bool(context.get("is_historical_information")),
+        "historical_employment_evidence": bool(context.get("historical_employment_evidence")),
+        "lifecycle_event": "NONE", "interview_event": "NONE", "business_domain": "NONE",
+        "evidence_summary": reason,
+        "validation_status": "NEEDS_REVIEW" if status == "MANUAL_REVIEW_REQUIRED" else "REJECTED",
+        "ai_status": "ANALYZED",
+        "backend_transition_validated": False,
     }
 
 
@@ -1712,34 +1851,33 @@ def _reconcile_model_results(primary: dict[str, Any], validator: dict[str, Any])
     validator_positive = bool(validator.get("is_selection_or_offer_related") and validator.get("status") in TRACKED_STATUSES)
     same = primary_positive == validator_positive and primary.get("status") == validator.get("status")
     if same:
-        chosen = dict(validator)
+        chosen = deepcopy(validator)
         chosen["confidence"] = min(primary_confidence, validator_confidence)
         chosen["model_validation"] = {"agreed": True, "primary_status": primary.get("status"), "validator_status": validator.get("status")}
         return chosen
-    if not primary_positive and not validator_positive:
-        chosen = dict(validator)
-        chosen["model_validation"] = {"agreed": False, "primary_status": primary.get("status"), "validator_status": validator.get("status")}
-        return chosen
-    if validator_positive:
-        # The independent validator is specifically used to recover semantic
-        # false negatives and resolve difficult stage wording. Keep its exact
-        # outcome, but require administrator review when the models disagree.
-        chosen = dict(validator)
-        chosen["requires_manual_review"] = True
-        chosen["risk_flags"] = list(dict.fromkeys((chosen.get("risk_flags") or []) + ["MODEL_DISAGREEMENT"]))
-        chosen["model_validation"] = {"agreed": False, "primary_status": primary.get("status"), "validator_status": validator.get("status")}
-        return chosen
-    positive = validator if validator_positive else primary
-    chosen = dict(positive)
+    # A second reader is evidence, not an override authority. Any unresolved
+    # disagreement becomes an audit-only manual result with no lifecycle event;
+    # in particular a positive validator can no longer create an alert after a
+    # negative or different primary conclusion.
+    chosen = deepcopy(primary)
     chosen["status"] = "MANUAL_REVIEW_REQUIRED"
     chosen["is_recruitment_related"] = True
-    chosen["is_selection_or_offer_related"] = True
-    chosen["should_create_review_record"] = True
+    chosen["is_selection_or_offer_related"] = False
+    chosen["should_create_review_record"] = False
     chosen["requires_manual_review"] = True
-    positive_confidence = float(positive.get("confidence") or 0)
-    if positive_confidence > 1: positive_confidence /= 100.0
-    chosen["confidence"] = min(positive_confidence, 0.89)
+    chosen["classification"] = "needs_review"
+    chosen["candidate_status"] = "Needs Review"
+    chosen["ignore_reason"] = "MODEL_DISAGREEMENT"
+    chosen["lifecycle_event"] = "NONE"
+    chosen["interview_event"] = "NONE"
+    chosen["business_domain"] = "NONE"
+    chosen["is_job_outcome"] = False
+    chosen["is_current_event"] = False
+    chosen["evidence"] = []
+    chosen["confidence"] = min(primary_confidence, validator_confidence, 0.89)
     chosen["risk_flags"] = list(dict.fromkeys((chosen.get("risk_flags") or []) + ["MODEL_DISAGREEMENT"]))
+    chosen["reason"] = "Primary and independent validator disagree; no lifecycle transition was accepted."
+    chosen["summary"] = chosen["reason"]
     chosen["model_validation"] = {"agreed": False, "primary_status": primary.get("status"), "validator_status": validator.get("status")}
     return chosen
 
@@ -1799,22 +1937,33 @@ def normalise_shortlist_status(value: dict[str, Any], message: dict[str, Any] | 
     haystack = " ".join(str(part or "").lower() for part in (
         (message or {}).get("subject"), (message or {}).get("body"),
     ))
-    stated = any(phrase in haystack for phrase in _SHORTLIST_EVIDENCE_PHRASES)
+    stated = evidence_entails_transition("INTERVIEW_SHORTLISTED", haystack)
+    entailing_evidence = any(
+        evidence_entails_transition("INTERVIEW_SHORTLISTED", str(item.get("text") or ""))
+        for item in value.get("evidence") or []
+    )
     # Both the model's own label and the wording in the mail must agree, so a
     # merely ambiguous recruitment update stays in manual review.
-    if label not in _SHORTLIST_CANDIDATE_STATUSES or not stated:
+    if label not in _SHORTLIST_CANDIDATE_STATUSES or not stated or not entailing_evidence:
         return False
 
     value["status"] = "INTERVIEW_SHORTLISTED"
     value["is_selection_or_offer_related"] = True
     value["should_create_review_record"] = True
     value["requires_manual_review"] = False
+    value["backend_transition_validated"] = True
+    value["backend_validation_reason"] = "EXPLICIT_INTERVIEW_SHORTLIST_ENTAILED"
     value["shortlist_normalised_from"] = status
     return True
 
 
 def analyze(message: dict[str, Any], attachment_texts: list[dict[str, str]] | None = None) -> tuple[dict[str, Any], str, int]:
     payload = _analysis_payload(message, attachment_texts)
+    deterministic_context = classify_context(
+        str(message.get("subject") or ""), str(message.get("body") or ""),
+        sender_email=str(message.get("sender_email") or ""),
+        sent_at=message.get("sent_at"), attachments=attachment_texts,
+    )
     routing_context = routing_decision(
         message.get("subject", ""), message.get("body", ""),
         message.get("sender_name", ""), message.get("sender_email", ""),
@@ -1840,11 +1989,12 @@ def analyze(message: dict[str, Any], attachment_texts: list[dict[str, str]] | No
         *, messages: list[dict[str, Any]], model: str,
         max_retries: int | None = None, allow_fallback: bool = True,
         workload: str = "recruitment_mail_classification",
+        output_schema: dict[str, Any] = SCHEMA,
     ):
         """Use the lightweight fallback when the configured runner cannot serve."""
         try:
             return chat_structured(
-                messages=messages, schema=SCHEMA, model=model, max_retries=max_retries,
+                messages=messages, schema=output_schema, model=model, max_retries=max_retries,
                 timeout=remaining_timeout(),
                 deadline_monotonic=deadline,
                 workload=workload,
@@ -1862,15 +2012,81 @@ def analyze(message: dict[str, Any], attachment_texts: list[dict[str, str]] | No
                 model, fallback, exc.code,
             )
             return chat_structured(
-                messages=messages, schema=SCHEMA, model=fallback, max_retries=0,
+                messages=messages, schema=output_schema, model=fallback, max_retries=0,
                 timeout=remaining_timeout(),
                 deadline_monotonic=deadline,
                 workload=f"{workload}_fallback",
             )
 
     try:
+        relevance = _deterministic_relevance_result(
+            deterministic_context, routing_context, payload,
+        )
+        relevance_model = None
+        relevance_duration = 0
+        if relevance is None:
+            relevance_response = request_model(
+                messages=[
+                    {"role": "system", "content": RELEVANCE_PROMPT},
+                    {"role": "user", "content": _prompt_json(payload)},
+                ],
+                model=models["primary"], max_retries=0,
+                workload="recruitment_mail_relevance",
+                output_schema=RELEVANCE_SCHEMA,
+            )
+            try:
+                relevance = _validate_relevance_result(
+                    parse_model_json(relevance_response.content), payload,
+                )
+            except (ValueError, json.JSONDecodeError):
+                relevance_response = request_model(
+                    messages=[
+                        {"role": "system", "content": RELEVANCE_PROMPT + " Return valid JSON only; no markdown or commentary."},
+                        {"role": "user", "content": _prompt_json(payload)},
+                    ],
+                    model=relevance_response.model, max_retries=0,
+                    workload="recruitment_mail_relevance_json_repair",
+                    output_schema=RELEVANCE_SCHEMA,
+                )
+                try:
+                    relevance = _validate_relevance_result(
+                        parse_model_json(relevance_response.content), payload,
+                    )
+                except (ValueError, json.JSONDecodeError) as exc:
+                    raise AIGatewayError(
+                        "Ollama returned invalid recruitment-relevance JSON after one repair retry.",
+                        code="OLLAMA_INVALID_JSON",
+                    ) from exc
+            relevance_model = relevance_response.model
+            relevance_duration = relevance_response.duration_ms
+            relevance["model"] = relevance_model
+
+        if relevance.get("decision") != "ESTABLISHED":
+            result = _neutral_non_alert_result(
+                message, deterministic_context,
+                reason=str(relevance.get("reason") or "Recruitment relevance was not established."),
+            )
+            result.update(
+                primary_status=result["status"], classification_source="OLLAMA_RELEVANCE_GATE",
+                ai_validation_status="VALIDATED",
+                recruitment_relevance_result=deepcopy(relevance),
+            )
+            result["_decision_trace"] = {
+                "deterministic_context": {
+                    "semantic_context": deepcopy(deterministic_context),
+                    "routing_context": deepcopy(routing_context),
+                },
+                "recruitment_relevance_result": deepcopy(relevance),
+                "primary_model_result": None,
+                "validator_model_result": None,
+                "reconciled_result": None,
+                "backend_validated_final_result": deepcopy(result),
+            }
+            return result, f"relevance:{relevance_model or 'deterministic'}", relevance_duration
+
+        classifier_input = {"source": payload, "recruitment_relevance": relevance}
         primary_response = request_model(
-            messages=[{"role": "system", "content": CLASSIFIER_PROMPT}, {"role": "user", "content": _prompt_json(payload)}],
+            messages=[{"role": "system", "content": CLASSIFIER_PROMPT}, {"role": "user", "content": _prompt_json(classifier_input)}],
             model=models["primary"],
             max_retries=0,
             workload="recruitment_mail_primary",
@@ -1881,7 +2097,7 @@ def analyze(message: dict[str, Any], attachment_texts: list[dict[str, str]] | No
             # One bounded repair retry with an explicit JSON-only instruction.
             repair_response = request_model(
                 messages=[{"role": "system", "content": CLASSIFIER_PROMPT + " Return valid JSON only; no markdown or commentary."},
-                          {"role": "user", "content": _prompt_json(payload)}],
+                          {"role": "user", "content": _prompt_json(classifier_input)}],
                 model=primary_response.model, max_retries=0,
                 workload="recruitment_mail_primary_json_repair",
             )
@@ -1891,12 +2107,15 @@ def analyze(message: dict[str, Any], attachment_texts: list[dict[str, str]] | No
             except (ValueError, json.JSONDecodeError) as exc:
                 raise AIGatewayError("Ollama returned malformed classification JSON after one repair retry.", code="OLLAMA_INVALID_JSON") from exc
         logger.info("Ollama response JSON extracted for recruitment classification")
+        primary_model_result = deepcopy(primary)
         result = primary
         model_label = primary_response.model
-        duration = primary_response.duration_ms
+        duration = relevance_duration + primary_response.duration_ms
+        validator = None
+        validator_model_result = None
         if _requires_independent_validation(primary, routing_context):
             validator_response = request_model(
-                messages=[{"role": "system", "content": VALIDATOR_PROMPT}, {"role": "user", "content": _prompt_json({"source": payload, "primary_result": primary})}],
+                messages=[{"role": "system", "content": VALIDATOR_PROMPT}, {"role": "user", "content": _prompt_json(classifier_input)}],
                 model=models["validator"],
                 max_retries=0,
                 allow_fallback=False,
@@ -1907,7 +2126,7 @@ def analyze(message: dict[str, Any], attachment_texts: list[dict[str, str]] | No
             except (ValueError, json.JSONDecodeError):
                 validator_response = request_model(
                     messages=[{"role": "system", "content": VALIDATOR_PROMPT + " Return valid JSON only; no markdown or commentary."},
-                              {"role": "user", "content": _prompt_json({"source": payload, "primary_result": primary})}],
+                              {"role": "user", "content": _prompt_json(classifier_input)}],
                     model=validator_response.model, max_retries=0, allow_fallback=False,
                     workload="recruitment_mail_validator_json_repair",
                 )
@@ -1915,11 +2134,16 @@ def analyze(message: dict[str, Any], attachment_texts: list[dict[str, str]] | No
                     validator = parse_model_json(validator_response.content)
                 except (ValueError, json.JSONDecodeError) as exc:
                     raise AIGatewayError("Ollama validator returned malformed JSON after one repair retry.", code="OLLAMA_INVALID_JSON") from exc
+            validator_model_result = deepcopy(validator)
             result = _reconcile_model_results(primary, validator)
             model_label = f"{primary_response.model}|validator:{validator_response.model}"
             duration += validator_response.duration_ms
+        reconciled = deepcopy(result)
         try:
-            validate_result(result, message, attachment_texts)
+            validate_result(
+                result, message, attachment_texts,
+                deterministic_context=deterministic_context,
+            )
         except ValueError as exc:
             raise AIGatewayError(f"Ollama response failed schema validation: {exc}", code="OLLAMA_SCHEMA_VALIDATION_FAILED") from exc
         logger.info("Ollama recruitment response schema validated")
@@ -1927,6 +2151,18 @@ def analyze(message: dict[str, Any], attachment_texts: list[dict[str, str]] | No
         result["primary_status"] = result["status"]
         result["classification_source"] = "OLLAMA"
         result["ai_validation_status"] = "VALIDATED"
+        result["recruitment_relevance_result"] = deepcopy(relevance)
+        result["_decision_trace"] = {
+            "deterministic_context": {
+                "semantic_context": deepcopy(deterministic_context),
+                "routing_context": deepcopy(routing_context),
+            },
+            "recruitment_relevance_result": deepcopy(relevance),
+            "primary_model_result": primary_model_result,
+            "validator_model_result": validator_model_result,
+            "reconciled_result": reconciled,
+            "backend_validated_final_result": deepcopy(result),
+        }
         return result, model_label, duration
     except AIGatewayError:
         raise
@@ -2082,6 +2318,20 @@ def process_message(mailbox: dict[str, Any], decoded: dict[str, Any], attachment
         result = _failure_review_result(decoded, RuntimeError("Critical employment attachment extraction failed"))
         result["reason"] = "A potentially important employment attachment could not be extracted"
         result["risk_flags"] = ["ATTACHMENT_EXTRACTION_FAILED"]
+    if str(result.get("classification_source") or "").upper() == "OLLAMA":
+        relevance = result.get("recruitment_relevance_result") or {}
+        if (
+            str(relevance.get("decision") or "").upper() != "ESTABLISHED"
+            or result.get("backend_transition_validated") is not True
+        ):
+            result.update(
+                is_selection_or_offer_related=False,
+                should_create_review_record=False,
+                is_job_outcome=False,
+                lifecycle_event="NONE",
+                interview_event="NONE",
+                business_domain="NONE",
+            )
     if job_board_notification(decoded.get("sender_email", "")):
         # Marked not-relevant so it takes the existing ignore path: no event, no
         # lifecycle status, no notification. The analysis is still recorded, so
