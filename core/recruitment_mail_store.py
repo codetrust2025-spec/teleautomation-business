@@ -1760,7 +1760,10 @@ def list_realtime_events(*, after_id: str | None = None, limit: int = 100) -> li
         return _rows(cur)
 
 
-def list_notifications(*, filters: dict[str, Any] | None = None, limit: int = 50, offset: int = 0) -> tuple[list[dict[str, Any]], int]:
+def list_notifications(
+    *, filters: dict[str, Any] | None = None, limit: int = 50, offset: int = 0,
+    group_by_candidate: bool = False,
+) -> tuple[list[dict[str, Any]], int]:
     filters = filters or {}
     rows_clause, rows_params = visible_rows_sql()
     where: list[str] = [rows_clause]
@@ -1823,10 +1826,44 @@ def list_notifications(*, filters: dict[str, Any] | None = None, limit: int = 50
         where.append("created_at::date<=%s"); params.append(filters['date_to'])
     clause = " AND ".join(where)
     order = "ASC" if str(filters.get("sort") or "").lower() == "oldest" else "DESC"
+    page = max(1, min(limit, 100))
+    skip = max(0, offset)
     with get_connection() as conn, conn.cursor() as cur:
+        if group_by_candidate:
+            # The page unit becomes the candidate rather than the row.
+            #
+            # Grouping the twenty rows of an ordinary page in the browser would
+            # have been less code, but a candidate whose alerts straddle a page
+            # boundary would then be drawn as two separate groups on two pages,
+            # which is the exact thing the grouped view exists to stop. So the
+            # page of candidates is chosen first and every matching row those
+            # candidates hold is returned - no mail is dropped or collapsed,
+            # and `total` counts candidates because that is what is paged.
+            cur.execute(
+                f"SELECT count(DISTINCT candidate_id) FROM mail_monitoring_notifications WHERE {clause}",
+                params,
+            )
+            total = int(cur.fetchone()[0])
+            cur.execute(
+                f"""SELECT candidate_id FROM mail_monitoring_notifications WHERE {clause}
+                     GROUP BY candidate_id ORDER BY max(created_at) {order}, candidate_id
+                     LIMIT %s OFFSET %s""",
+                params + [page, skip],
+            )
+            candidate_ids = [row[0] for row in cur.fetchall()]
+            if not candidate_ids:
+                return [], total
+            placeholders = ", ".join("%s" for _ in candidate_ids)
+            cur.execute(
+                f"""SELECT * FROM mail_monitoring_notifications
+                     WHERE {clause} AND candidate_id IN ({placeholders})
+                     ORDER BY created_at {order}""",
+                params + candidate_ids,
+            )
+            return _rows(cur), total
         cur.execute(f"SELECT count(*) FROM mail_monitoring_notifications WHERE {clause}", params)
         total = int(cur.fetchone()[0])
-        cur.execute(f"SELECT * FROM mail_monitoring_notifications WHERE {clause} ORDER BY created_at {order} LIMIT %s OFFSET %s", params + [max(1,min(limit,100)),max(0,offset)])
+        cur.execute(f"SELECT * FROM mail_monitoring_notifications WHERE {clause} ORDER BY created_at {order} LIMIT %s OFFSET %s", params + [page, skip])
         rows = _rows(cur)
     return rows, total
 

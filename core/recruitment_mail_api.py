@@ -475,7 +475,7 @@ def install_recruitment_mail_routes(app):
         priority:str|None=None, is_read:bool|None=None, is_reviewed:bool|None=None,
         confidence_min:float|None=None, confidence_max:float|None=None,
         date_from:date|None=None, date_to:date|None=None, sort:str='newest',
-        limit:int=50, offset:int=0,
+        group_by:str|None=None, limit:int=50, offset:int=0,
     ):
         _guard();require_fleet_admin(request)
         filters={
@@ -486,9 +486,15 @@ def install_recruitment_mail_routes(app):
             'confidence_min':confidence_min,'confidence_max':confidence_max,
             'date_from':date_from,'date_to':date_to,'sort':sort,
         }
-        rows,total=await asyncio.to_thread(store.list_notifications,filters=filters,limit=limit,offset=offset)
+        # group_by=candidate makes the page unit the candidate, so the grouped
+        # Selection view can show every mail a candidate has without one of
+        # them falling onto the next page. Any other value is ignored rather
+        # than rejected: an unknown grouping should degrade to the flat list,
+        # not empty the screen.
+        grouped=str(group_by or '').strip().lower()=='candidate'
+        rows,total=await asyncio.to_thread(store.list_notifications,filters=filters,limit=limit,offset=offset,group_by_candidate=grouped)
         response.headers['Cache-Control']='no-store, max-age=0'
-        return {'status':'ok','notifications':rows,'total':total,'limit':min(max(limit,1),100),'offset':max(offset,0)}
+        return {'status':'ok','notifications':rows,'total':total,'grouped_by':'candidate' if grouped else None,'limit':min(max(limit,1),100),'offset':max(offset,0)}
 
     @app.get('/api/mail-monitoring/candidates')
     async def mail_notification_candidates(request:Request,response:Response):
