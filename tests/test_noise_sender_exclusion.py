@@ -61,6 +61,11 @@ class TestNoiseIsStoppedBeforeInference:
         "noreply@jobrapido.com",
         "alerts@instahyre.com",
         "info@hirist.tech",
+        # LinkedIn broadcast mailboxes. updates-noreply produced a
+        # joining_confirmed on a job posting during the July sweep.
+        "updates-noreply@linkedin.com",
+        "newsletters-noreply@linkedin.com",
+        "invitations-noreply@linkedin.com",
     ])
     def test_it_never_reaches_the_model(self, sender):
         assert job_board_notification(sender) is True
@@ -102,6 +107,7 @@ class TestEmployersAndATSAreUntouched:
 
     @pytest.mark.parametrize("sender,why", [
         ("careers@google.com", "Google's own recruiting mail comes from here"),
+        ("inmail-hit-reply@linkedin.com", "a recruiter's InMail is a real conversation"),
         ("noreply@e.read.ai", "carries interview meeting notes"),
         ("noreply@clickup.com", "seen carrying an Analytics Engineer application"),
         ("hello@outlier.ai", "a work-platform invitation, not marketing"),

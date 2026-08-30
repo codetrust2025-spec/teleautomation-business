@@ -405,6 +405,16 @@ _SERVICE_NOISE_DOMAINS = (
 _JOB_BOARD_ADDRESSES = _JOB_BOARD_SENDERS + (
     "notifications-noreply@linkedin.com",
     "messages-noreply@linkedin.com",
+    # updates-noreply reached the classifier during the July sweep and a
+    # ScienceLogic job posting came back joining_confirmed. These are all
+    # LinkedIn's own broadcast mailboxes; none of them carries a person
+    # writing to this candidate. inmail-hit-reply is deliberately absent,
+    # because that one does.
+    "updates-noreply@linkedin.com",
+    "newsletters-noreply@linkedin.com",
+    "invitations-noreply@linkedin.com",
+    "jobs-noreply@linkedin.com",
+    "groups-noreply@linkedin.com",
 )
 
 
