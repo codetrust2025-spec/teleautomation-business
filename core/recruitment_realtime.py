@@ -60,6 +60,7 @@ async def _broadcast_recorded(event: dict[str, Any]) -> None:
         "event_id": event_id,
         **(event.get("payload") or {}),
         "created_at": str(event.get("created_at") or ""),
+        "delivery_source": "live",
     })
     # Mark only after the coroutine actually ran. Previously publish() marked
     # the row before scheduling this work, so a closing loop could make the
@@ -186,6 +187,7 @@ async def _tail_events(poll_seconds: float = 2.0) -> None:
                     "event_id": row["id"],
                     **(row.get("payload") or {}),
                     "created_at": str(row.get("created_at") or ""),
+                    "delivery_source": "live",
                 })
                 _mark_delivered(row["id"])
         except asyncio.CancelledError:

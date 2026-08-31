@@ -44,6 +44,7 @@ def test_mail_websocket_auth_ping_reconnect_and_cleanup(monkeypatch):
         replay = websocket.receive_json()
         assert replay["event"] == "mail.updated"
         assert replay["event_id"] == "event-2"
+        assert replay["delivery_source"] == "replay"
         websocket.send_json({"type": "ping"})
         assert websocket.receive_json()["event"] == "pong"
         assert recruitment_realtime.connection_count() == baseline + 1

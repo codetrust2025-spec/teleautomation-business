@@ -583,7 +583,7 @@ def install_recruitment_mail_routes(app):
             if last_id:
                 missed=await asyncio.to_thread(store.list_realtime_events,after_id=last_id,limit=200)
                 for item in missed:
-                    await websocket.send_json({'event':item['event_type'],'event_id':item['id'],**(item.get('payload') or {}),'created_at':str(item.get('created_at') or '')})
+                    await websocket.send_json({'event':item['event_type'],'event_id':item['id'],**(item.get('payload') or {}),'created_at':str(item.get('created_at') or ''),'delivery_source':'replay'})
             while True:
                 current_profile=dash_auth.operator_profile_from_cookies(dict(websocket.cookies))
                 if not dash_auth.is_admin_profile(current_profile):

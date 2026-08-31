@@ -19,7 +19,12 @@ export function GlobalNotificationSounds() {
   useEffect(() => {
     if (!authenticated) return undefined
     return subscribeMailEvents((payload, meta) => {
-      if (meta?.fromSocket && notifyTrackedMail(payload)) traceMailAlert('sound', payload)
+      if (!meta?.fromSocket) return
+      if (payload?.event === 'notification_created' && payload?.delivery_source === 'replay') {
+        traceMailAlert('sound_suppressed_replay', payload)
+        return
+      }
+      if (notifyTrackedMail(payload)) traceMailAlert('sound', payload)
     })
   }, [authenticated])
 

@@ -39,10 +39,12 @@ const trace = []
 export function traceMailAlert(stage, payload = {}, extra = {}) {
   const record = {
     stage,
+    event: payload?.event || null,
     notification_id: payload?.notification_id || null,
     event_id: payload?.event_id || null,
     provider_message_id: payload?.provider_message_id || null,
     classification: payload?.classification || null,
+    delivery_source: payload?.delivery_source || 'live',
     at: new Date().toISOString(),
     ...extra,
   }
