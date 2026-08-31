@@ -253,24 +253,28 @@ def mailboxes_for_candidates(candidate_ids: list[str]) -> list[dict[str, Any]]:
     return unique
 
 
+def _mailbox_health_rows(cur) -> list[dict[str, Any]]:
+    cur.execute(
+        """SELECT m.id,m.candidate_id,
+                  COALESCE(l.canonical_candidate_id,m.candidate_id)
+                    AS canonical_candidate_id,
+                  m.email_address,m.connection_status,
+                  m.monitoring_enabled,m.last_error_code,m.last_error_message,
+                  m.last_successful_sync_at,m.updated_at
+           FROM candidate_mailboxes m
+           LEFT JOIN candidate_identity_links l
+             ON l.alias_candidate_id=m.candidate_id
+           WHERE m.credential_ciphertext IS NOT NULL
+             AND m.connection_status <> 'SUPERSEDED'
+           ORDER BY m.updated_at DESC""",
+    )
+    return _rows(cur)
+
+
 def mailbox_health_rows() -> list[dict[str, Any]]:
     """Return credential-free mailbox state for lightweight health polling."""
     with get_connection() as conn, conn.cursor() as cur:
-        cur.execute(
-            """SELECT m.id,m.candidate_id,
-                      COALESCE(l.canonical_candidate_id,m.candidate_id)
-                        AS canonical_candidate_id,
-                      m.email_address,m.connection_status,
-                      m.monitoring_enabled,m.last_error_code,m.last_error_message,
-                      m.last_successful_sync_at,m.updated_at
-               FROM candidate_mailboxes m
-               LEFT JOIN candidate_identity_links l
-                 ON l.alias_candidate_id=m.candidate_id
-               WHERE m.credential_ciphertext IS NOT NULL
-                 AND m.connection_status <> 'SUPERSEDED'
-               ORDER BY m.updated_at DESC""",
-        )
-        return _rows(cur)
+        return _mailbox_health_rows(cur)
 
 
 def mailbox_overview_rows() -> list[dict[str, Any]]:
@@ -280,11 +284,89 @@ def mailbox_overview_rows() -> list[dict[str, Any]]:
     loaded up to 500 candidates and then called the single-candidate mailbox
     endpoint once per candidate, which made the initial render depend on
     hundreds of HTTP round trips.
+
+    Keep the server-side implementation bulk as well.  Opening one PostgreSQL
+    connection and running three queries per mailbox made this endpoint issue
+    37 sequential connections for 18 production mailboxes.  The UI polls this
+    view while a sync is active, so those requests overlapped and starved the
+    single API worker.  Four set-oriented queries on one connection keep the
+    cost bounded as the mailbox count grows.
     """
-    return [
-        {"mailbox": mailbox, "stats": mailbox_stats(str(mailbox["id"]))}
-        for mailbox in mailbox_health_rows()
-    ]
+    with get_connection() as conn, conn.cursor() as cur:
+        mailboxes = _mailbox_health_rows(cur)
+        mailbox_ids = [str(mailbox["id"]) for mailbox in mailboxes]
+        if not mailbox_ids:
+            return []
+
+        predicate, params = qualified_event_sql("e")
+        cur.execute(
+            f"""SELECT m.mailbox_id,
+              count(*) FILTER(WHERE {predicate}) important_emails,
+              count(*) FILTER(WHERE e.primary_status IN('SELECTED','FINAL_SELECTION_CONFIRMED') AND {predicate}) selection_events,
+              count(*) FILTER(WHERE e.primary_status IN('OFFER_INDICATION','OFFER_IN_PROGRESS','OFFER_APPROVED','OFFER_LETTER_RECEIVED','APPOINTMENT_LETTER_RECEIVED','OFFER_ACCEPTED') AND {predicate}) offer_events,
+              count(*) FILTER(WHERE e.primary_status='OFFER_LETTER_RECEIVED' AND {predicate}) offer_letters
+              FROM mailbox_messages m
+              LEFT JOIN ai_recruitment_events e ON e.mailbox_message_id=m.id
+              WHERE m.mailbox_id=ANY(%s)
+              GROUP BY m.mailbox_id""",
+            params * 4 + [mailbox_ids],
+        )
+        event_stats = {str(row["mailbox_id"]): row for row in _rows(cur)}
+
+        cur.execute(
+            """SELECT gmail_account_id AS mailbox_id,count(*) AS pending_reviews
+              FROM mail_monitoring_notifications
+              WHERE gmail_account_id=ANY(%s)
+                AND priority='review_required'
+                AND NOT is_reviewed
+                AND dismissed_at IS NULL
+                AND COALESCE(booking_status,'') <> 'Historical Skipped'
+              GROUP BY gmail_account_id""",
+            (mailbox_ids,),
+        )
+        pending_reviews = {
+            str(row["mailbox_id"]): int(row["pending_reviews"] or 0)
+            for row in _rows(cur)
+        }
+
+        cur.execute(
+            """SELECT DISTINCT ON (mailbox_id)
+              mailbox_id,id,status,job_type,created_at,started_at,completed_at,
+              messages_fetched,messages_processed,events_detected,error_message
+              FROM mailbox_sync_jobs
+              WHERE mailbox_id=ANY(%s)
+              ORDER BY mailbox_id,created_at DESC""",
+            (mailbox_ids,),
+        )
+        latest_jobs = {str(row["mailbox_id"]): row for row in _rows(cur)}
+
+    result = []
+    for mailbox in mailboxes:
+        mailbox_id = str(mailbox["id"])
+        aggregate = event_stats.get(mailbox_id) or {}
+        stats = {
+            "important_emails": int(aggregate.get("important_emails") or 0),
+            "selection_events": int(aggregate.get("selection_events") or 0),
+            "offer_events": int(aggregate.get("offer_events") or 0),
+            "offer_letters": int(aggregate.get("offer_letters") or 0),
+            "pending_reviews": pending_reviews.get(mailbox_id, 0),
+        }
+        job = latest_jobs.get(mailbox_id)
+        if job:
+            stats.update({
+                "latest_sync_job_id": job.get("id"),
+                "latest_sync_status": job.get("status"),
+                "latest_sync_job_type": job.get("job_type") or "INCREMENTAL_SYNC",
+                "latest_sync_created_at": job.get("created_at"),
+                "latest_sync_started_at": job.get("started_at"),
+                "latest_sync_completed_at": job.get("completed_at"),
+                "latest_sync_messages_fetched": job.get("messages_fetched") or 0,
+                "latest_sync_messages_processed": job.get("messages_processed") or 0,
+                "latest_sync_events_detected": job.get("events_detected") or 0,
+                "latest_sync_error": job.get("error_message"),
+            })
+        result.append({"mailbox": mailbox, "stats": stats})
+    return result
 
 
 def mailboxes_due_for_watch_renewal(*, before: datetime, limit: int = 100) -> list[dict[str, Any]]:
