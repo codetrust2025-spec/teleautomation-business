@@ -1963,6 +1963,7 @@ export default function RecruitmentMailPanelRedesign() {
   const [aiNodes, setAiNodes] = useState([]);
   const [refreshingAi, setRefreshingAi] = useState(false);
   const loadInFlight = useRef(null);
+  const activeSyncRefreshInFlight = useRef(false);
 
   const load = useCallback(async ({ showLoader = false } = {}) => {
     if (loadInFlight.current) return loadInFlight.current;
@@ -2093,6 +2094,8 @@ export default function RecruitmentMailPanelRedesign() {
   useEffect(() => {
     if (!activeSyncSignature) return undefined;
     const refreshActiveSyncs = async () => {
+      if (activeSyncRefreshInFlight.current) return;
+      activeSyncRefreshInFlight.current = true;
       try {
         const body = await request(
           `/api/candidate-mailboxes/overview?_=${Date.now()}`,
@@ -2117,6 +2120,8 @@ export default function RecruitmentMailPanelRedesign() {
         );
       } catch {
         /* The normal refresh button remains available when polling fails. */
+      } finally {
+        activeSyncRefreshInFlight.current = false;
       }
     };
     const timer = window.setInterval(refreshActiveSyncs, 3000);

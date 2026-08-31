@@ -1,5 +1,6 @@
 import React from "react";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -126,6 +127,7 @@ describe("RecruitmentMailPanel", () => {
   });
   afterEach(() => {
     cleanup();
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
   it("renders the canonical mailbox-only page without retired hub navigation", async () => {
@@ -525,6 +527,67 @@ describe("RecruitmentMailPanel", () => {
     );
     expect(screen.getByText("Sync Queued")).toBeInTheDocument();
     expect(screen.getByText("Waiting to start…")).toBeInTheDocument();
+  });
+  it("does not overlap mailbox overview polls while a sync is active", async () => {
+    vi.useFakeTimers();
+    let overviewCalls = 0;
+    let finishPoll;
+    fetch.mockImplementation(async (url) => {
+      const path = String(url);
+      if (path.includes("/candidate-mailboxes/overview")) {
+        overviewCalls += 1;
+        if (overviewCalls > 1) {
+          return new Promise((resolve) => {
+            finishPoll = () => resolve({
+              ok: true,
+              json: async () => ({ status: "ok", mailboxes: [] }),
+            });
+          });
+        }
+        return {
+          ok: true,
+          json: async () => ({
+            status: "ok",
+            mailboxes: [{
+              mailbox: {
+                id: "mailbox-active",
+                candidate_id: "c1",
+                email_address: "active@gmail.com",
+                connection_status: "CONNECTED",
+                monitoring_enabled: true,
+              },
+              stats: { latest_sync_status: "RUNNING" },
+            }],
+          }),
+        };
+      }
+      return { ok: true, json: async () => payloadFor(path) };
+    });
+
+    render(
+      <ConfirmProvider>
+        <RecruitmentMailPanel />
+      </ConfirmProvider>,
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByText("active@gmail.com")).toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(overviewCalls).toBe(2);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(9000);
+    });
+    expect(overviewCalls).toBe(2);
+
+    await act(async () => {
+      finishPoll();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    vi.useRealTimers();
   });
   it("defensively hides historical zero-percent recommendations", () => {
     expect(

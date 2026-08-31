@@ -46,6 +46,24 @@ def _identity_events(candidate_id:str,*,limit:int=100,offset:int=0):
     ordered=sorted(unique.values(),key=lambda event:str(event.get('created_at') or ''),reverse=True)
     return ordered[offset:offset+limit]
 
+def _mailbox_overview_rows():
+    """Build the complete overview off the event loop in bounded bulk reads."""
+    rows=store.mailbox_overview_rows()
+    candidate_ids=[
+        str((entry.get('mailbox') or entry).get('candidate_id') or '')
+        for entry in rows
+    ]
+    canonical_ids=candidate_store.canonical_candidate_identity_ids(candidate_ids)
+    # Persisted identity links can point at an older canonical row after
+    # profile candidates are collapsed again. Resolve against the current
+    # Candidates API representation so connected Gmail accounts never
+    # disappear from the mailbox roster.
+    for entry in rows:
+        mailbox=entry.get('mailbox') or entry
+        candidate_id=str(mailbox.get('candidate_id') or '')
+        mailbox['canonical_candidate_id']=canonical_ids.get(candidate_id,candidate_id)
+    return rows
+
 def _node_status(node_id:str)->dict:
     models=configured_models()
     required=list(dict.fromkeys(filter(None,(models.get('text'),models.get('validator'),models.get('vision')))))
@@ -85,16 +103,7 @@ def install_recruitment_mail_routes(app):
     @app.get('/api/candidate-mailboxes/overview')
     async def candidate_mailbox_overview(request:Request):
         _guard();require_fleet_admin(request)
-        rows=await asyncio.to_thread(store.mailbox_overview_rows)
-        # Persisted identity links can point at an older canonical row after
-        # profile candidates are collapsed again. Resolve against the current
-        # Candidates API representation so connected Gmail accounts never
-        # disappear from the mailbox roster.
-        for entry in rows:
-            mailbox=entry.get('mailbox') or entry
-            mailbox['canonical_candidate_id']=candidate_store.canonical_candidate_identity_id(
-                str(mailbox.get('candidate_id') or '')
-            )
+        rows=await asyncio.to_thread(_mailbox_overview_rows)
         return {'status':'ok','mailboxes':rows,'checked_at':datetime.now(timezone.utc)}
     @app.post('/api/gmail/pubsub/push')
     async def gmail_pubsub_push(request:Request):

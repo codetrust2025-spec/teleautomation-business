@@ -4129,6 +4129,106 @@ def canonical_candidate_identity_id(cid: str) -> str:
     return str(current.get("id")) if current else str(cid)
 
 
+def canonical_candidate_identity_ids(candidate_ids: list[str]) -> dict[str, str]:
+    """Resolve many mailbox candidate ids without one DB connection per id.
+
+    Mailbox overview is polled while sync jobs are active.  Calling the scalar
+    resolver for every mailbox repeated both the identity-link query and the
+    candidate-list collapse, turning one dashboard request into an N+1 DB
+    workload.  This preserves the scalar resolver's matching rules while
+    loading links, source candidates and visible candidates once.
+    """
+    requested = list(dict.fromkeys(str(value) for value in candidate_ids if value))
+    if not requested:
+        return {}
+
+    links: list[tuple[str, str]] = []
+    try:
+        from core.db.connection import get_connection, use_postgres
+        if use_postgres():
+            with get_connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    """SELECT alias_candidate_id,canonical_candidate_id
+                      FROM candidate_identity_links"""
+                )
+                links = [(str(alias), str(canonical)) for alias, canonical in cur.fetchall()]
+    except Exception:
+        links = []
+
+    canonical_by_alias = {alias: canonical for alias, canonical in links}
+    aliases_by_canonical: dict[str, set[str]] = {}
+    for alias, canonical in links:
+        aliases_by_canonical.setdefault(canonical, set()).add(alias)
+
+    rows = list(_load().get("candidates") or [])
+    rows_by_id = {str(row.get("id")): row for row in rows if row.get("id")}
+    visible_rows = list_candidates()
+    resolved: dict[str, str] = {}
+
+    for cid in requested:
+        linked_ids = {cid}
+        linked_canonical = canonical_by_alias.get(cid)
+        if linked_canonical:
+            linked_ids.add(linked_canonical)
+            linked_ids.update(aliases_by_canonical.get(linked_canonical, set()))
+
+        source = rows_by_id.get(cid)
+        if source:
+            phone_key = candidate_phone_identity(source.get("phone"))
+            email_key = str(source.get("email") or "").strip().casefold()
+            explicit = str(
+                source.get("canonical_candidate_id")
+                or source.get("profile_candidate_id")
+                or ""
+            ).strip()
+            source_is_profile = (
+                _normalise_service_type(source.get("service_type"), source)
+                != "round_wise"
+            )
+            source_name_key = _normalise_candidate_name_key(
+                canonical_candidate_name(source.get("name") or "")
+            )
+            for row in rows:
+                row_id = str(row.get("id") or "")
+                if not row_id:
+                    continue
+                row_phone = candidate_phone_identity(row.get("phone"))
+                row_email = str(row.get("email") or "").strip().casefold()
+                row_explicit = str(
+                    row.get("canonical_candidate_id")
+                    or row.get("profile_candidate_id")
+                    or ""
+                ).strip()
+                row_is_profile = (
+                    _normalise_service_type(row.get("service_type"), row)
+                    != "round_wise"
+                )
+                row_name_key = _normalise_candidate_name_key(
+                    canonical_candidate_name(row.get("name") or "")
+                )
+                if (
+                    row_id in linked_ids
+                    or (phone_key and row_phone == phone_key)
+                    or (email_key and "@" in email_key and row_email == email_key)
+                    or (explicit and (row_id == explicit or row_explicit == explicit))
+                    or row_explicit == cid
+                    or (
+                        source_is_profile
+                        and row_is_profile
+                        and source_name_key
+                        and row_name_key == source_name_key
+                    )
+                ):
+                    linked_ids.add(row_id)
+
+        current = next(
+            (row for row in visible_rows if str(row.get("id")) in linked_ids),
+            None,
+        )
+        resolved[cid] = str(current.get("id")) if current else cid
+    return resolved
+
+
 def find_by_telegram(slot: str, user_id: int) -> dict | None:
     """Find a candidate row linked to a Telegram DM thread."""
     slot = (slot or "").strip()

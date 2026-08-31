@@ -106,8 +106,11 @@ def test_mailbox_overview_api_returns_bulk_mailboxes_with_stats(monkeypatch):
     }])
     monkeypatch.setattr(
         recruitment_mail_api.candidate_store,
-        'canonical_candidate_identity_id',
-        lambda candidate_id: 'current' if candidate_id == 'legacy' else candidate_id,
+        'canonical_candidate_identity_ids',
+        lambda candidate_ids: {
+            candidate_id: 'current' if candidate_id == 'legacy' else candidate_id
+            for candidate_id in candidate_ids
+        },
     )
 
     response=app_client(monkeypatch).get('/api/candidate-mailboxes/overview')
