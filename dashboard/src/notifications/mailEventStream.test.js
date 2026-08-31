@@ -62,7 +62,7 @@ describe('mail event stream correlation', () => {
     expect(received[0][1]).toEqual({ fromSocket: true })
     expect(getMailAlertTrace()).toEqual([
       expect.objectContaining({
-        stage: 'browser_received', event_id: 'event-1',
+        stage: 'browser_received', event: 'notification_created', event_id: 'event-1',
         notification_id: 'notification-1', transport: 'websocket',
       }),
     ])
