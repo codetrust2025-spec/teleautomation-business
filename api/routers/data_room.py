@@ -74,16 +74,6 @@ async def data_room_delete_handler(username: str, request: Request):
     if err:
         return {"status": "error", "message": err}
     return {"status": "ok", "credentials": updated}
-@router.patch("/data-room/credentials/admin")
-async def data_room_update_admin(body: dict, request: Request):
-    from core.dashboard_access import require_fleet_admin
-    from features import data_room_credentials_store as creds
-
-    require_fleet_admin(request)
-    updated, err = creds.update_admin_login(body or {})
-    if err:
-        return {"status": "error", "message": err}
-    return {"status": "ok", "credentials": updated}
 @router.patch("/data-room/credentials/vault/{section}/{item_id}")
 async def data_room_update_vault_item(section: str, item_id: str, body: dict, request: Request):
     from core.dashboard_access import require_fleet_admin

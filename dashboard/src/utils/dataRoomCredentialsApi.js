@@ -48,10 +48,6 @@ export function deleteHandler(username) {
   return credsRequest('DELETE', `/data-room/credentials/handlers/${encodeURIComponent(username)}`)
 }
 
-export function updateAdmin(body) {
-  return credsRequest('PATCH', '/data-room/credentials/admin', body)
-}
-
 export function createVaultItem(section, body) {
   return credsRequest('POST', `/data-room/credentials/vault/${encodeURIComponent(section)}`, body)
 }

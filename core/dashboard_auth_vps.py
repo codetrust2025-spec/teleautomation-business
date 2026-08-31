@@ -23,10 +23,11 @@ from typing import Any
 
 import yaml
 
-from core.config import BASE_DIR
+from core.config import BASE_DIR, DATA_DIR
 
 SESSION_COOKIE = "ta_operations_session"
 SESSION_TTL_SEC = 7 * 24 * 3600
+_ADMIN_CREDENTIAL_OVERRIDE_FILE = os.path.join(DATA_DIR, "auth", "dashboard_admin.json")
 
 _PUBLIC_EXACT = frozenset({
     "/auth/login",
@@ -146,11 +147,91 @@ def auth_enabled() -> bool:
     return bool(os.environ.get("DASHBOARD_PASSWORD", "").strip())
 
 
-def get_credentials() -> tuple[str, str]:
+def _environment_credentials() -> tuple[str, str]:
     _refresh_dashboard_env_from_file()
     username = (os.environ.get("DASHBOARD_USERNAME") or "admin").strip() or "admin"
     password = os.environ.get("DASHBOARD_PASSWORD", "").strip()
     return username, password
+
+
+def _environment_password_fingerprint(password: str) -> str:
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+
+def _load_admin_credentials_override() -> dict[str, str] | None:
+    try:
+        with open(_ADMIN_CREDENTIAL_OVERRIDE_FILE, encoding="utf-8") as f:
+            raw = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    username = str(raw.get("username") or "").strip()
+    password = str(raw.get("password") or "")
+    environment_fingerprint = str(raw.get("environment_password_sha256") or "")
+    if not username or not password or not environment_fingerprint:
+        return None
+    return {
+        "username": username,
+        "password": password,
+        "environment_password_sha256": environment_fingerprint,
+    }
+
+
+def _persist_admin_credentials_override(
+    username: str,
+    password: str,
+    environment_password: str,
+) -> bool:
+    path = _ADMIN_CREDENTIAL_OVERRIDE_FILE
+    directory = os.path.dirname(path)
+    tmp = f"{path}.{secrets.token_hex(8)}.tmp"
+    payload = {
+        "username": username,
+        "password": password,
+        "environment_password_sha256": _environment_password_fingerprint(environment_password),
+        "updated_at": int(time.time()),
+    }
+    try:
+        os.makedirs(directory, mode=0o700, exist_ok=True)
+        with open(tmp, "x", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+        return True
+    except OSError:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        return False
+
+
+def get_credentials() -> tuple[str, str]:
+    """Return the effective admin credential.
+
+    The deployment environment remains the bootstrap source. A password changed
+    through the authenticated dashboard is kept in the Operations data volume
+    and remains valid across container recreation. If deployment intentionally
+    rotates the configured username or password, the saved override no longer
+    matches its environment fingerprint and the new deployment value wins.
+    """
+    username, password = _environment_credentials()
+    override = _load_admin_credentials_override()
+    if not override:
+        return username, password
+    if not secrets.compare_digest(override["username"], username):
+        return username, password
+    expected_fingerprint = _environment_password_fingerprint(password)
+    if not secrets.compare_digest(
+        override["environment_password_sha256"],
+        expected_fingerprint,
+    ):
+        return username, password
+    return override["username"], override["password"]
 
 
 @lru_cache(maxsize=1)
@@ -351,8 +432,11 @@ def change_operator_password(username: str, current_password: str, new_password:
     expected_user, expected_pass = get_credentials()
     if not secrets.compare_digest(user, expected_user) or not secrets.compare_digest(cur, expected_pass):
         return "Current password is incorrect"
-    os.environ["DASHBOARD_PASSWORD"] = new
-    _refresh_dashboard_env_from_file()
+    environment_user, environment_pass = _environment_credentials()
+    if not secrets.compare_digest(environment_user, expected_user):
+        return "Dashboard credential configuration changed; retry the password change"
+    if not _persist_admin_credentials_override(expected_user, new, environment_pass):
+        return "Could not persist the new password"
     env_path = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env"))
     if os.path.isfile(env_path):
         try:
@@ -374,7 +458,7 @@ def change_operator_password(username: str, current_password: str, new_password:
     try:
         from features import data_room_credentials_store as creds
 
-        creds.update_admin_login({"password": new})
+        creds.sync_admin_login_copy({"username": expected_user, "password": new})
     except Exception:
         pass
     return None

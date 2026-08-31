@@ -425,8 +425,8 @@ def delete_handler_login(username: str) -> tuple[dict | None, str | None]:
     return get_credentials(), None
 
 
-def update_admin_login(updates: dict) -> tuple[dict | None, str | None]:
-    """Update admin row stored in credentials.json (display / data-room copy)."""
+def sync_admin_login_copy(updates: dict) -> tuple[dict | None, str | None]:
+    """Synchronize the display-only admin row after an authenticated auth change."""
     if not isinstance(updates, dict):
         return None, "Invalid payload"
     data = _load()
@@ -442,8 +442,6 @@ def update_admin_login(updates: dict) -> tuple[dict | None, str | None]:
     data["admin"] = admin
     _save(data)
     return get_credentials(), None
-
-
 def update_handler_login(username: str, updates: dict) -> tuple[dict | None, str | None]:
     """Update handler row in credentials.json; syncs password to auth YAML when changed."""
     user = str(username or "").strip()
