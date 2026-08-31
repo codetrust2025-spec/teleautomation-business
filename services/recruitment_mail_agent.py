@@ -931,6 +931,33 @@ def _evidence_supported(item: dict[str, Any], sources: dict[str, list[str]]) -> 
     return bool(needle) and any(needle in value.casefold() for value in sources.get(str(item.get("source") or ""), []))
 
 
+def _canonicalise_evidence_source(
+    item: dict[str, Any], sources: dict[str, list[str]],
+) -> dict[str, Any] | None:
+    """Correct a model's source label only when its verbatim quote proves one source.
+
+    Models sometimes quote the body exactly while labelling it EMAIL_SUBJECT.
+    The quote remains untrusted unless it occurs verbatim in exactly one source
+    category; absent or ambiguous quotes still fail closed.
+    """
+    value = dict(item)
+    needle = clean_email(str(value.get("text") or "")).casefold()
+    if not needle:
+        return None
+    matches = [
+        source_name for source_name, texts in sources.items()
+        if any(needle in text.casefold() for text in texts)
+    ]
+    declared = str(value.get("source") or "")
+    if declared in matches:
+        return value
+    if len(matches) != 1:
+        return None
+    value["evidence_source_corrected_from"] = declared or None
+    value["source"] = matches[0]
+    return value
+
+
 def _evidence_entails_source_transition(
     item: dict[str, Any], sources: dict[str, list[str]], status: str,
 ) -> bool:
@@ -1307,7 +1334,11 @@ def validate_result(
     # unsupported items are dropped, never trusted. Rejecting outright threw
     # away a correct OFFER_IN_PROGRESS at 95% whose body quote was verbatim,
     # purely because a second item was a paraphrase.
-    supported = [item for item in value["evidence"] if _evidence_supported(item, sources)]
+    source_canonical = [
+        corrected for item in value["evidence"]
+        if (corrected := _canonicalise_evidence_source(item, sources)) is not None
+    ]
+    supported = [item for item in source_canonical if _evidence_supported(item, sources)]
     entailing = [
         item for item in supported
         if _evidence_entails_source_transition(item, sources, safe_status)
@@ -1920,8 +1951,11 @@ def _reconcile_model_results(primary: dict[str, Any], validator: dict[str, Any])
     validator_confidence = float(validator.get("confidence") or 0)
     if primary_confidence > 1: primary_confidence /= 100.0
     if validator_confidence > 1: validator_confidence /= 100.0
-    primary_positive = bool(primary.get("is_selection_or_offer_related") and primary.get("status") in TRACKED_STATUSES)
-    validator_positive = bool(validator.get("is_selection_or_offer_related") and validator.get("status") in TRACKED_STATUSES)
+    # Status is the lifecycle conclusion. The booleans are duplicate model
+    # fields and may contradict that conclusion; backend evidence validation,
+    # not a duplicate boolean, decides whether an agreed status can survive.
+    primary_positive = primary.get("status") in TRACKED_STATUSES
+    validator_positive = validator.get("status") in TRACKED_STATUSES
     same = primary_positive == validator_positive and primary.get("status") == validator.get("status")
     if same:
         chosen = deepcopy(validator)

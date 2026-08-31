@@ -329,6 +329,7 @@ def test_backend_final_corrects_only_to_an_explicit_validated_source_stage(
             should_create_review_record=False,
             is_job_outcome=False,
         )
+        value["evidence"][0]["source"] = "EMAIL_SUBJECT"
 
     agent.validate_result(value, _message(subject, body), [])
 
@@ -339,6 +340,9 @@ def test_backend_final_corrects_only_to_an_explicit_validated_source_stage(
     assert value["backend_transition_validated"] is True
     assert value["backend_stage_corrected_from"] == model_status
     assert value["backend_validation_reason"] == "EXPLICIT_TRANSITION_ENTAILED_AFTER_STAGE_CORRECTION"
+    if source_status == "DOCUMENT_VERIFICATION":
+        assert value["evidence"][0]["source"] == "EMAIL_BODY"
+        assert value["evidence"][0]["evidence_source_corrected_from"] == "EMAIL_SUBJECT"
 
 
 def test_tracked_status_requires_independent_validation_even_when_model_booleans_disagree():
@@ -351,6 +355,18 @@ def test_tracked_status_requires_independent_validation_even_when_model_booleans
         },
         {},
     )
+
+
+def test_same_tracked_status_is_model_agreement_despite_duplicate_boolean_difference():
+    primary = _model_result("SELECTED", "You have been selected for the role.")
+    validator = _model_result("SELECTED", "You have been selected for the role.")
+    primary["is_selection_or_offer_related"] = False
+
+    reconciled = agent._reconcile_model_results(primary, validator)
+
+    assert reconciled["status"] == "SELECTED"
+    assert reconciled["model_validation"]["agreed"] is True
+    assert "MODEL_DISAGREEMENT" not in reconciled["risk_flags"]
 
 
 def test_record_analysis_writes_each_decision_layer_to_its_own_column(monkeypatch):
