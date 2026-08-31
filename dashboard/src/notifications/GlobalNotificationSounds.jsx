@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 import { API } from '../config.js'
 import { useAuth } from '../context/AuthContext.jsx'
 import { reconnectRequiredMailboxes } from '../utils/mailboxStatus.js'
-import { subscribeMailEvents } from './mailEventStream.js'
+import { subscribeMailEvents, traceMailAlert } from './mailEventStream.js'
 import { notifyGmailReconnect, notifyTrackedMail } from './notificationEvents.js'
 import { useInterviewReminders } from './useInterviewReminders.js'
 import { installSoundPreview } from './soundPreview.js'
@@ -19,7 +19,7 @@ export function GlobalNotificationSounds() {
   useEffect(() => {
     if (!authenticated) return undefined
     return subscribeMailEvents((payload, meta) => {
-      if (meta?.fromSocket) notifyTrackedMail(payload)
+      if (meta?.fromSocket && notifyTrackedMail(payload)) traceMailAlert('sound', payload)
     })
   }, [authenticated])
 

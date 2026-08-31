@@ -1,13 +1,14 @@
 import React from "react";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MailMonitoringNotifications, MailNotificationBell, mailStatusTone, blockingReason } from "./MailMonitoringNotifications.jsx";
 import { ConfirmProvider } from "../context/ConfirmContext.jsx";
 
 class FakeWebSocket {
   static OPEN = 1;
+  static latest = null;
   readyState = 1;
-  constructor() { setTimeout(() => this.onopen?.(), 0); }
+  constructor() { FakeWebSocket.latest = this; setTimeout(() => this.onopen?.(), 0); }
   send() {}
   close() { this.onclose?.(); }
 }
@@ -64,6 +65,7 @@ describe("mail monitoring notifications", () => {
   });
   afterEach(() => {
     cleanup();
+    FakeWebSocket.latest = null;
     vi.unstubAllGlobals();
   });
 
@@ -110,6 +112,41 @@ describe("mail monitoring notifications", () => {
       "/api/mail-monitoring/notifications/clear-all",
       expect.objectContaining({ method: "POST" }),
     ));
+  });
+
+  it("does not let an older list response erase a realtime alert", async () => {
+    let resolveFirstList;
+    let listCalls = 0;
+    vi.stubGlobal("fetch", vi.fn((url) => {
+      const path = String(url);
+      if (path.includes("/config")) return response({ enabled: true });
+      if (path.includes("/summary")) return response({ summary: { unread: 1 } });
+      if (path.includes("/candidates")) return response({ candidates: [] });
+      if (path.includes("/notifications")) {
+        listCalls += 1;
+        if (listCalls === 1) {
+          return new Promise((resolve) => { resolveFirstList = resolve; });
+        }
+        return response({ notifications: [notification], total: 1 });
+      }
+      return response({ status: "ok" });
+    }));
+
+    renderNotifications();
+    await waitFor(() => expect(FakeWebSocket.latest).not.toBeNull());
+    await act(async () => {
+      FakeWebSocket.latest.onmessage?.({ data: JSON.stringify({
+        event: "notification_created", event_id: "realtime-1",
+        notification_id: notification.id, classification: notification.classification,
+      }) });
+    });
+    expect(await screen.findByText("Formal employment offer")).toBeInTheDocument();
+
+    await act(async () => {
+      resolveFirstList(await response({ notifications: [], total: 0 }));
+      await Promise.resolve();
+    });
+    expect(screen.getByText("Formal employment offer")).toBeInTheDocument();
   });
 });
 

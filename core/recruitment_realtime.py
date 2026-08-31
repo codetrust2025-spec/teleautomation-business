@@ -53,6 +53,55 @@ async def _broadcast(payload: dict[str, Any]) -> None:
         await disconnect(websocket)
 
 
+async def _broadcast_recorded(event: dict[str, Any]) -> None:
+    event_id = str(event["id"])
+    await _broadcast({
+        "event": event["event_type"],
+        "event_id": event_id,
+        **(event.get("payload") or {}),
+        "created_at": str(event.get("created_at") or ""),
+    })
+    # Mark only after the coroutine actually ran. Previously publish() marked
+    # the row before scheduling this work, so a closing loop could make the
+    # durable tailer skip an event that had never reached a socket.
+    _mark_delivered(event_id)
+    logger.info(
+        "Mail realtime event delivered event_id=%s notification_id=%s type=%s clients=%s",
+        event_id, (event.get("payload") or {}).get("notification_id"),
+        event.get("event_type"), connection_count(),
+    )
+
+
+def deliver_persisted(event: dict[str, Any]) -> None:
+    """Fan out a row already committed to the durable realtime log."""
+    loop = _loop
+    if not loop or not loop.is_running():
+        logger.info(
+            "Mail realtime event awaits API tailer event_id=%s notification_id=%s type=%s",
+            event.get("id"), (event.get("payload") or {}).get("notification_id"),
+            event.get("event_type"),
+        )
+        return
+    try:
+        future = asyncio.run_coroutine_threadsafe(_broadcast_recorded(event), loop)
+
+        def report_failure(done: Any) -> None:
+            try:
+                done.result()
+            except Exception:
+                logger.exception(
+                    "Mail realtime delivery failed; durable tailer will retry event_id=%s",
+                    event.get("id"),
+                )
+
+        future.add_done_callback(report_failure)
+    except RuntimeError:
+        logger.info(
+            "Mail WebSocket loop closed before delivery; durable tailer will retry event_id=%s",
+            event.get("id"),
+        )
+
+
 def publish(event_type: str, **payload: Any) -> dict[str, Any]:
     """Persist an event, then fan it out when a server loop is available."""
     from core import recruitment_mail_store as store
@@ -63,32 +112,13 @@ def publish(event_type: str, **payload: Any) -> dict[str, Any]:
         if key not in {"body", "html_body", "raw_email", "credential_ciphertext"}
     }
     event = store.record_realtime_event(event_type, safe)
-    envelope = {
+    deliver_persisted(event)
+    return {
         "event": event_type,
         "event_id": event["id"],
         **safe,
         "created_at": str(event.get("created_at") or safe.get("created_at") or ""),
     }
-    loop = _loop
-    if loop and loop.is_running():
-        try:
-            _mark_delivered(event["id"])
-            asyncio.run_coroutine_threadsafe(_broadcast(envelope), loop)
-        except RuntimeError:
-            logger.info("Mail WebSocket loop closed before event delivery event_id=%s", event["id"])
-    else:
-        # No loop here means this process holds no WebSocket clients - an
-        # operational script, a cron, or a second uvicorn worker. The row is
-        # durable either way, and the tailer running inside the API process
-        # picks it up and delivers it. Before that existed, a publish from
-        # anywhere else wrote the event and reached nobody until the browser
-        # happened to reconnect, with nothing logged to say so.
-        logger.info(
-            "Mail event published from a process with no WebSocket loop; "
-            "the API tailer will deliver it event_id=%s type=%s",
-            event["id"], event_type,
-        )
-    return envelope
 
 
 # Events this process has already put on the wire. The tailer reads the same
@@ -151,13 +181,13 @@ async def _tail_events(poll_seconds: float = 2.0) -> None:
                 cursor = row["id"]
                 if _already_delivered(row["id"]):
                     continue
-                _mark_delivered(row["id"])
                 await _broadcast({
                     "event": row["event_type"],
                     "event_id": row["id"],
                     **(row.get("payload") or {}),
                     "created_at": str(row.get("created_at") or ""),
                 })
+                _mark_delivered(row["id"])
         except asyncio.CancelledError:
             raise
         except Exception:

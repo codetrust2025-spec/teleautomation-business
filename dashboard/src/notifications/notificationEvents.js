@@ -2,24 +2,28 @@ import { SELECTION_CLASSIFICATIONS, isTrackedMailAlert, showMailAlertNotificatio
 import { describeReconnectTargets } from '../utils/mailboxStatus.js'
 import { playNotification } from './notificationSounds.js'
 
-const MAIL_DEDUPE_MS = 8000
 const recentMailEvents = new Map()
+const MAIL_DEDUPE_LIMIT = 500
 const GMAIL_ALERTED_KEY = 'teleautomation:operations:gmail-reconnect-alerted'
 
 function firstSightOfMailEvent(eventId) {
-  const now = Date.now()
-  for (const [key, at] of recentMailEvents) if (now - at > MAIL_DEDUPE_MS) recentMailEvents.delete(key)
   if (eventId == null) return true
   const key = String(eventId)
   if (recentMailEvents.has(key)) return false
-  recentMailEvents.set(key, now)
+  recentMailEvents.set(key, true)
+  if (recentMailEvents.size > MAIL_DEDUPE_LIMIT) {
+    recentMailEvents.delete(recentMailEvents.keys().next().value)
+  }
   return true
 }
 
 export function notifyTrackedMail(payload) {
   if (payload?.event !== 'notification_created') return false
   if (!isTrackedMailAlert(payload?.classification)) return false
-  if (!firstSightOfMailEvent(payload.event_id || payload.notification_id)) return false
+  // A notification row is the logical alert. Booking can update that row and
+  // transport retries can use a different event ID, but neither is a new alert
+  // and neither may produce another sound.
+  if (!firstSightOfMailEvent(payload.notification_id || payload.event_id)) return false
   const selection = SELECTION_CLASSIFICATIONS.includes(payload.classification)
   const played = playNotification(selection ? 'mail_selection' : 'mail_interview_booking')
   showMailAlertNotification(payload)

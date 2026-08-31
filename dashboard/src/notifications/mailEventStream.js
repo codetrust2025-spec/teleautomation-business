@@ -17,6 +17,7 @@ import { API } from '../config.js'
 const CHANNEL_NAME = 'teleautomation-mail-monitoring'
 const LAST_EVENT_KEY = 'teleautomation-mail-last-event-id'
 const SEEN_LIMIT = 500
+const TRACE_LIMIT = 200
 
 const subscribers = new Set()
 const statusSubscribers = new Set()
@@ -29,6 +30,35 @@ let heartbeat = null
 let stopped = true
 let status = 'Offline'
 const seen = new Set()
+const trace = []
+
+/**
+ * Bounded, non-sensitive correlation data for production verification.
+ * The buffer deliberately excludes message bodies, credentials and tokens.
+ */
+export function traceMailAlert(stage, payload = {}, extra = {}) {
+  const record = {
+    stage,
+    notification_id: payload?.notification_id || null,
+    event_id: payload?.event_id || null,
+    provider_message_id: payload?.provider_message_id || null,
+    classification: payload?.classification || null,
+    at: new Date().toISOString(),
+    ...extra,
+  }
+  trace.push(record)
+  if (trace.length > TRACE_LIMIT) trace.shift()
+  try {
+    window.dispatchEvent(new CustomEvent('teleautomation:mail-alert-trace', { detail: record }))
+  } catch {
+    /* tracing must never affect alert delivery */
+  }
+  return record
+}
+
+export function getMailAlertTrace() {
+  return [...trace]
+}
 
 function setStatus(next) {
   if (status === next) return
@@ -59,7 +89,7 @@ function emit(payload, fromSocket) {
   }
 }
 
-function receive(payload) {
+function receive(payload, fromSocket = true) {
   const id = payload?.event_id
   if (id && seen.has(id)) return
   if (id) {
@@ -72,12 +102,13 @@ function receive(payload) {
     }
   }
 
-  emit(payload, true)
+  traceMailAlert('browser_received', payload, { transport: fromSocket ? 'websocket' : 'broadcast_channel' })
+  emit(payload, fromSocket)
 
   if (['slot_auto_booked', 'interview_rescheduled', 'interview_cancelled'].includes(payload?.event)) {
     window.dispatchEvent(new CustomEvent('teleautomation:slot-booking-updated', { detail: payload }))
   }
-  channel?.postMessage(payload)
+  if (fromSocket) channel?.postMessage(payload)
 }
 
 function connect() {
@@ -103,7 +134,7 @@ function connect() {
   }
   socket.onmessage = (event) => {
     try {
-      receive(JSON.parse(event.data))
+      receive(JSON.parse(event.data), true)
     } catch {
       /* ignore malformed transport frames */
     }
@@ -125,7 +156,10 @@ function start() {
   if (!stopped) return
   stopped = false
   channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel(CHANNEL_NAME) : null
-  if (channel) channel.onmessage = (event) => emit(event.data, false)
+  // Mirrored events go through the same ID dedupe and cursor handling as
+  // socket frames. Previously they bypassed both, so every open tab could
+  // refetch the table for the same event and later process its own socket copy.
+  if (channel) channel.onmessage = (event) => receive(event.data, false)
 
   fetch(`${API}/api/ai-recruitment/config`, { credentials: 'include' })
     .then((response) => (response.ok ? response.json() : null))
@@ -185,6 +219,7 @@ export function __resetMailEventStream() {
   subscribers.clear()
   statusSubscribers.clear()
   seen.clear()
+  trace.length = 0
   retry = 0
   stop()
 }

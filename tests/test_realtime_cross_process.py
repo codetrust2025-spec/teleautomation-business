@@ -143,12 +143,15 @@ class TestPublishStillWorksInProcess:
     def test_publish_marks_what_it_sent_so_the_tailer_skips_it(self, monkeypatch):
         from core import recruitment_mail_store as store
         monkeypatch.setattr(store, "record_realtime_event",
-                            lambda t, p: {"id": "evt-local", "created_at": "now"})
+                            lambda t, p: {
+                                "id": "evt-local", "event_type": t,
+                                "payload": p, "created_at": "now",
+                            })
 
         async def run():
             rt.configure_loop(asyncio.get_running_loop())
             rt.publish("notification_created", classification="offer_received")
-            await asyncio.sleep(0)
+            await asyncio.sleep(0.01)
 
         asyncio.run(run())
         assert rt._already_delivered("evt-local")
@@ -171,3 +174,18 @@ class TestPublishStillWorksInProcess:
         assert not rt._already_delivered("evt-no-loop"), (
             "an undelivered event must stay undelivered so the tailer sends it"
         )
+
+    def test_a_scheduled_delivery_is_not_marked_before_the_send_runs(self, monkeypatch):
+        from core import recruitment_mail_store as store
+        monkeypatch.setattr(store, "record_realtime_event", lambda t, p: {
+            "id": "evt-pending", "event_type": t, "payload": p, "created_at": "now",
+        })
+
+        async def run():
+            rt.configure_loop(asyncio.get_running_loop())
+            rt.publish("notification_created", notification_id="notification-1")
+            assert not rt._already_delivered("evt-pending")
+            await asyncio.sleep(0.01)
+
+        asyncio.run(run())
+        assert rt._already_delivered("evt-pending")

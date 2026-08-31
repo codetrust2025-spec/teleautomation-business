@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API } from "../config.js";
-import { subscribeMailEvents, subscribeMailStatus } from "../notifications/mailEventStream.js";
+import { subscribeMailEvents, subscribeMailStatus, traceMailAlert } from "../notifications/mailEventStream.js";
 import { useDialogA11y } from "../hooks/useDialogA11y.js";
 import { formatIstDateTime, formatScheduleDateTime, formatScheduleIstDateTime } from "../utils/istTime.js";
 import { useConfirm } from "../context/ConfirmContext.jsx";
@@ -138,17 +138,20 @@ export function MailNotificationBell({ compact = false }) {
   const [items, setItems] = useState([]);
   const [toast, setToast] = useState(null);
   const wrap = useRef(null);
+  const loadVersion = useRef(0);
   const load = useCallback(async () => {
+    const version = ++loadVersion.current;
     try {
       const [summaryBody, listBody] = await Promise.all([
         request("/api/mail-monitoring/summary"),
         request("/api/mail-monitoring/notifications?limit=6&offset=0"),
       ]);
+      if (version !== loadVersion.current) return;
       setSummary(summaryBody.summary || {}); setItems(listBody.notifications || []);
     } catch { /* API fallback will retry */ }
   }, []);
   const live = useMailLive((event) => {
-    if (["notification_created", "important_mail_detected", "mail_needs_review", "connected"].includes(event?.event)) load();
+    if (["notification_created", "notification_updated", "important_mail_detected", "mail_needs_review", "connected"].includes(event?.event)) load();
     if (event?.event === "notification_created") {
       setToast(event); window.setTimeout(() => setToast(null), 6000);
     }
@@ -275,18 +278,37 @@ export function MailMonitoringNotifications() {
   // candidate_id, so the options have to be ids this table really holds.
   const [candidates, setCandidates] = useState([]);
   const [candidateQuery, setCandidateQuery] = useState("");
+  const loadVersion = useRef(0);
+  const pendingRenders = useRef(new Map());
   const query = useMemo(() => {
     const params = new URLSearchParams({ limit: "20", offset: String(page * 20), sort: "newest" });
     for (const [key, value] of Object.entries({ search:filters.search,classification_group:filters.classificationGroup,candidate_id:filters.candidateId,priority:filters.priority,is_read:filters.read,group_by:filters.classificationGroup === SELECTION_GROUP ? "candidate" : "" })) if (value !== "") params.set(key, String(value));
     return params.toString();
   }, [filters, page]);
   const load = useCallback(async ({ silent = false } = {}) => {
+    const version = ++loadVersion.current;
     if (!silent) setLoading(true);
-    try { const [list, counts] = await Promise.all([request(`/api/mail-monitoring/notifications?${query}`),request("/api/mail-monitoring/summary")]); setItems(list.notifications || []);setTotal(list.total || 0);setSummary(counts.summary || {}); } catch { /* retain last good state */ }
-    finally { if (!silent) setLoading(false); }
+    try {
+      const [list, counts] = await Promise.all([request(`/api/mail-monitoring/notifications?${query}`),request("/api/mail-monitoring/summary")]);
+      if (version !== loadVersion.current) return;
+      setItems(list.notifications || []);setTotal(list.total || 0);setSummary(counts.summary || {});
+    } catch { /* retain last good state */ }
+    finally { if (!silent && version === loadVersion.current) setLoading(false); }
   }, [query]);
-  useMailLive((event) => ["notification_created","important_mail_detected","mail_needs_review","connected"].includes(event?.event) && load({ silent:true }));
+  useMailLive((event) => {
+    if (["notification_created", "notification_updated"].includes(event?.event) && event?.notification_id) {
+      pendingRenders.current.set(String(event.notification_id), event);
+    }
+    if (["notification_created","notification_updated","important_mail_detected","mail_needs_review","connected"].includes(event?.event)) load({ silent:true });
+  });
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    for (const [notificationId, event] of pendingRenders.current) {
+      const visible = items.some((item) => String(item.id) === notificationId);
+      traceMailAlert(visible ? "ui_row_rendered" : "ui_row_not_visible", event, { query });
+      pendingRenders.current.delete(notificationId);
+    }
+  }, [items, query]);
   // Loaded once, not per filter change: the option list is the set of
   // candidates with alerts, which does not depend on what is filtered. A
   // failure here leaves the dropdown empty rather than blocking the table.

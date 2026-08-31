@@ -2490,6 +2490,7 @@ def process_message(mailbox: dict[str, Any], decoded: dict[str, Any], attachment
         from services.recruitment_notifications import notify_detection
         notify_detection(event)
     notification = event.get("notification") or {}
+    created_realtime_event = notification.pop("_created_realtime_event", None)
     common = {
         "notification_id": notification.get("id"), "candidate_id": event.get("candidate_id"),
         "candidate_name": notification.get("candidate_name"), "company_name": notification.get("company_name"),
@@ -2497,6 +2498,7 @@ def process_message(mailbox: dict[str, Any], decoded: dict[str, Any], attachment
         "status": event.get("candidate_status") or result.get("candidate_status"),
         "confidence": round(float(event.get("confidence") or 0) * 100),
         "priority": notification.get("priority"),
+        "provider_message_id": decoded.get("provider_message_id"),
     }
     _publish("mail_classified", **common)
     if not suppress_notification:
@@ -2504,7 +2506,14 @@ def process_message(mailbox: dict[str, Any], decoded: dict[str, Any], attachment
     if event.get("candidate_status_updated"):
         _publish("candidate_status_updated", **common)
     if notification:
-        _publish("notification_created", **common)
+        if created_realtime_event:
+            # Creation was committed atomically with the notification row.
+            # This call only fans out that exact durable event; it does not
+            # create a second event ID.
+            from core.recruitment_realtime import deliver_persisted
+            deliver_persisted(created_realtime_event)
+        else:
+            _publish("notification_updated", **common)
     if common["classification"] in {"interview_confirmed", "interview_rescheduled", "interview_cancelled"}:
         interview = result.get("interview") or {}
         _publish(
@@ -2550,7 +2559,7 @@ def process_message(mailbox: dict[str, Any], decoded: dict[str, Any], attachment
             event["auto_booking"] = outcome
             if outcome.get("notification"):
                 event["notification"] = outcome["notification"]
-                _publish("notification_created", **common, booking_id=booking.get("id"), booking_status=outcome.get("status"))
+                _publish("notification_updated", **common, booking_id=booking.get("id"), booking_status=outcome.get("status"))
         except Exception as exc:
             logger.exception("Automatic interview booking failed event=%s code=%s", event.get("id"), type(exc).__name__)
             _publish("mail_processing_failed", **common, processing_status="Processing Failed", error_code=type(exc).__name__)
