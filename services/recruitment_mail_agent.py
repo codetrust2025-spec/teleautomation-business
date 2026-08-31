@@ -1203,7 +1203,11 @@ def validate_result(
             backend_validation_reason="MODEL_DISAGREEMENT",
         )
         return
-    positive = bool(value["is_selection_or_offer_related"] and value["should_create_review_record"] and value["status"] in TRACKED_STATUSES)
+    # Status is the model's lifecycle assertion; the two booleans are merely
+    # descriptive duplicates and small models can contradict their own status.
+    # Route every tracked assertion through closed-world source validation.
+    # The positive flags are restored only after that validation succeeds.
+    positive = value["status"] in TRACKED_STATUSES
     if not positive:
         value["status"] = "IGNORED_NOT_OFFER_RELATED"
         value["classification"] = "not_relevant"
@@ -1275,6 +1279,12 @@ def validate_result(
         status=safe_status,
         classification=classification,
         candidate_status=store._CLASSIFICATION_STATUS[classification],
+        is_recruitment_related=True,
+        is_selection_or_offer_related=True,
+        should_create_review_record=True,
+        is_job_outcome=True,
+        is_current_event=True,
+        ignore_reason=None,
     )
     is_interview_event = safe_status in interview_statuses
     value["lifecycle_event"] = "NONE" if is_interview_event else safe_status
@@ -1896,7 +1906,10 @@ def _requires_independent_validation(result: dict[str, Any], routing_context: di
         confidence < threshold
         or bool(flags)
         or bool(result.get("requires_manual_review"))
-        or (result.get("is_selection_or_offer_related") is True and result.get("status") in TRACKED_STATUSES)
+        # A tracked status is itself a high-impact assertion. Do not let a
+        # contradictory model boolean bypass the independent reader and the
+        # backend evidence validator.
+        or result.get("status") in TRACKED_STATUSES
         or bool((routing_context or {}).get("qualified"))
         or bool((routing_context or {}).get("risk_flags"))
     )

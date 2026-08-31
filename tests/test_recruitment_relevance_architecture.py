@@ -320,6 +320,15 @@ def test_backend_final_corrects_only_to_an_explicit_validated_source_stage(
     model_status, source_status, subject, body,
 ):
     value = _model_result(model_status, body)
+    if source_status == "DOCUMENT_VERIFICATION":
+        # The deployed qwen model returned exactly this contradiction: a
+        # tracked status plus false lifecycle booleans. Those booleans must not
+        # bypass independent/backend validation of the status assertion.
+        value.update(
+            is_selection_or_offer_related=False,
+            should_create_review_record=False,
+            is_job_outcome=False,
+        )
 
     agent.validate_result(value, _message(subject, body), [])
 
@@ -330,6 +339,18 @@ def test_backend_final_corrects_only_to_an_explicit_validated_source_stage(
     assert value["backend_transition_validated"] is True
     assert value["backend_stage_corrected_from"] == model_status
     assert value["backend_validation_reason"] == "EXPLICIT_TRANSITION_ENTAILED_AFTER_STAGE_CORRECTION"
+
+
+def test_tracked_status_requires_independent_validation_even_when_model_booleans_disagree():
+    assert agent._requires_independent_validation(
+        {
+            "status": "SELECTED", "confidence": 99,
+            "is_selection_or_offer_related": False,
+            "should_create_review_record": False,
+            "risk_flags": [], "requires_manual_review": False,
+        },
+        {},
+    )
 
 
 def test_record_analysis_writes_each_decision_layer_to_its_own_column(monkeypatch):
