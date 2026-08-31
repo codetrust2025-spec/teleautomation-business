@@ -48,6 +48,7 @@ export function traceMailAlert(stage, payload = {}, extra = {}) {
   }
   trace.push(record)
   if (trace.length > TRACE_LIMIT) trace.shift()
+  console.info('[MailAlertTrace]', JSON.stringify(record))
   try {
     window.dispatchEvent(new CustomEvent('teleautomation:mail-alert-trace', { detail: record }))
   } catch {
