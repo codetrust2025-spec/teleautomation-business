@@ -166,7 +166,11 @@ function CredentialRow({ rowKey, site, row, isAdmin, activeKey, onCopy, onEdit, 
         <CopyChip label="Copy all" text={block} copyKey={`${rowKey}-all`} activeKey={activeKey} onCopy={onCopy} />
       </td>
       <td className="dr-actions">
-        <button type="button" className="cand-btn cand-btn--sm" onClick={onEdit}>Edit</button>
+        {onEdit ? (
+          <button type="button" className="cand-btn cand-btn--sm" onClick={onEdit}>Edit</button>
+        ) : (
+          <span className="dr-muted" title="Use Change password from the account menu">Account menu</span>
+        )}
         {!isAdmin && (
           <button type="button" className="cand-btn cand-btn--sm cand-btn--danger" onClick={onDelete}>Delete</button>
         )}
@@ -176,7 +180,6 @@ function CredentialRow({ rowKey, site, row, isAdmin, activeKey, onCopy, onEdit, 
 }
 
 const EMPTY_HANDLER_FORM = { username: '', password: '', reference: '', notes: '' }
-const EMPTY_ADMIN_FORM = { username: '', password: '', reference: '' }
 
 function HandlerModal({ mode, form, onChange, onSave, onClose, error }) {
   // Mounted only while open, so the dialog is open for its whole life.
@@ -219,45 +222,10 @@ function HandlerModal({ mode, form, onChange, onSave, onClose, error }) {
   )
 }
 
-function AdminModal({ form, onChange, onSave, onClose, error }) {
-  // Mounted only while open, so the dialog is open for its whole life.
-  const dialogRef = useDialogA11y(true, onClose)
-  return (
-    <div className="dr-modal-backdrop" role="presentation" onClick={onClose}>
-      <div className="dr-modal cand-card" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="dr-admin-modal-title" onClick={(e) => e.stopPropagation()}>
-        <h2 id="dr-admin-modal-title" className="cand-title">Edit admin login</h2>
-        {error && <p className="dr-error">{error}</p>}
-        <div className="dr-form-grid">
-          <label>
-            Username
-            <input className="cand-input" value={form.username}
-              onChange={(e) => onChange({ ...form, username: e.target.value })} />
-          </label>
-          <label>
-            Reference
-            <input className="cand-input" value={form.reference}
-              onChange={(e) => onChange({ ...form, reference: e.target.value })} />
-          </label>
-          <label className="dr-form-full">
-            New password (leave blank to keep)
-            <input className="cand-input" type="password" autoComplete="new-password" value={form.password}
-              onChange={(e) => onChange({ ...form, password: e.target.value })} />
-          </label>
-        </div>
-        <div className="dr-modal-actions">
-          <button type="button" className="cand-btn" onClick={onClose}>Cancel</button>
-          <button type="button" className="cand-btn cand-btn--primary" onClick={onSave}>Save</button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
 function CredentialsSection({ creds, loading, active, onReload }) {
   const { confirm } = useConfirm()
   const [activeKey, setActiveKey] = useState(null)
   const [handlerModal, setHandlerModal] = useState(null) // { mode:'create'|'edit', form, username? }
-  const [adminModal, setAdminModal] = useState(null)
   const [modalError, setModalError] = useState('')
 
   const onCopy = useCallback(async (key, text) => {
@@ -276,12 +244,6 @@ function CredentialsSection({ creds, loading, active, onReload }) {
   const openEditHandler = (h) => {
     setModalError('')
     setHandlerModal({ mode: 'edit', username: h.username, form: { username: h.username, password: '', reference: h.reference || '', notes: h.notes || '' } })
-  }
-
-  const openEditAdmin = () => {
-    const admin = creds?.admin || {}
-    setModalError('')
-    setAdminModal({ form: { username: admin.username || 'admin', password: '', reference: admin.reference || 'Full dashboard' } })
   }
 
   const saveHandler = async () => {
@@ -303,16 +265,6 @@ function CredentialsSection({ creds, loading, active, onReload }) {
     const ok = await confirm({ title: 'Remove handler?', message: `Delete handler "${h.reference || h.username}"?`, confirmLabel: 'Delete', variant: 'danger' })
     if (!ok) return
     await fetch(`${API_BASE}/data-room/credentials/handlers/${h.username}`, { method: 'DELETE', credentials: 'include' })
-    onReload()
-  }
-
-  const saveAdmin = async () => {
-    const body = { ...adminModal.form }
-    if (!body.password) delete body.password
-    const res = await fetch(`${API_BASE}/data-room/credentials/admin`, { method: 'PATCH', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-    const data = await res.json()
-    if (data.status !== 'ok') { setModalError(data.message || 'Save failed'); return }
-    setAdminModal(null)
     onReload()
   }
 
@@ -361,7 +313,7 @@ function CredentialsSection({ creds, loading, active, onReload }) {
                 isAdmin
                 activeKey={activeKey}
                 onCopy={onCopy}
-                onEdit={openEditAdmin}
+                onEdit={null}
                 onDelete={() => {}}
               />
             )}
@@ -400,15 +352,6 @@ function CredentialsSection({ creds, loading, active, onReload }) {
           onChange={(f) => setHandlerModal((s) => ({ ...s, form: f }))}
           onSave={saveHandler}
           onClose={() => setHandlerModal(null)}
-          error={modalError}
-        />
-      )}
-      {adminModal && (
-        <AdminModal
-          form={adminModal.form}
-          onChange={(f) => setAdminModal((s) => ({ ...s, form: f }))}
-          onSave={saveAdmin}
-          onClose={() => setAdminModal(null)}
           error={modalError}
         />
       )}
