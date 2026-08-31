@@ -1224,6 +1224,29 @@ def validate_result(
         safe_status, rejection_reason = validate_interview_event(value["status"], context)
     else:
         safe_status, rejection_reason = validate_lifecycle_event(value["status"], context)
+        # Primary and validator can agree that a message is a genuine lifecycle
+        # event while choosing an adjacent stage (for example, calling an
+        # attached appointment letter JOINING_CONFIRMED). The backend-final
+        # layer may correct that stage only when the deterministic source parser
+        # has already selected a canonical, explicit lifecycle transition and
+        # that transition passes its own closed-world validator. This does not
+        # rescue NONE/promotional context, unknown statuses, or model
+        # disagreement; each of those continues to fail closed above/below.
+        if (
+            safe_status == "NONE"
+            and rejection_reason == "PROPOSED_EVENT_NOT_SUPPORTED_BY_ASSERTIVE_CONTEXT"
+        ):
+            asserted_status = str(context.get("lifecycle_event") or "NONE").upper()
+            corrected_status, _corrected_reason = validate_lifecycle_event(
+                asserted_status, context,
+            )
+            if corrected_status != "NONE":
+                safe_status = corrected_status
+                rejection_reason = None
+                value["backend_stage_corrected_from"] = proposed_status
+                value["backend_stage_resolution_reason"] = (
+                    "MODEL_STAGE_MISMATCH_CORRECTED_BY_EXPLICIT_CONTEXT"
+                )
     if safe_status == "NONE":
         value.update(
             status="IGNORED_NOT_OFFER_RELATED",
@@ -1298,7 +1321,11 @@ def validate_result(
     # is persisted, so the routing gate sees a code without being loosened.
     value["evidence"] = [normalise_evidence_meaning(item) for item in entailing]
     value["backend_transition_validated"] = True
-    value["backend_validation_reason"] = "EXPLICIT_TRANSITION_ENTAILED"
+    value["backend_validation_reason"] = (
+        "EXPLICIT_TRANSITION_ENTAILED_AFTER_STAGE_CORRECTION"
+        if value.get("backend_stage_corrected_from")
+        else "EXPLICIT_TRANSITION_ENTAILED"
+    )
     auto_threshold = max(0.8, min(0.99, float(os.getenv("AI_RECRUITMENT_AUTO_ACCEPT_THRESHOLD", "0.90"))))
     review_threshold = max(0.0, min(1.0, float(os.getenv("OLLAMA_CONFIDENCE_THRESHOLD", "0.75"))))
     if confidence < review_threshold:
@@ -1578,6 +1605,26 @@ INTERVIEW_CONFIRMED, INTERVIEW_RESCHEDULED, INTERVIEW_CANCELLED,
 CANDIDATE_REJECTED, or JOINED. A specific confirmed joining date and post-selection
 logistics can establish JOINING_CONFIRMED even when the same email says
 "shortlisted". In that case add WORDING_STATUS_CONFLICT.
+
+Use these stages literally and do not collapse one explicit transition into a nearby
+stage:
+- APPOINTMENT_LETTER_RECEIVED means the recipient's actual appointment letter is
+  attached, enclosed, released, or otherwise delivered. It is not JOINING_CONFIRMED
+  unless the source separately confirms a joining arrangement.
+- OFFER_LETTER_RECEIVED means the recipient's actual formal or official offer letter
+  is attached, enclosed, released, or otherwise delivered. Released is not approved;
+  use OFFER_APPROVED only when the source explicitly says the offer was approved.
+- POST_SELECTION_ONBOARDING means the recipient is asked to complete actual
+  pre-onboarding, pre-joining, or onboarding formalities. A mention of a joining date
+  as the deadline or context does not make it JOINING_DATE_UPDATED.
+- JOINING_DATE_UPDATED requires an explicit change, revision, or replacement of an
+  existing joining date. JOINING_CONFIRMED requires an explicit confirmed joining
+  arrangement or date.
+- BACKGROUND_VERIFICATION means the recipient is asked to begin or complete an actual
+  employment background-check or BGV process.
+- DOCUMENT_VERIFICATION means the recipient is asked to submit or upload documents
+  for candidate, employment, or hiring verification. That request alone does not mean
+  SELECTED or JOINING_CONFIRMED.
 
 Do not track job recommendations, alerts, profile matches, invitations to apply,
 incomplete applications, recruiter introductions, application acknowledgements,

@@ -251,6 +251,25 @@ def test_validator_uses_primary_stage_contract_without_primary_anchoring():
     assert "return INTERVIEW_CONFIRMED, not INTERVIEW_SHORTLISTED" in agent.VALIDATOR_PROMPT
 
 
+@pytest.mark.parametrize(
+    ("status", "distinction"),
+    [
+        ("APPOINTMENT_LETTER_RECEIVED", "It is not JOINING_CONFIRMED"),
+        ("OFFER_LETTER_RECEIVED", "Released is not approved"),
+        ("POST_SELECTION_ONBOARDING", "does not make it JOINING_DATE_UPDATED"),
+        ("JOINING_DATE_UPDATED", "requires an explicit change"),
+        ("BACKGROUND_VERIFICATION", "employment background-check or BGV process"),
+        ("DOCUMENT_VERIFICATION", "does not mean SELECTED or JOINING_CONFIRMED"),
+    ],
+)
+def test_both_model_passes_share_literal_lifecycle_stage_distinctions(status, distinction):
+    classifier = " ".join(agent.CLASSIFIER_PROMPT.split())
+    validator = " ".join(agent.VALIDATOR_PROMPT.split())
+    assert status in classifier
+    assert distinction in classifier
+    assert distinction in validator
+
+
 def test_backend_forces_classification_to_match_validated_status():
     value = _model_result(
         "INTERVIEW_SHORTLISTED",
@@ -274,6 +293,43 @@ def test_backend_forces_classification_to_match_validated_status():
     assert value["classification"] == "interview_shortlisted"
     assert value["candidate_status"] == "Interview Shortlisted"
     assert value["backend_transition_validated"] is True
+
+
+@pytest.mark.parametrize(
+    ("model_status", "source_status", "subject", "body"),
+    [
+        (
+            "OFFER_LETTER_RECEIVED", "APPOINTMENT_LETTER_RECEIVED",
+            "Your appointment letter", "Dear Candidate, Your appointment letter is attached.",
+        ),
+        (
+            "OFFER_APPROVED", "OFFER_LETTER_RECEIVED",
+            "Your offer has been released", "Dear Candidate, Your official offer letter has been released.",
+        ),
+        (
+            "JOINING_DATE_UPDATED", "POST_SELECTION_ONBOARDING",
+            "Welcome - pre-onboarding", "Please complete the pre-onboarding formalities before your joining date.",
+        ),
+        (
+            "SELECTED", "DOCUMENT_VERIFICATION",
+            "Documents required for verification", "Please upload the documents for verification to continue your hiring process.",
+        ),
+    ],
+)
+def test_backend_final_corrects_only_to_an_explicit_validated_source_stage(
+    model_status, source_status, subject, body,
+):
+    value = _model_result(model_status, body)
+
+    agent.validate_result(value, _message(subject, body), [])
+
+    classification = store._STATUS_CLASSIFICATION[source_status]
+    assert value["status"] == source_status
+    assert value["classification"] == classification
+    assert value["candidate_status"] == store._CLASSIFICATION_STATUS[classification]
+    assert value["backend_transition_validated"] is True
+    assert value["backend_stage_corrected_from"] == model_status
+    assert value["backend_validation_reason"] == "EXPLICIT_TRANSITION_ENTAILED_AFTER_STAGE_CORRECTION"
 
 
 def test_record_analysis_writes_each_decision_layer_to_its_own_column(monkeypatch):
