@@ -43,8 +43,9 @@ def test_required_realtime_event_contract_is_emitted():
     source=Path('services/recruitment_mail_agent.py').read_text(encoding='utf-8')
     worker=Path('workers/recruitment_mail_worker.py').read_text(encoding='utf-8')
     booking=Path('services/interview_auto_booking.py').read_text(encoding='utf-8')
+    mail_store=Path('core/recruitment_mail_store.py').read_text(encoding='utf-8')
     for event in ('mail_received','mail_ai_analyzing','interview_detected','auto_booking_started','slot_auto_booked','slot_booking_blocked','interview_rescheduled','interview_cancelled','candidate_status_updated','notification_created','mail_processing_failed'):
-        assert event in source or event in worker or event in booking
+        assert event in source or event in worker or event in booking or event in mail_store
 
 
 def _review_event(classification, *, interview=None, evidence=None, **structured):

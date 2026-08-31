@@ -727,7 +727,7 @@ def _execute_auto_booking(
     existing_audit = mail_store.booking_audit_for_message(message["provider_message_id"], classification)
     if existing_audit and existing_audit.get("auto_booked"):
         logger.info("Duplicate Gmail interview outcome ignored correlation_id=%s gmail_message_id=%s", correlation_id, message["provider_message_id"])
-        return {"status": existing_audit.get("booking_status") or "Already Processed", "event_type": "notification_created",
+        return {"status": existing_audit.get("booking_status") or "Already Processed", "event_type": "duplicate_booking_ignored",
                 "booking": {"id": existing_audit.get("booking_id")}, "audit": existing_audit,
                 "notification": notification, "duplicate": True}
     historical = historical_booking_disposition(result, classification)

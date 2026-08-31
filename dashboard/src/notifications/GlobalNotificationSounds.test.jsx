@@ -2,7 +2,10 @@ import { cleanup, render } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 
 let mailHandler
-vi.mock('./mailEventStream.js', () => ({ subscribeMailEvents: handler => { mailHandler = handler; return () => {} } }))
+vi.mock('./mailEventStream.js', () => ({
+  subscribeMailEvents: handler => { mailHandler = handler; return () => {} },
+  traceMailAlert: vi.fn(),
+}))
 vi.mock('../context/AuthContext.jsx', () => ({ useAuth: () => ({ authenticated: true }) }))
 vi.mock('./useInterviewReminders.js', () => ({ useInterviewReminders: () => {} }))
 

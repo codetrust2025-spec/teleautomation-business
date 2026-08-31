@@ -1805,12 +1805,41 @@ def create_monitoring_notification(event: dict[str, Any], analysis: dict[str, An
           classification,candidate_status,company_name,job_role,email_subject,sender_name,sender_email,
           email_received_at,ai_confidence,ai_summary,ai_reason,recommended_action,priority,created_at,updated_at)
           VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now(),now())
-          ON CONFLICT(gmail_message_id,classification) DO UPDATE SET updated_at=now() RETURNING *""",
+          ON CONFLICT(gmail_message_id,classification) DO NOTHING RETURNING *""",
           (notification_id,event['candidate_id'],name,email or recipient_email,mailbox_id,provider_id,thread_id,analysis['id'],event['id'],
            classification,candidate_status,company.get('name') or event.get('company_name'),job.get('title') or event.get('job_title'),
            subject,sender_name,sender_email,sent_at,confidence,str(event.get('summary') or structured.get('summary') or '')[:1000],
            reason,action,priority))
-        return _rows(cur)[0]
+        inserted = _rows(cur)
+        if not inserted:
+            # A reprocess updates the existing row but is not a second alert.
+            # Returning the same distinction to the caller prevents it from
+            # publishing another `notification_created` event and sound.
+            cur.execute("""UPDATE mail_monitoring_notifications SET updated_at=now()
+              WHERE gmail_message_id=%s AND classification=%s RETURNING *""",
+              (provider_id, classification))
+            return _rows(cur)[0]
+
+        notification = inserted[0]
+        # The notification row and its creation event are one transaction. A
+        # process exit between persistence and WebSocket fan-out can therefore
+        # delay delivery, but can no longer leave a genuine alert with no
+        # durable realtime event for replay/tailing.
+        realtime_payload = {
+            "notification_id": notification["id"],
+            "candidate_id": event.get("candidate_id"),
+            "candidate_name": notification.get("candidate_name"),
+            "company_name": notification.get("company_name"),
+            "classification": classification,
+            "status": candidate_status,
+            "confidence": round(confidence * 100),
+            "priority": priority,
+            "provider_message_id": provider_id,
+        }
+        notification["_created_realtime_event"] = _record_realtime_event(
+            cur, "notification_created", realtime_payload,
+        )
+        return notification
 
 
 def finalize_detection(event: dict[str, Any], *, result: dict[str, Any], model: str, duration_ms: int) -> dict[str, Any]:
@@ -1853,14 +1882,20 @@ def finalize_detection(event: dict[str, Any], *, result: dict[str, Any], model: 
     return event
 
 
-def record_realtime_event(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+def _record_realtime_event(
+    cur: Any, event_type: str, payload: dict[str, Any],
+) -> dict[str, Any]:
     event_id = _id()
     safe = dict(payload)
+    cur.execute("""INSERT INTO mail_realtime_events(id,event_type,notification_id,candidate_id,payload,created_at)
+      VALUES(%s,%s,%s,%s,%s::jsonb,now()) RETURNING *""",
+      (event_id,event_type,safe.get('notification_id'),safe.get('candidate_id'),json.dumps(safe,default=str)))
+    return _rows(cur)[0]
+
+
+def record_realtime_event(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
     with get_connection() as conn, conn.cursor() as cur:
-        cur.execute("""INSERT INTO mail_realtime_events(id,event_type,notification_id,candidate_id,payload,created_at)
-          VALUES(%s,%s,%s,%s,%s::jsonb,now()) RETURNING *""",
-          (event_id,event_type,safe.get('notification_id'),safe.get('candidate_id'),json.dumps(safe,default=str)))
-        return _rows(cur)[0]
+        return _record_realtime_event(cur, event_type, payload)
 
 
 def list_realtime_events(*, after_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
