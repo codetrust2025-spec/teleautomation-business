@@ -415,6 +415,7 @@ def create_handler_login(row: dict) -> tuple[dict | None, str | None]:
     entry: dict = {
         "username": user,
         "password": auth.stored_handler_password(user) or "",
+        "account_id": auth.stored_handler_account_id(user),
         "reference": ref,
         "role": "handler",
     }
@@ -422,6 +423,42 @@ def create_handler_login(row: dict) -> tuple[dict | None, str | None]:
         entry["notes"] = str(row.get("notes") or "").strip()
     handlers.append(entry)
     data["handlers"] = sorted(handlers, key=lambda r: str(r.get("reference") or r.get("username")))
+    _save(data)
+    return get_credentials(), None
+
+
+def rename_handler_login(username: str, new_username: str) -> tuple[dict | None, str | None]:
+    """Rename a handler in both durable stores while preserving account identity."""
+    current = str(username or "").strip()
+    replacement = str(new_username or "").strip()
+    if not current or not replacement:
+        return None, "Current and new usernames are required"
+    from core import dashboard_auth_vps as auth
+
+    err = auth.admin_rename_handler(current, replacement)
+    if err:
+        return None, err
+    data = _load()
+    handlers = list(data.get("handlers") or [])
+    found = False
+    for index, row in enumerate(handlers):
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("username") or "").strip().casefold() != current.casefold():
+            continue
+        handlers[index] = {
+            **row,
+            "username": replacement,
+            "account_id": auth.stored_handler_account_id(replacement),
+        }
+        found = True
+        break
+    if not found:
+        # Keep the authoritative store and its mirror aligned if the second
+        # half of the rename cannot be completed.
+        auth.admin_rename_handler(replacement, current)
+        return None, "Handler mirror not found"
+    data["handlers"] = handlers
     _save(data)
     return get_credentials(), None
 
