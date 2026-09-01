@@ -41,6 +41,24 @@ def _payroll_admin(request: Request) -> dict:
     return profile
 
 
+def _attendance_handler_profiles() -> list[dict]:
+    inventory = auth.audit_operator_accounts()
+    profiles = []
+    for row in inventory["users"]:
+        if str(row.get("role") or "").casefold() != "handler":
+            continue
+        if not row.get("active") or row.get("orphaned"):
+            continue
+        profiles.append({
+            "username": row["username"],
+            "role": "handler",
+            "reference": row["name"],
+            "display_name": row["name"],
+            "account_id": row["account_id"],
+        })
+    return profiles
+
+
 async def _call(function, *args, **kwargs):
     try:
         return await asyncio.to_thread(function, *args, **kwargs)
@@ -154,3 +172,23 @@ async def operations_user_audit(request: Request):
             ],
         },
     }
+
+
+@router.get("/admin/overview")
+async def attendance_admin_overview(request: Request):
+    _payroll_admin(request)
+    profiles = await asyncio.to_thread(_attendance_handler_profiles)
+    return await _call(attendance.admin_overview, profiles)
+
+
+@router.get("/admin/history")
+async def attendance_admin_history(
+    request: Request,
+    account_id: str = Query(min_length=1, max_length=200),
+):
+    _payroll_admin(request)
+    profiles = await asyncio.to_thread(_attendance_handler_profiles)
+    profile = next((row for row in profiles if row["account_id"] == account_id), None)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Handler account not found")
+    return await _call(attendance.admin_history, profile)

@@ -26,6 +26,21 @@ function formatDateTime(value) {
   })
 }
 
+function overviewStatus(row) {
+  if (row.today_status === 'VERIFIED') return 'Verified'
+  if (row.today_status === 'NOT_REQUIRED') {
+    return row.today_reason === 'PUBLIC_HOLIDAY' ? 'Public holiday' : 'Not required'
+  }
+  if (row.today_status === 'NOT_OPEN') return 'Opens at 9:00 AM'
+  return 'Not marked'
+}
+
+function ratio(value) {
+  if (value == null) return 'Not yet calculated'
+  const number = Number(value)
+  return `${number.toFixed(number % 1 ? 2 : 0)}%${number === 100 ? ' ✅' : ''}`
+}
+
 export function AttendancePanel() {
   const auth = useAuth()
   const attendance = useAttendance()
@@ -33,6 +48,10 @@ export function AttendancePanel() {
   const [recommendations, setRecommendations] = useState([])
   const [users, setUsers] = useState([])
   const [findings, setFindings] = useState(null)
+  const [overview, setOverview] = useState([])
+  const [overviewPeriod, setOverviewPeriod] = useState(null)
+  const [selectedHistory, setSelectedHistory] = useState(null)
+  const [historyLoading, setHistoryLoading] = useState(false)
   const [holidayDate, setHolidayDate] = useState('')
   const [holidayName, setHolidayName] = useState('')
   const [adminError, setAdminError] = useState('')
@@ -44,15 +63,18 @@ export function AttendancePanel() {
   const loadAdmin = useCallback(async () => {
     if (!isAdmin) return
     try {
-      const [holidayPayload, recommendationPayload, userPayload] = await Promise.all([
-        json(await fetch(`${API}/attendance/holidays?year=${yearValue}&month=${monthValue}`, { credentials: 'include' })),
-        json(await fetch(`${API}/attendance/salary-recommendations?review_status=PENDING`, { credentials: 'include' })),
-        json(await fetch(`${API}/attendance/admin/users`, { credentials: 'include' })),
+      const [holidayPayload, recommendationPayload, userPayload, overviewPayload] = await Promise.all([
+        fetch(`${API}/attendance/holidays?year=${yearValue}&month=${monthValue}`, { credentials: 'include' }).then(json),
+        fetch(`${API}/attendance/salary-recommendations?review_status=PENDING`, { credentials: 'include' }).then(json),
+        fetch(`${API}/attendance/admin/users`, { credentials: 'include' }).then(json),
+        fetch(`${API}/attendance/admin/overview`, { credentials: 'include' }).then(json),
       ])
       setHolidays(holidayPayload.holidays || [])
       setRecommendations(recommendationPayload.recommendations || [])
       setUsers(userPayload.users || [])
       setFindings(userPayload.findings || null)
+      setOverview(overviewPayload.users || [])
+      setOverviewPeriod({ start: overviewPayload.period_start, end: overviewPayload.period_end })
       setAdminError('')
     } catch (requestError) {
       setAdminError(requestError.message)
@@ -60,6 +82,27 @@ export function AttendancePanel() {
   }, [isAdmin, monthValue, yearValue])
 
   useEffect(() => { loadAdmin() }, [loadAdmin])
+
+  const openHistory = async row => {
+    setHistoryLoading(true)
+    setAdminError('')
+    try {
+      const payload = await json(await fetch(
+        `${API}/attendance/admin/history?account_id=${encodeURIComponent(row.account_id)}`,
+        { credentials: 'include' },
+      ))
+      setSelectedHistory(payload)
+    } catch (requestError) {
+      setAdminError(requestError.message)
+    } finally {
+      setHistoryLoading(false)
+    }
+  }
+
+  const refreshPage = async () => {
+    if (isAdmin) await Promise.all([attendance.refresh(), loadAdmin()])
+    else await attendance.refresh()
+  }
 
   const addHoliday = async event => {
     event.preventDefault()
@@ -108,9 +151,7 @@ export function AttendancePanel() {
 
   const eligibility = attendance.data?.eligibility
   const popup = attendance.data?.popup
-  const ratioLabel = eligibility?.attendance_ratio == null
-    ? 'Not yet calculated'
-    : `${Number(eligibility.attendance_ratio).toFixed(Number(eligibility.attendance_ratio) % 1 ? 2 : 0)}%`
+  const ratioLabel = ratio(eligibility?.attendance_ratio)
   const todayStatus = useMemo(() => {
     if (!popup) return 'Loading attendance…'
     if (popup.marked) return 'Attendance verified today'
@@ -124,24 +165,50 @@ export function AttendancePanel() {
     <div className="attendance-page">
       <header className="attendance-page__header">
         <div><p className="attendance-eyebrow">WORKING-DAY ATTENDANCE</p><h2>Attendance & earnings eligibility</h2></div>
-        <button type="button" className="attendance-secondary-button" onClick={attendance.refresh} disabled={attendance.loading}>Refresh</button>
+        <button type="button" className="attendance-secondary-button" onClick={refreshPage} disabled={attendance.loading}>Refresh</button>
       </header>
       {attendance.error && <p className="attendance-error" role="alert">{attendance.error}</p>}
-      <section className="attendance-summary-grid">
+      {!isAdmin && <section className="attendance-summary-grid">
         <article className="attendance-stat"><span>Today</span><strong>{todayStatus}</strong><small>{attendance.data?.profile?.display_name || auth.displayName}</small></article>
-        <article className="attendance-stat"><span>Attendance Success</span><strong>{ratioLabel}{eligibility?.attendance_ratio === 100 ? ' ✅' : ''}</strong><small>{eligibility ? `${eligibility.attended_working_days} / ${eligibility.required_working_days} Working Days` : '—'}</small></article>
+        <article className="attendance-stat"><span>Attendance Success</span><strong>{ratioLabel}</strong><small>{eligibility ? `${eligibility.attended_working_days} / ${eligibility.required_working_days} Working Days` : '—'}</small></article>
         <article className="attendance-stat"><span>Attendance eligibility tier</span><strong>{eligibility ? money.format(eligibility.eligibility_amount) : '—'}</strong><small>Salary changes require payroll-admin approval</small></article>
-      </section>
+      </section>}
 
-      <section className="attendance-section">
+      {!isAdmin && <section className="attendance-section">
         <div className="attendance-section__head"><div><h3>Your verified attendance</h3><p>{eligibility ? `${formatDate(eligibility.period_start)} – ${formatDate(eligibility.period_end)}` : 'Current evaluation period'}</p></div></div>
         <div className="attendance-table-wrap"><table className="attendance-table"><thead><tr><th>Working date</th><th>Marked at</th><th>Status</th><th>Office network</th></tr></thead><tbody>
           {(attendance.data?.records || []).length === 0 && <tr><td colSpan={4}>No verified attendance in this period.</td></tr>}
           {(attendance.data?.records || []).map(row => <tr key={row.attendance_date}><td>{formatDate(row.attendance_date)}</td><td>{formatDateTime(row.marked_at)}</td><td>{row.status}</td><td>{row.office_network_verified ? 'Verified' : 'Not verified'}</td></tr>)}
         </tbody></table></div>
-      </section>
+      </section>}
 
       {isAdmin && <>
+        <section className="attendance-section">
+          <div className="attendance-section__head"><div><h3>All Users Attendance</h3><p>{overviewPeriod ? `${formatDate(overviewPeriod.start)} – ${formatDate(overviewPeriod.end)}` : 'Current evaluation period'} · Handler accounts only</p></div><span className="attendance-count">{overview.length} handlers</span></div>
+          {adminError && <p className="attendance-error" role="alert">{adminError}</p>}
+          <div className="attendance-table-wrap"><table className="attendance-table"><thead><tr><th>Name</th><th>Today status</th><th>Marked time</th><th>Working days</th><th>Attendance %</th><th>Office verified</th><th>Eligibility</th></tr></thead><tbody>
+            {overview.length === 0 && <tr><td colSpan={7}>No active handler accounts found.</td></tr>}
+            {overview.map(row => <tr key={row.account_id}>
+              <td><button type="button" className="attendance-user-link" onClick={() => openHistory(row)}>{row.display_name}</button><small className="attendance-cell-note">{row.username}</small></td>
+              <td>{overviewStatus(row)}</td>
+              <td>{row.marked_at ? formatDateTime(row.marked_at) : '—'}</td>
+              <td>{row.attended_working_days} / {row.required_working_days}</td>
+              <td>{ratio(row.attendance_ratio)}</td>
+              <td>{row.office_network_verified == null ? '—' : row.office_network_verified ? 'Verified' : 'Not verified'}</td>
+              <td>{money.format(row.eligibility_amount)}</td>
+            </tr>)}
+          </tbody></table></div>
+        </section>
+
+        {selectedHistory && <section className="attendance-section">
+          <div className="attendance-section__head"><div><h3>{selectedHistory.profile.display_name} attendance history</h3><p>{selectedHistory.eligibility ? `${formatDate(selectedHistory.eligibility.period_start)} – ${formatDate(selectedHistory.eligibility.period_end)}` : 'Attendance history'}</p></div><button type="button" className="attendance-secondary-button" onClick={() => setSelectedHistory(null)}>Close</button></div>
+          <div className="attendance-table-wrap"><table className="attendance-table"><thead><tr><th>Working date</th><th>Marked at</th><th>Status</th><th>Office network</th></tr></thead><tbody>
+            {historyLoading && <tr><td colSpan={4}>Loading attendance history…</td></tr>}
+            {!historyLoading && selectedHistory.records.length === 0 && <tr><td colSpan={4}>No verified attendance records.</td></tr>}
+            {!historyLoading && selectedHistory.records.map(row => <tr key={row.attendance_date}><td>{formatDate(row.attendance_date)}</td><td>{formatDateTime(row.marked_at)}</td><td>{row.status}</td><td>{row.office_network_verified ? 'Verified' : 'Not verified'}</td></tr>)}
+          </tbody></table></div>
+        </section>}
+
         <section className="attendance-section">
           <div className="attendance-section__head"><div><h3>Public holidays</h3><p>Configured dates are excluded from attendance and eligibility calculations.</p></div></div>
           <form className="attendance-holiday-form" onSubmit={addHoliday}>
@@ -159,7 +226,6 @@ export function AttendancePanel() {
 
         <section className="attendance-section">
           <div className="attendance-section__head"><div><h3>Operations users</h3><p>Credential-safe account inventory and attendance identity mapping.</p></div></div>
-          {adminError && <p className="attendance-error" role="alert">{adminError}</p>}
           <div className="attendance-table-wrap"><table className="attendance-table"><thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Status</th><th>Password</th><th>Last login</th><th>Account source</th></tr></thead><tbody>{users.map(row => <tr key={`${row.account_id}:${row.account_source}`}><td>{row.name}</td><td>{row.username}</td><td>{row.role}</td><td>{row.active ? 'Active' : 'Inactive'}</td><td>{row.password_configured ? 'Configured' : 'Not configured'}</td><td>{formatDateTime(row.last_login)}</td><td>{row.account_source}</td></tr>)}</tbody></table></div>
           {findings && <p className="attendance-findings">Duplicates: {findings.duplicate_identity_groups.length} · Inactive: {findings.inactive_usernames.length} · Orphaned: {findings.orphaned_usernames.length} · Multiple auth sources: {findings.multiple_auth_source_usernames.length}</p>}
         </section>
