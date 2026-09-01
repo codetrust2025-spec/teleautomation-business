@@ -691,15 +691,16 @@ def list_recommendations(status_filter: str = "PENDING") -> list[dict[str, Any]]
         if status_value == "ALL":
             cur.execute(
                 """SELECT * FROM operations_salary_change_recommendations
-                   WHERE account_id LIKE 'handler:%'
-                   ORDER BY calculated_at DESC LIMIT 500"""
+                   WHERE account_id LIKE %s
+                   ORDER BY calculated_at DESC LIMIT 500""",
+                ("handler:%",),
             )
         else:
             cur.execute(
                 """SELECT * FROM operations_salary_change_recommendations
-                   WHERE account_id LIKE 'handler:%' AND review_status=%s
+                   WHERE account_id LIKE %s AND review_status=%s
                    ORDER BY calculated_at DESC LIMIT 500""",
-                (status_value,),
+                ("handler:%", status_value),
             )
         return _json_safe([_as_dict(cur, row) for row in cur.fetchall()])
 

@@ -289,6 +289,29 @@ def test_generic_admin_cannot_mark_attendance(monkeypatch):
         )
 
 
+def test_recommendation_filter_uses_bound_handler_prefix(monkeypatch):
+    class RecommendationCursor:
+        description = []
+        def __init__(self): self.calls = []
+        def __enter__(self): return self
+        def __exit__(self, *_args): return False
+        def execute(self, sql, params=None): self.calls.append((sql, params))
+        def fetchall(self): return []
+
+    cursor = RecommendationCursor()
+
+    @contextmanager
+    def connection():
+        yield _Connection(cursor)
+
+    monkeypatch.setattr(attendance, "use_postgres", lambda: True)
+    monkeypatch.setattr(attendance, "get_connection", connection)
+    assert attendance.list_recommendations("PENDING") == []
+    assert cursor.calls[-1][1] == ("handler:%", "PENDING")
+    assert attendance.list_recommendations("ALL") == []
+    assert cursor.calls[-1][1] == ("handler:%",)
+
+
 def test_admin_overview_uses_stable_account_ids_and_excludes_admin(monkeypatch):
     class OverviewCursor:
         def __enter__(self): return self
