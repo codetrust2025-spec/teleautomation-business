@@ -24,6 +24,7 @@ from typing import Any
 import yaml
 
 from core.config import BASE_DIR, DATA_DIR
+from core.password_hashing import hash_password, needs_rehash, verify_password
 
 SESSION_COOKIE = "ta_operations_session"
 SESSION_TTL_SEC = 7 * 24 * 3600
@@ -321,18 +322,62 @@ def _handlers_from_credentials_copy() -> list[dict[str, str]]:
     return out
 
 
+def _migrate_plaintext_passwords(rows: list[dict[str, str]]) -> tuple[list[dict[str, str]], bool]:
+    """Replace any password still stored as typed with a hash of it.
+
+    Done on read rather than only on login, so a password stops being readable
+    as soon as anything touches the store -- waiting for each person to sign in
+    would leave the rest sitting in plaintext indefinitely.
+    """
+    changed = False
+    out: list[dict[str, str]] = []
+    for row in rows:
+        stored = str(row.get("password") or "")
+        if stored and needs_rehash(stored):
+            row = {**row, "password": hash_password(stored)}
+            changed = True
+        out.append(row)
+    return out, changed
+
+
+def _mirror_hashed_passwords(rows: list[dict[str, str]]) -> None:
+    """Push hashed passwords into `credentials.json` so it holds none either.
+
+    The mirror is a second copy of the same secret, on the same volume, and a
+    fix that hashed only the auth store would have left it readable there.
+    Best effort: a mirror that cannot be written must not fail a login.
+    """
+    try:
+        from features import data_room_credentials_store as creds
+
+        for row in rows:
+            creds.set_handler_password_mirror(row["username"], row["password"])
+    except Exception:
+        # Swallowed deliberately, and without logging: this module logs nothing
+        # at all, which is the simplest way to guarantee a password or a hash
+        # never reaches a log line. A mirror that cannot be written leaves the
+        # auth store correct, which is the copy that decides logins.
+        pass
+
+
 def _load_handlers_yaml() -> list[dict[str, str]]:
     path = _handlers_yaml_path()
     if os.path.isfile(path):
-        return _read_handlers_yaml(path)
+        rows, changed = _migrate_plaintext_passwords(_read_handlers_yaml(path))
+        if changed:
+            _save_handlers_yaml(rows)
+            _mirror_hashed_passwords(rows)
+        return rows
     # First read after the move. Recover from the old location when the
     # container still holds it, and otherwise from the mirror on the volume,
     # then write the result where it will now survive.
     recovered = _read_handlers_yaml(_legacy_handlers_yaml_path())
     if not recovered:
         recovered = _handlers_from_credentials_copy()
+    recovered, _ = _migrate_plaintext_passwords(recovered)
     if recovered:
         _save_handlers_yaml(recovered)
+        _mirror_hashed_passwords(recovered)
     return recovered
 
 
@@ -412,7 +457,7 @@ def admin_add_handler(username: str, reference: str, password: str) -> str | Non
     except Exception:
         # Registry unavailable — the username and reference checks above still apply.
         pass
-    rows.append({"username": user, "reference": ref, "password": pwd})
+    rows.append({"username": user, "reference": ref, "password": hash_password(pwd)})
     rows.sort(key=lambda r: r["reference"].lower())
     _save_handlers_yaml(rows)
     reload_handler_accounts()
@@ -439,9 +484,10 @@ def admin_set_handler_password(username: str, password: str) -> str | None:
         return "Username and password are required"
     rows = _load_handlers_yaml()
     found = False
+    hashed = hash_password(pwd)
     for row in rows:
         if row["username"].lower() == user.lower():
-            row["password"] = pwd
+            row["password"] = hashed
             found = True
             break
     if not found:
@@ -449,6 +495,16 @@ def admin_set_handler_password(username: str, password: str) -> str | None:
     _save_handlers_yaml(rows)
     reload_handler_accounts()
     return None
+
+
+def stored_handler_password(username: str) -> str:
+    """The hash now on record for a handler, for mirroring it onward.
+
+    Public because the `credentials.json` mirror has to record the same stored
+    value, and must never be handed the password as typed.
+    """
+    handler = _handler_accounts().get(str(username or "").lower())
+    return str((handler or {}).get("password") or "")
 
 
 def handler_self_reset_password(username: str, reference: str, new_password: str) -> str | None:
@@ -469,7 +525,7 @@ def handler_self_reset_password(username: str, reference: str, new_password: str
     try:
         from features import data_room_credentials_store as creds
 
-        creds.update_handler_login(user, {"password": pwd})
+        creds.set_handler_password_mirror(user, stored_handler_password(user))
     except Exception:
         pass
     return None
@@ -492,7 +548,7 @@ def change_operator_password(username: str, current_password: str, new_password:
         try:
             from features import data_room_credentials_store as creds
 
-            creds.update_handler_login(user, {"password": new})
+            creds.set_handler_password_mirror(user, stored_handler_password(user))
         except Exception:
             pass
         return None
@@ -575,7 +631,7 @@ def resolve_operator_login(username: str, password: str) -> dict[str, Any] | Non
     ):
         return _complete_profile({"username": expected_user, "role": "admin", "reference": None})
     handler = _handler_accounts().get(user.lower())
-    if handler and secrets.compare_digest(pwd, handler["password"]):
+    if handler and verify_password(pwd, handler["password"]):
         return _complete_profile({
             "username": handler["username"],
             "role": "handler",
