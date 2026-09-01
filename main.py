@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from api.routers.candidates import router as candidates_router
+from api.routers.attendance import router as attendance_router
 from api.routers.data_room import router as data_room_router
 from api.routers.expenses import router as expenses_router
 from api.routers.operations_ai import router as operations_ai_router
@@ -33,6 +34,7 @@ install_dashboard_auth(app)
 install_public_slot_routes(app)
 install_recruitment_mail_routes(app)
 app.include_router(candidates_router)
+app.include_router(attendance_router)
 app.include_router(expenses_router)
 app.include_router(data_room_router)
 app.include_router(referrers_router)

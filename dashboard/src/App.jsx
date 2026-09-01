@@ -5,6 +5,7 @@ import { DataRoomPanel } from './components/DataRoomPanel.jsx'
 import { RecruitmentMailPanel } from './components/RecruitmentMailPanel.jsx'
 import { MailMonitoringNotifications } from './components/MailMonitoringNotifications.jsx'
 import { ChangePasswordModal } from './components/ChangePasswordModal.jsx'
+import { AttendancePanel } from './attendance/AttendancePanel.jsx'
 import GlobalNotificationSounds from './notifications/GlobalNotificationSounds.jsx'
 import {
   PendingWorksProvider,
@@ -12,7 +13,7 @@ import {
 } from './dailyOps/PendingWorksProvider.jsx'
 import { useAuth } from './context/AuthContext.jsx'
 
-// The six features Operations ships. Daily Briefing, Mail Audit, Payment
+// The Operations features currently shipped. Daily Briefing, Mail Audit, Payment
 // Reconciliation, BGV Register, Handler Kit and Settings were decommissioned;
 // their panels and backend routes are gone, not hidden, so there is no view id
 // left for them to be reached through.
@@ -20,6 +21,7 @@ import { useAuth } from './context/AuthContext.jsx'
 // then the records behind it.
 const VIEWS = [
   { id: 'daily-ops', label: 'Daily Ops', icon: '▤', badge: 'interviews' },
+  { id: 'attendance', label: 'Attendance', icon: '✓' },
   { id: 'mail-notifications', label: 'Mail Alerts', icon: '🔔' },
   { id: 'ai-recruitment', label: 'AI Mail Review', icon: 'AI' },
   { id: 'candidates', label: 'Candidates', icon: '▣', badge: 'works' },
@@ -49,7 +51,7 @@ function OperationsShell({ view, onNavigate }) {
   const sidebarUserMenuRef = useRef(null)
   const headerUserMenuRef = useRef(null)
   const activeView = VIEWS.find(item => item.id === view) || VIEWS[0]
-  const displayName = auth.username || 'Administrator'
+  const displayName = auth.displayName || auth.username || 'Administrator'
   const userInitials = displayName.slice(0, 2).toUpperCase()
 
   useEffect(() => {
@@ -242,6 +244,7 @@ function OperationsShell({ view, onNavigate }) {
         <main className={`desktop-body business-body${view === 'daily-ops' ? ' desktop-body--daily-ops' : ''}`}>
           {view === 'candidates' && <CandidatesPanel />}
           {view === 'daily-ops' && <DailyOpsPanel onNavCandidates={() => navigate('candidates')} />}
+          {view === 'attendance' && <AttendancePanel />}
           {view === 'ai-recruitment' && <RecruitmentMailPanel />}
           {view === 'mail-notifications' && <MailMonitoringNotifications />}
           {view === 'data-room' && <DataRoomPanel />}

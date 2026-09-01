@@ -2,14 +2,30 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from typing import Any
 import os
 
-from fastapi import FastAPI, Request
+from fastapi import BackgroundTasks, FastAPI, Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from core import dashboard_auth as auth
+
+
+logger = logging.getLogger(__name__)
+
+
+async def _record_auth_activity(profile: dict[str, Any], activity_type: str) -> None:
+    try:
+        from features.attendance_eligibility import record_auth_activity
+
+        await asyncio.to_thread(record_auth_activity, profile, activity_type)
+    except Exception:
+        # Authentication remains available if the audit database is temporarily
+        # unavailable. The failure is visible without exposing credential data.
+        logger.exception("operations auth activity audit failed type=%s", activity_type)
 
 
 def _json(payload: dict[str, Any], status: int = 200) -> JSONResponse:
@@ -40,6 +56,8 @@ def install_dashboard_auth(app: FastAPI) -> None:
                 "username": "dev",
                 "role": "admin",
                 "reference": None,
+                "display_name": "Dev",
+                "account_id": "admin:dev",
             }
         profile = auth.operator_profile_from_cookies(dict(request.cookies))
         username = profile.get("username")
@@ -49,10 +67,12 @@ def install_dashboard_auth(app: FastAPI) -> None:
             "username": username,
             "role": profile.get("role") or "admin",
             "reference": profile.get("reference"),
+            "display_name": profile.get("display_name"),
+            "account_id": profile.get("account_id"),
         }
 
     @app.post("/auth/login")
-    async def auth_login(request: Request, body: dict | None = None):
+    async def auth_login(request: Request, background_tasks: BackgroundTasks, body: dict | None = None):
         payload = body or {}
         username = str(payload.get("username") or "").strip()
         password = str(payload.get("password") or "")
@@ -67,20 +87,31 @@ def install_dashboard_auth(app: FastAPI) -> None:
             profile["username"],
             role=profile.get("role") or "admin",
             reference=profile.get("reference"),
+            display_name=profile.get("display_name"),
+            account_id=profile.get("account_id"),
         )
+        session_profile = auth.parse_session_token(token) or profile
+        # Auth responses must never queue behind an optional attendance-audit
+        # database write. Starlette runs this task after the response is sent.
+        background_tasks.add_task(_record_auth_activity, session_profile, "LOGIN")
         resp = _json(
             {
                 "status": "ok",
                 "username": profile["username"],
                 "role": profile.get("role") or "admin",
                 "reference": profile.get("reference"),
+                "display_name": profile.get("display_name"),
+                "account_id": profile.get("account_id"),
             }
         )
         _set_session_cookie(resp, token)
         return resp
 
     @app.post("/auth/logout")
-    async def auth_logout():
+    async def auth_logout(request: Request, background_tasks: BackgroundTasks):
+        profile = auth.operator_profile_from_cookies(dict(request.cookies))
+        if profile.get("username"):
+            background_tasks.add_task(_record_auth_activity, profile, "LOGOUT")
         resp = _json({"status": "ok"})
         resp.delete_cookie(auth.SESSION_COOKIE, path="/")
         return resp

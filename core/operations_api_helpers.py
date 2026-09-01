@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-from fastapi import Request
+from fastapi import HTTPException, Request
 from fastapi.responses import FileResponse
 
 
@@ -12,6 +12,15 @@ def require_admin(request: Request) -> None:
     from core.dashboard_access import require_fleet_admin
 
     require_fleet_admin(request)
+
+
+def require_payroll_admin(request: Request) -> None:
+    """Strict administrator role for salary-changing operations only."""
+    from core import dashboard_auth_vps as auth
+
+    profile = auth.operator_profile_from_cookies(dict(request.cookies))
+    if not auth.is_payroll_admin_profile(profile):
+        raise HTTPException(status_code=403, detail="Payroll administrator access required")
 
 
 def viewer_reference(request: Request) -> str | None:

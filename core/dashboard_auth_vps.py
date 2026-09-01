@@ -464,10 +464,38 @@ def change_operator_password(username: str, current_password: str, new_password:
     return None
 
 
+def _display_name(username: str, role: str, reference: str | None = None) -> str:
+    if role == "handler" and str(reference or "").strip():
+        return str(reference).strip()
+    configured = str(os.environ.get("DASHBOARD_DISPLAY_NAME") or "").strip()
+    if configured:
+        return configured
+    readable = " ".join(str(username or "").replace("_", " ").replace("-", " ").split())
+    return readable.title() or "Operations User"
+
+
+def _complete_profile(profile: dict[str, Any]) -> dict[str, Any]:
+    username = str(profile.get("username") or "").strip()
+    role = str(profile.get("role") or "admin").strip().lower() or "admin"
+    reference = str(profile.get("reference") or "").strip() or None
+    display_name = str(profile.get("display_name") or "").strip() or _display_name(username, role, reference)
+    account_id = str(profile.get("account_id") or "").strip() or f"{role}:{username.casefold()}"
+    session_id = str(profile.get("session_id") or "").strip()
+    session_hash = hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:20] if session_id else ""
+    return {
+        "username": username,
+        "role": role,
+        "reference": reference,
+        "display_name": display_name,
+        "account_id": account_id,
+        "session_id_hash": session_hash,
+    }
+
+
 def resolve_operator_login(username: str, password: str) -> dict[str, Any] | None:
     """Return operator profile on success: {username, role, reference}."""
     if not auth_enabled():
-        return {"username": "dev", "role": "admin", "reference": None}
+        return _complete_profile({"username": "dev", "role": "admin", "reference": None})
     user = str(username or "").strip()
     pwd = str(password or "")
     if not user or not pwd:
@@ -478,14 +506,14 @@ def resolve_operator_login(username: str, password: str) -> dict[str, Any] | Non
         and secrets.compare_digest(user, expected_user)
         and secrets.compare_digest(pwd, expected_pass)
     ):
-        return {"username": expected_user, "role": "admin", "reference": None}
+        return _complete_profile({"username": expected_user, "role": "admin", "reference": None})
     handler = _handler_accounts().get(user.lower())
     if handler and secrets.compare_digest(pwd, handler["password"]):
-        return {
+        return _complete_profile({
             "username": handler["username"],
             "role": "handler",
             "reference": handler["reference"],
-        }
+        })
     return None
 
 
@@ -508,12 +536,24 @@ def create_session_token(
     *,
     role: str = "admin",
     reference: str | None = None,
+    display_name: str | None = None,
+    account_id: str | None = None,
 ) -> str:
+    profile = _complete_profile({
+        "username": username,
+        "role": role,
+        "reference": reference,
+        "display_name": display_name,
+        "account_id": account_id,
+    })
     payload = {
         "u": username,
         "exp": int(time.time()) + SESSION_TTL_SEC,
         "role": role,
         "ref": reference or "",
+        "name": profile["display_name"],
+        "aid": profile["account_id"],
+        "sid": secrets.token_urlsafe(18),
     }
     raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     sig = hmac.new(_secret(), raw, hashlib.sha256).digest()
@@ -524,7 +564,7 @@ def parse_session_token(token: str | None) -> dict[str, Any] | None:
     if not token:
         return None
     if not auth_enabled():
-        return {"username": "dev", "role": "admin", "reference": None}
+        return _complete_profile({"username": "dev", "role": "admin", "reference": None})
     try:
         raw_part, sig_part = token.split(".", 1)
         raw = urlsafe_b64decode(raw_part.encode("utf-8"))
@@ -543,7 +583,14 @@ def parse_session_token(token: str | None) -> dict[str, Any] | None:
         if role == "handler" and not ref:
             handler = _handler_accounts().get(user.lower())
             ref = handler.get("reference") if handler else None
-        return {"username": user, "role": role, "reference": ref}
+        return _complete_profile({
+            "username": user,
+            "role": role,
+            "reference": ref,
+            "display_name": str(payload.get("name") or "").strip() or None,
+            "account_id": str(payload.get("aid") or "").strip() or None,
+            "session_id": str(payload.get("sid") or "").strip(),
+        })
     except Exception:
         return None
 
@@ -555,7 +602,7 @@ def validate_session_token(token: str | None) -> str | None:
 
 def operator_profile_from_cookies(cookies: dict) -> dict[str, Any]:
     if not auth_enabled():
-        return {"username": "dev", "role": "admin", "reference": None}
+        return _complete_profile({"username": "dev", "role": "admin", "reference": None})
     profile = parse_session_token(cookies.get(SESSION_COOKIE))
     if not profile:
         return {"username": None, "role": None, "reference": None}
@@ -565,6 +612,11 @@ def operator_profile_from_cookies(cookies: dict) -> dict[str, Any]:
 def is_admin_profile(profile: dict[str, Any] | None) -> bool:
     """All authenticated operators (admin + handler) get full dashboard access."""
     return bool((profile or {}).get("username"))
+
+
+def is_payroll_admin_profile(profile: dict[str, Any] | None) -> bool:
+    """Strict role check for payroll, holidays, and attendance administration."""
+    return bool((profile or {}).get("username")) and str((profile or {}).get("role") or "").lower() == "admin"
 
 
 def scoped_reference(profile: dict[str, Any] | None) -> str | None:
@@ -595,3 +647,87 @@ def username_from_request_cookies(cookies: dict) -> str | None:
     if not auth_enabled():
         return "dev"
     return validate_session_token(cookies.get(SESSION_COOKIE))
+
+
+def audit_operator_accounts() -> dict[str, Any]:
+    """Return a credential-free inventory of Operations login identities."""
+    rows: dict[str, dict[str, Any]] = {}
+    admin_username, admin_password = get_credentials()
+    admin_profile = _complete_profile({"username": admin_username, "role": "admin", "reference": None})
+    rows[admin_username.casefold()] = {
+        "name": admin_profile["display_name"],
+        "username": admin_username,
+        "role": "admin",
+        "active": bool(admin_username and admin_password),
+        "password_configured": bool(admin_password),
+        "account_id": admin_profile["account_id"],
+        "account_sources": ["environment/admin override"],
+        "orphaned": False,
+    }
+    for handler in _load_handlers_yaml():
+        username = str(handler.get("username") or "").strip()
+        profile = _complete_profile({
+            "username": username,
+            "role": "handler",
+            "reference": handler.get("reference"),
+        })
+        rows[username.casefold()] = {
+            "name": profile["display_name"],
+            "username": username,
+            "role": "handler",
+            "active": bool(handler.get("password")),
+            "password_configured": bool(handler.get("password")),
+            "account_id": profile["account_id"],
+            "account_sources": ["config/dashboard_handlers.yaml"],
+            "orphaned": False,
+        }
+
+    try:
+        from features import data_room_credentials_store
+
+        copied = data_room_credentials_store.get_credentials()
+        copied_rows = []
+        if isinstance(copied.get("admin"), dict):
+            copied_rows.append(dict(copied["admin"], role="admin"))
+        copied_rows.extend(
+            dict(item, role="handler")
+            for item in copied.get("handlers") or []
+            if isinstance(item, dict)
+        )
+        for item in copied_rows:
+            username = str(item.get("username") or "").strip()
+            if not username:
+                continue
+            key = username.casefold()
+            if key in rows:
+                rows[key]["account_sources"].append("data-room credential copy")
+                continue
+            profile = _complete_profile({
+                "username": username,
+                "role": item.get("role") or "handler",
+                "reference": item.get("reference"),
+            })
+            rows[key] = {
+                "name": profile["display_name"],
+                "username": username,
+                "role": profile["role"],
+                "active": False,
+                "password_configured": bool(item.get("password")),
+                "account_id": profile["account_id"],
+                "account_sources": ["data-room credential copy only"],
+                "orphaned": True,
+            }
+    except Exception:
+        pass
+
+    reference_groups: dict[str, list[str]] = {}
+    for row in rows.values():
+        key = str(row.get("name") or "").strip().casefold()
+        if key:
+            reference_groups.setdefault(key, []).append(row["username"])
+    duplicates = [users for users in reference_groups.values() if len(users) > 1]
+    return {
+        "users": sorted(rows.values(), key=lambda item: (item["role"], item["name"].casefold())),
+        "duplicate_identity_groups": duplicates,
+        "orphaned_usernames": sorted(row["username"] for row in rows.values() if row["orphaned"]),
+    }
