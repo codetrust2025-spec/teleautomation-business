@@ -147,7 +147,7 @@ _TRANSITION_ASSERTIONS: dict[str, tuple[str, ...]] = {
         r"\bshortlisted for (?:the )?(?:next |technical |hr )?interview\b",
     ),
     "INTERVIEW_SHORTLISTED": (
-        r"\b(?:you (?:have been|are)|your (?:profile|candidature) (?:has been|is)) shortlisted.{0,100}\b(?:interview|next (?:stage|round)|hr discussion)\b",
+        r"\b(?:you (?:have been|are|got)|your (?:profile|candidature) (?:has been|is|got)) shortlisted.{0,100}\b(?:interview|next (?:stage|round)|hr discussion)\b",
         r"\bshortlisted for (?:the )?(?:next |technical |hr )?interview\b",
         r"\byou (?:have been|are) invited (?:for|to) (?:an )?interview\b",
     ),
@@ -665,6 +665,8 @@ def classify_context(
         intent, summary = "INTERVIEW_RESCHEDULE", "The message explicitly changes an existing candidate interview schedule."
     elif interview_confirmed:
         intent, summary = "INTERVIEW_CONFIRMATION", "The message explicitly confirms a candidate interview schedule."
+    elif "INTERVIEW_SHORTLISTED" in assertions:
+        intent, summary = "INTERVIEW_INVITATION", "The message explicitly shortlists this candidate for an interview process."
     elif actual_joined:
         intent, summary = "ACTUAL_JOINING_CONFIRMATION", "The message explicitly confirms that employment has started."
     elif "BACKGROUND_VERIFICATION" in assertions:
@@ -710,6 +712,8 @@ def classify_context(
             lifecycle = "OFFER_DECLINED"
         elif "CANDIDATE_REJECTED" in assertions:
             lifecycle = "CANDIDATE_REJECTED"
+        elif "INTERVIEW_SHORTLISTED" in assertions:
+            lifecycle = "INTERVIEW_SHORTLISTED"
         elif joining_confirmed:
             lifecycle = "JOINING_CONFIRMED"
         elif offer_accepted:

@@ -1,13 +1,120 @@
 """Google Gmail read-only provider using OAuth2 REST APIs."""
 from __future__ import annotations
-import base64, json, os, urllib.error, urllib.parse, urllib.request
+import base64, html, json, os, re, urllib.error, urllib.parse, urllib.request
 from datetime import datetime, timezone
 from email.header import decode_header, make_header
 from email.utils import getaddresses, parseaddr, parsedate_to_datetime
+from html.parser import HTMLParser
 from typing import Any
 from services.mailbox_provider import MailboxProvider
 
 GMAIL_SCOPE="https://www.googleapis.com/auth/gmail.readonly"
+
+_REPLY_BOUNDARY = re.compile(
+    r"(?im)^\s*(?:"
+    r"on .{1,500} wrote:|"
+    r"from:\s+|sent:\s+|"
+    r"-{2,}\s*(?:original|forwarded) message\s*-{2,}"
+    r")"
+)
+_COLLAPSED_REPLY_HEADER = re.compile(
+    r"(?is)\b(?:"
+    r"from:\s.{0,350}?\bsent:\s.{0,350}?\bto:\s.{0,350}?\bsubject:\s|"
+    r"sent:\s.{0,350}?\bto:\s.{0,350}?\bsubject:\s"
+    r")"
+)
+_QUOTED_HTML_MARKERS = (
+    "divrplyfwdmsg", "gmail_quote", "gmail_attr", "yahoo_quoted",
+    "protonmail_quote", "moz-cite-prefix",
+)
+_HTML_BREAK_TAGS = frozenset({
+    "br", "div", "p", "li", "tr", "table", "section", "article",
+    "header", "footer", "h1", "h2", "h3", "h4", "h5", "h6",
+})
+
+
+class _CurrentHtmlTextParser(HTMLParser):
+    """Render visible current-message text and stop at known reply containers.
+
+    Multipart/alternative is supposed to carry equivalent plain and HTML
+    representations. In practice Outlook/Gmail gateways sometimes put only a
+    quoted reply in text/plain while the new message exists solely in the HTML
+    alternative. Preserving the reply-container structure lets us compare the
+    two current-message representations without lifecycle keywords.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self.ignored_depth = 0
+        self.reached_quote = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if self.reached_quote:
+            return
+        values = " ".join(str(value or "").casefold() for key, value in attrs if key in {"id", "class"})
+        if any(marker in values for marker in _QUOTED_HTML_MARKERS):
+            self.reached_quote = True
+            return
+        if tag in {"head", "style", "script", "noscript", "svg"}:
+            self.ignored_depth += 1
+            return
+        if not self.ignored_depth and tag in _HTML_BREAK_TAGS:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if self.reached_quote:
+            return
+        if tag in {"head", "style", "script", "noscript", "svg"} and self.ignored_depth:
+            self.ignored_depth -= 1
+            return
+        if not self.ignored_depth and tag in _HTML_BREAK_TAGS:
+            self.parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if not self.reached_quote and not self.ignored_depth:
+            self.parts.append(data)
+
+
+def _current_text(value: str, *, is_html: bool = False) -> str:
+    if not value:
+        return ""
+    if is_html:
+        parser = _CurrentHtmlTextParser()
+        try:
+            parser.feed(value)
+            parser.close()
+            value = "".join(parser.parts)
+        except Exception:
+            value = html.unescape(re.sub(r"<[^>]+>", " ", value))
+    boundaries = [match for match in (
+        _REPLY_BOUNDARY.search(value), _COLLAPSED_REPLY_HEADER.search(value),
+    ) if match]
+    if boundaries:
+        value = value[:min(match.start() for match in boundaries)]
+    return re.sub(r"\s+", " ", html.unescape(value)).strip()
+
+
+def _content_score(value: str) -> tuple[int, int]:
+    words = re.findall(r"[a-z0-9][a-z0-9@._:/+-]*", value.casefold())
+    return len(set(words)), len(value)
+
+
+def select_message_body(plain: str | None, html_body: str | None) -> str:
+    """Choose the more complete current-message MIME alternative.
+
+    This is deliberately structural: it compares visible current content and
+    never looks for recruitment terms. Equal alternatives keep text/plain;
+    materially richer HTML wins, which recovers current replies omitted from a
+    malformed/incomplete plain part without appending quoted history.
+    """
+    plain_current = _current_text(str(plain or ""))
+    html_current = _current_text(str(html_body or ""), is_html=True)
+    if not html_current:
+        return plain_current
+    if not plain_current:
+        return html_current
+    return html_current if _content_score(html_current) > _content_score(plain_current) else plain_current
 
 def _secret_key() -> bytes:
     raw=(os.getenv("MAILBOX_CREDENTIAL_ENCRYPTION_KEY") or "").encode()
@@ -166,6 +273,6 @@ def decode_gmail_message(raw:dict[str,Any],recipient:str)->dict[str,Any]:
     # removing either breaks the message insert.
     _reply_name,reply_to=parseaddr(headers.get('reply-to',''))
     _return_name,return_path=parseaddr(headers.get('return-path',''))
-    return {"provider_message_id":raw['id'],"provider_thread_id":raw.get('threadId'),"sender_name":sender_name,"sender_email":sender_email,"recipient_email":recipient,"to_metadata":to_addresses,"cc_metadata":cc,"gmail_label_ids":labels,"message_direction":direction,"subject":subject,"sent_at":sent,"body":plain or html_body,"html_body":html_body,
+    return {"provider_message_id":raw['id'],"provider_thread_id":raw.get('threadId'),"sender_name":sender_name,"sender_email":sender_email,"recipient_email":recipient,"to_metadata":to_addresses,"cc_metadata":cc,"gmail_label_ids":labels,"message_direction":direction,"subject":subject,"sent_at":sent,"body":select_message_body(plain,html_body),"html_body":html_body,
             "rfc_message_id":headers.get('message-id'),"authentication_results":headers.get('authentication-results'),"received_spf":headers.get('received-spf'),
             "reply_to_email":(reply_to or '').lower() or None,"return_path_email":(return_path or '').lower() or None}

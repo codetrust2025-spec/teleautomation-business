@@ -772,7 +772,24 @@ def prefilter_decision(subject: str, body: str, sender_name: str = "", sender_em
             "risk_flags": ["WORDING_STATUS_CONFLICT"] if conflict else [],
             "requires_manual_review": conflict,
         }
-    semantic_status = semantic.get("interview_event") or semantic.get("lifecycle_event")
+    # Both fields use the literal string "NONE" for absence, which is truthy.
+    # `interview_event or lifecycle_event` therefore masked a real lifecycle
+    # assertion whenever interview_event was NONE (including shortlisting).
+    # Run the same fail-closed validators used after the models before letting
+    # either deterministic field qualify routing; legacy descriptive booleans
+    # must not turn a negated offer disclaimer into a positive route.
+    semantic_status = None
+    proposed_interview = str(semantic.get("interview_event") or "NONE").upper()
+    if proposed_interview != "NONE":
+        safe_interview, _ = validate_interview_event(proposed_interview, semantic)
+        if safe_interview != "NONE":
+            semantic_status = safe_interview
+    if semantic_status is None:
+        proposed_lifecycle = str(semantic.get("lifecycle_event") or "NONE").upper()
+        if proposed_lifecycle != "NONE":
+            safe_lifecycle, _ = validate_lifecycle_event(proposed_lifecycle, semantic)
+            if safe_lifecycle != "NONE":
+                semantic_status = safe_lifecycle
     if semantic_status and semantic_status != "NONE":
         # classify_context's assertive-context regexes (e.g. "your interview
         # ... is confirmed today") found a candidate-specific outcome that the
@@ -2291,7 +2308,11 @@ _VALIDATION_RETRY_ALLOWANCE = 2
 
 def process_message(mailbox: dict[str, Any], decoded: dict[str, Any], attachment_texts: list[dict[str, str]] | None = None, *, reprocess: bool = False, defer_ai: bool = False) -> dict[str, Any] | None:
     from services.mail_attachment_processor import extract_attachment
-    decoded["body"] = clean_email(decoded.get("body") or "")
+    # Re-select from both stored MIME alternatives on every processing pass.
+    # That lets a historical rescan recover messages ingested by an older body
+    # selector without requiring a Gmail refetch or a data migration.
+    from services.gmail_mailbox_provider import select_message_body
+    decoded["body"] = clean_email(select_message_body(decoded.get("body"), decoded.get("html_body")))
     decoded["message_hash"] = content_hash("|".join([decoded.get("sender_email") or "", decoded.get("subject") or "", str(decoded.get("sent_at"))]))
     processed = [extract_attachment(item) if item.get("data") is not None else item for item in (attachment_texts or [])]
     safe = [{key: item.get(key) for key in ("filename", "mime_type", "text", "attachment_type", "extraction_status", "checksum")} for item in processed]
