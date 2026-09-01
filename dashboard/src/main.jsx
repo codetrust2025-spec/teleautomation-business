@@ -5,6 +5,7 @@ import { AuthGate } from './components/AuthGate.jsx'
 import { SubmitSlotPage } from './pages/SubmitSlotPage.jsx'
 import { ConfirmProvider } from './context/ConfirmContext.jsx'
 import { AuthProvider } from './context/AuthContext.jsx'
+import { AttendanceProvider } from './attendance/AttendanceContext.jsx'
 import './index.css'
 import './businessShell.css'
 import './dailyOps.css'
@@ -15,6 +16,6 @@ const submitSlot = window.location.pathname.replace(/\/+$/, '') === '/submit-slo
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    {submitSlot ? <SubmitSlotPage /> : <AuthProvider><ConfirmProvider><AuthGate><App /></AuthGate></ConfirmProvider></AuthProvider>}
+    {submitSlot ? <SubmitSlotPage /> : <AuthProvider><ConfirmProvider><AuthGate><AttendanceProvider><App /></AttendanceProvider></AuthGate></ConfirmProvider></AuthProvider>}
   </React.StrictMode>,
 )

@@ -4,6 +4,7 @@ from fastapi import APIRouter, Body, Depends, File, Form, Query, Request, Upload
 from fastapi.responses import FileResponse
 from features import transaction_identity
 from core.operations_api_helpers import require_admin as _require_fleet_admin
+from core.operations_api_helpers import require_payroll_admin as _require_payroll_admin
 
 router = APIRouter()
 
@@ -399,7 +400,7 @@ async def handler_salaries_list(month: str | None = Query(default=None)):
         "total_for_view": handler_salaries.total_salary_owed(month=month),
         "month": month or "all",
     }
-@router.post("/handler-salaries")
+@router.post("/handler-salaries", dependencies=[Depends(_require_payroll_admin)])
 async def handler_salaries_upsert(body: dict):
     """Create or update one handler's monthly salary.
 
@@ -417,7 +418,7 @@ async def handler_salaries_upsert(body: dict):
     except ValueError as e:
         return {"status": "error", "message": str(e)}
     return {"status": "ok", "salary": row}
-@router.delete("/handler-salaries/{reference}")
+@router.delete("/handler-salaries/{reference}", dependencies=[Depends(_require_payroll_admin)])
 async def handler_salaries_delete(reference: str):
     from features import handler_salaries
     removed = handler_salaries.delete_salary(reference)

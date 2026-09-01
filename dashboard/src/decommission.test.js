@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url'
 const SRC = dirname(fileURLToPath(import.meta.url))
 const read = (rel) => readFileSync(join(SRC, rel), 'utf8')
 
-const SIDEBAR = ['Daily Ops', 'Mail Alerts', 'AI Mail Review', 'Candidates', 'Slot Booking', 'Data Room']
+const SIDEBAR = ['Daily Ops', 'Attendance', 'Mail Alerts', 'AI Mail Review', 'Candidates', 'Slot Booking', 'Data Room']
 
 const REMOVED_MODULES = [
   'components/DailyBriefingCard.jsx',
@@ -37,7 +37,7 @@ describe('operations sidebar', () => {
   const app = read('App.jsx')
   const labels = [...app.matchAll(/\blabel:\s*'([^']+)'/g)].map((m) => m[1])
 
-  it('lists exactly the six shipped features, in order', () => {
+  it('lists exactly the shipped features, in order', () => {
     expect(labels).toEqual(SIDEBAR)
   })
 

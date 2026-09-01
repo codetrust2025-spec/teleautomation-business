@@ -34,6 +34,8 @@ export function AuthProvider({ children }) {
     username: null,
     role: 'admin',
     reference: null,
+    displayName: null,
+    accountId: null,
     error: '',
   })
 
@@ -47,6 +49,8 @@ export function AuthProvider({ children }) {
         username: data.username || null,
         role: data.role || 'admin',
         reference: data.reference || null,
+        displayName: data.display_name || data.reference || data.username || null,
+        accountId: data.account_id || null,
         error: '',
       })
       return data
@@ -87,6 +91,8 @@ export function AuthProvider({ children }) {
       username: data.username || username,
       role: data.role || 'admin',
       reference: data.reference || null,
+      displayName: data.display_name || data.reference || data.username || username,
+      accountId: data.account_id || null,
       error: '',
     })
     return { ok: true }
@@ -102,6 +108,8 @@ export function AuthProvider({ children }) {
       username: null,
       role: 'admin',
       reference: null,
+      displayName: null,
+      accountId: null,
     }))
   }, [])
 

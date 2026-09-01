@@ -28,6 +28,7 @@ const app = readFileSync(join(SRC, 'App.jsx'), 'utf8')
 
 const EXPECTED = [
   'Daily Ops',
+  'Attendance',
   'Mail Alerts',
   'AI Mail Review',
   'Candidates',
@@ -39,7 +40,7 @@ const labels = [...app.matchAll(/\blabel:\s*'([^']+)'/g)].map((m) => m[1])
 const ids = [...app.matchAll(/\bid:\s*'([^']+)',\s*label:/g)].map((m) => m[1])
 
 describe('operations sidebar order', () => {
-  it('lists the six features in the requested order', () => {
+  it('lists the shipped features in the requested order', () => {
     expect(labels).toEqual(EXPECTED)
   })
 
