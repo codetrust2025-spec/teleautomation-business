@@ -22,6 +22,7 @@ function formatDateTime(value) {
   if (!value) return 'Never recorded'
   return new Date(value).toLocaleString('en-IN', {
     day: '2-digit', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit',
+    timeZone: 'Asia/Kolkata',
   })
 }
 

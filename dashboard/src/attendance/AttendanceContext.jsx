@@ -15,7 +15,9 @@ async function responseJson(response) {
 
 function formatMarkedTime(value) {
   if (!value) return ''
-  return new Date(value).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' })
+  return new Date(value).toLocaleTimeString('en-IN', {
+    hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata',
+  })
 }
 
 export function AttendanceProvider({ children }) {
