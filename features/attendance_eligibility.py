@@ -72,6 +72,14 @@ def account_identity(profile: dict[str, Any]) -> dict[str, str]:
     }
 
 
+def is_employee_identity(identity: dict[str, Any]) -> bool:
+    """Only handler accounts participate in employee attendance/payroll policy."""
+    return (
+        str(identity.get("role") or "").casefold() == "handler"
+        and str(identity.get("account_id") or "").casefold().startswith("handler:")
+    )
+
+
 def configured_effective_date(default: date) -> date:
     raw = str(os.environ.get("OPERATIONS_ATTENDANCE_EFFECTIVE_DATE") or "").strip()
     if not raw:
@@ -209,7 +217,7 @@ def _eligibility_reason(attended: int, required: int, amount: int) -> str:
     return "Verified attendance is below 100% for required working days"
 
 
-def _reconcile_eligibility(
+def _eligibility_calculation(
     conn,
     identity: dict[str, str],
     current: datetime,
@@ -217,8 +225,7 @@ def _reconcile_eligibility(
 ) -> dict[str, Any]:
     period_start, calculation_end = evaluation_period(current, policy["effective_date"])
     # The first effective day before 09:00 has no elapsed required days. Keep
-    # that calculation empty without persisting or displaying an inverted
-    # period (for example, Sep 1 through Aug 31).
+    # that calculation empty without displaying an inverted period.
     period_end = max(period_start, calculation_end)
     holidays = _holidays(conn, period_start, calculation_end) if calculation_end >= period_start else {}
     required_dates = required_working_dates(period_start, calculation_end, holidays)
@@ -226,7 +233,47 @@ def _reconcile_eligibility(
     attended = len(set(required_dates) & attended_dates)
     required = len(required_dates)
     ratio, amount = eligibility_for_counts(attended, required)
-    reason = _eligibility_reason(attended, required, amount)
+    return {
+        "period_start": period_start,
+        "period_end": period_end,
+        "attended_working_days": attended,
+        "required_working_days": required,
+        "attendance_ratio": ratio,
+        "eligibility_amount": amount,
+        "reason": _eligibility_reason(attended, required, amount),
+    }
+
+
+def _eligibility_response(calculation: dict[str, Any]) -> dict[str, Any]:
+    amount = int(calculation["eligibility_amount"])
+    return {
+        "period_start": calculation["period_start"].isoformat(),
+        "period_end": calculation["period_end"].isoformat(),
+        "attended_working_days": calculation["attended_working_days"],
+        "required_working_days": calculation["required_working_days"],
+        "attendance_ratio": calculation["attendance_ratio"],
+        "eligibility_amount": amount,
+        "eligibility_label": f"Eligible for ₹{amount:,}",
+        "reason": calculation["reason"],
+    }
+
+
+def _reconcile_eligibility(
+    conn,
+    identity: dict[str, str],
+    current: datetime,
+    policy: dict[str, Any],
+) -> dict[str, Any]:
+    if not is_employee_identity(identity):
+        raise ValueError("Earnings eligibility is only available to handler accounts")
+    calculation = _eligibility_calculation(conn, identity, current, policy)
+    period_start = calculation["period_start"]
+    period_end = calculation["period_end"]
+    attended = calculation["attended_working_days"]
+    required = calculation["required_working_days"]
+    ratio = calculation["attendance_ratio"]
+    amount = calculation["eligibility_amount"]
+    reason = calculation["reason"]
     lock_key = f"attendance-eligibility:{identity['account_id']}:{period_start.isoformat()}"
 
     with conn.cursor() as cur:
@@ -310,16 +357,7 @@ def _reconcile_eligibility(
                     ),
                 )
 
-    return {
-        "period_start": period_start.isoformat(),
-        "period_end": period_end.isoformat(),
-        "attended_working_days": attended,
-        "required_working_days": required,
-        "attendance_ratio": ratio,
-        "eligibility_amount": amount,
-        "eligibility_label": f"Eligible for ₹{amount:,}",
-        "reason": reason,
-    }
+    return _eligibility_response(calculation)
 
 
 def status(profile: dict[str, Any], *, now: datetime | None = None) -> dict[str, Any]:
@@ -336,7 +374,17 @@ def status(profile: dict[str, Any], *, now: datetime | None = None) -> dict[str,
             holiday_dates=today_holidays,
             already_marked=attendance is not None,
         )
-        eligibility = _reconcile_eligibility(conn, identity, current, policy)
+        employee_attendance = is_employee_identity(identity)
+        if employee_attendance:
+            eligibility = _reconcile_eligibility(conn, identity, current, policy)
+        else:
+            eligibility = None
+            decision = {
+                **decision,
+                "eligible": False,
+                "working_day": False,
+                "reason": "NON_EMPLOYEE_ACCOUNT",
+            }
         month_start = max(current.date().replace(day=1), policy["effective_date"])
         records = []
         with conn.cursor() as cur:
@@ -362,6 +410,145 @@ def status(profile: dict[str, Any], *, now: datetime | None = None) -> dict[str,
         "popup": decision,
         "eligibility": eligibility,
         "records": records,
+        "employee_attendance": employee_attendance,
+    })
+
+
+def _handler_profiles(profiles: Iterable[dict[str, Any]]) -> list[dict[str, str]]:
+    identities: dict[str, dict[str, str]] = {}
+    for profile in profiles:
+        identity = account_identity(profile)
+        if is_employee_identity(identity):
+            identities[identity["account_id"]] = identity
+    return sorted(identities.values(), key=lambda row: row["display_name"].casefold())
+
+
+def admin_overview(
+    profiles: Iterable[dict[str, Any]],
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Return a read-only, account-isolated summary for every handler."""
+    _require_database()
+    current = _now(now)
+    identities = _handler_profiles(profiles)
+    with get_connection() as conn:
+        policy = _policy(conn)
+        period_start, calculation_end = evaluation_period(current, policy["effective_date"])
+        period_end = max(period_start, calculation_end)
+        holiday_start = min(period_start, current.date())
+        holiday_end = max(calculation_end, current.date())
+        holidays = _holidays(conn, holiday_start, holiday_end)
+        required_dates = required_working_dates(period_start, calculation_end, holidays)
+        required_set = set(required_dates)
+        account_ids = [identity["account_id"] for identity in identities]
+        rows_by_account: dict[str, list[dict[str, Any]]] = {account_id: [] for account_id in account_ids}
+        if account_ids:
+            query_start = min(period_start, current.date())
+            query_end = max(period_end, current.date())
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT account_id, attendance_date, marked_at, status, office_network_verified
+                       FROM operations_attendance_records
+                       WHERE account_id=ANY(%s) AND attendance_date BETWEEN %s AND %s
+                       ORDER BY attendance_date DESC""",
+                    (account_ids, query_start, query_end),
+                )
+                for row in cur.fetchall():
+                    rows_by_account.setdefault(str(row[0]), []).append({
+                        "attendance_date": row[1],
+                        "marked_at": row[2],
+                        "status": row[3],
+                        "office_network_verified": bool(row[4]),
+                    })
+
+        summaries = []
+        for identity in identities:
+            account_rows = rows_by_account.get(identity["account_id"], [])
+            today_row = next(
+                (row for row in account_rows if row["attendance_date"] == current.date()),
+                None,
+            )
+            attended_dates = {
+                row["attendance_date"]
+                for row in account_rows
+                if row["status"] == "VERIFIED" and row["office_network_verified"]
+            }
+            attended = len(required_set & attended_dates)
+            required = len(required_dates)
+            ratio, amount = eligibility_for_counts(attended, required)
+            decision = popup_decision(
+                current,
+                effective_date=policy["effective_date"],
+                holiday_dates=holidays,
+                already_marked=today_row is not None,
+            )
+            summaries.append({
+                "account_id": identity["account_id"],
+                "username": identity["username"],
+                "display_name": identity["display_name"],
+                "today_status": (
+                    "VERIFIED" if today_row
+                    else "NOT_REQUIRED" if not decision["working_day"]
+                    else "NOT_OPEN" if decision["reason"] == "BEFORE_START_TIME"
+                    else "NOT_MARKED"
+                ),
+                "today_reason": decision["reason"],
+                "marked_at": today_row["marked_at"] if today_row else None,
+                "office_network_verified": (
+                    today_row["office_network_verified"] if today_row else None
+                ),
+                "attended_working_days": attended,
+                "required_working_days": required,
+                "attendance_ratio": ratio,
+                "eligibility_amount": amount,
+            })
+
+    return _json_safe({
+        "status": "ok",
+        "period_start": period_start,
+        "period_end": period_end,
+        "attendance_date": current.date(),
+        "users": summaries,
+    })
+
+
+def admin_history(
+    profile: dict[str, Any],
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Return one handler's history without changing eligibility/audit state."""
+    _require_database()
+    current = _now(now)
+    identity = account_identity(profile)
+    if not is_employee_identity(identity):
+        raise ValueError("Attendance history is only available for handler accounts")
+    with get_connection() as conn:
+        policy = _policy(conn)
+        calculation = _eligibility_calculation(conn, identity, current, policy)
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT attendance_date, marked_at, status, office_network_verified
+                   FROM operations_attendance_records
+                   WHERE account_id=%s AND attendance_date BETWEEN %s AND %s
+                   ORDER BY attendance_date DESC""",
+                (identity["account_id"], policy["effective_date"], current.date()),
+            )
+            records = [
+                {
+                    "attendance_date": row[0],
+                    "marked_at": row[1],
+                    "status": row[2],
+                    "office_network_verified": bool(row[3]),
+                }
+                for row in cur.fetchall()
+            ]
+    return _json_safe({
+        "status": "ok",
+        "profile": identity,
+        "eligibility": _eligibility_response(calculation),
+        "records": records,
     })
 
 
@@ -374,6 +561,8 @@ def mark_attendance(
     _require_database()
     current = _now(now)
     identity = account_identity(profile)
+    if not is_employee_identity(identity):
+        raise PermissionError("Attendance is only available to handler accounts.")
     with get_connection() as conn:
         policy = _policy(conn)
         holidays = _holidays(conn, current.date(), current.date())
@@ -502,12 +691,14 @@ def list_recommendations(status_filter: str = "PENDING") -> list[dict[str, Any]]
         if status_value == "ALL":
             cur.execute(
                 """SELECT * FROM operations_salary_change_recommendations
+                   WHERE account_id LIKE 'handler:%'
                    ORDER BY calculated_at DESC LIMIT 500"""
             )
         else:
             cur.execute(
                 """SELECT * FROM operations_salary_change_recommendations
-                   WHERE review_status=%s ORDER BY calculated_at DESC LIMIT 500""",
+                   WHERE account_id LIKE 'handler:%' AND review_status=%s
+                   ORDER BY calculated_at DESC LIMIT 500""",
                 (status_value,),
             )
         return _json_safe([_as_dict(cur, row) for row in cur.fetchall()])
@@ -546,6 +737,8 @@ def review_recommendation(
         recommendation = _as_dict(cur, cur.fetchone())
         if not recommendation:
             raise KeyError("Recommendation not found")
+        if not str(recommendation.get("account_id") or "").casefold().startswith("handler:"):
+            raise RecommendationConflict("Generic admin accounts are not eligible for salary changes")
         if recommendation["review_status"] != "PENDING":
             raise RecommendationConflict("Recommendation is no longer pending")
         if action == "REJECT":

@@ -243,6 +243,93 @@ def test_mark_stores_real_request_time_and_server_derived_identity(monkeypatch):
     assert result["attendance"]["account_id"] == "handler:employee-a"
 
 
+def test_generic_admin_status_never_reconciles_employee_eligibility(monkeypatch):
+    class EmptyCursor:
+        description = []
+        def __enter__(self): return self
+        def __exit__(self, *_args): return False
+        def execute(self, _sql, _params=None): return None
+        def fetchall(self): return []
+
+    @contextmanager
+    def connection():
+        yield _Connection(EmptyCursor())
+
+    monkeypatch.setattr(attendance, "use_postgres", lambda: True)
+    monkeypatch.setattr(attendance, "get_connection", connection)
+    monkeypatch.setattr(attendance, "_policy", lambda _conn: {
+        "effective_date": date(2026, 9, 1), "business_timezone": "Asia/Kolkata",
+        "attendance_start_time": attendance.ATTENDANCE_START,
+    })
+    monkeypatch.setattr(attendance, "_holidays", lambda *_args: {})
+    monkeypatch.setattr(attendance, "_attendance_row", lambda *_args: None)
+    monkeypatch.setattr(
+        attendance, "_reconcile_eligibility",
+        lambda *_args: pytest.fail("generic admin reached earnings eligibility"),
+    )
+
+    result = attendance.status(
+        {"username": "operations_admin", "role": "admin", "display_name": "Operations Admin"},
+        now=at(10),
+    )
+    assert result["employee_attendance"] is False
+    assert result["eligibility"] is None
+    assert result["popup"]["eligible"] is False
+    assert result["popup"]["reason"] == "NON_EMPLOYEE_ACCOUNT"
+
+
+def test_generic_admin_cannot_mark_attendance(monkeypatch):
+    monkeypatch.setattr(attendance, "use_postgres", lambda: True)
+    network = verify_office_network(
+        "203.0.113.14", office_cidrs="203.0.113.0/24", trusted_proxy_cidrs="",
+    )
+    with pytest.raises(PermissionError, match="handler accounts"):
+        attendance.mark_attendance(
+            {"username": "operations_admin", "role": "admin"}, network, now=at(10),
+        )
+
+
+def test_admin_overview_uses_stable_account_ids_and_excludes_admin(monkeypatch):
+    class OverviewCursor:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return False
+        def execute(self, _sql, _params=None): return None
+        def fetchall(self):
+            return [
+                (
+                    "handler:referrer-thrilok", date(2026, 9, 1), at(11, 51),
+                    "VERIFIED", True,
+                ),
+            ]
+
+    @contextmanager
+    def connection():
+        yield _Connection(OverviewCursor())
+
+    monkeypatch.setattr(attendance, "use_postgres", lambda: True)
+    monkeypatch.setattr(attendance, "get_connection", connection)
+    monkeypatch.setattr(attendance, "_policy", lambda _conn: {
+        "effective_date": date(2026, 9, 1), "business_timezone": "Asia/Kolkata",
+        "attendance_start_time": attendance.ATTENDANCE_START,
+    })
+    monkeypatch.setattr(attendance, "_holidays", lambda *_args: {})
+    result = attendance.admin_overview([
+        {
+            "username": "thrilok", "role": "handler", "reference": "Thrilok",
+            "account_id": "handler:referrer-thrilok",
+        },
+        {
+            "username": "operations_admin", "role": "admin",
+            "display_name": "Operations Admin", "account_id": "admin:operations_admin",
+        },
+    ], now=at(13))
+    assert [row["display_name"] for row in result["users"]] == ["Thrilok"]
+    assert result["users"][0]["account_id"] == "handler:referrer-thrilok"
+    assert result["users"][0]["today_status"] == "VERIFIED"
+    assert result["users"][0]["attendance_ratio"] == 100.0
+    assert result["users"][0]["eligibility_amount"] == 40_000
+
+
 @pytest.fixture
 def api_client(monkeypatch):
     import main
@@ -311,6 +398,64 @@ def test_admin_can_reach_salary_review_but_no_salary_changes_without_explicit_ap
     response = client.post("/attendance/salary-recommendations/rec/review", json={"decision": "APPROVE"})
     assert response.status_code == 200
     assert called == [("rec", "APPROVE", "admin")]
+
+
+def test_attendance_admin_endpoints_reject_handlers_and_validate_selected_account(api_client, monkeypatch):
+    client, attendance_api = api_client
+    profiles = [{
+        "username": "thrilok", "role": "handler", "reference": "Thrilok",
+        "display_name": "Thrilok", "account_id": "handler:referrer-thrilok",
+    }]
+    monkeypatch.setattr(
+        attendance_api, "_attendance_handler_profiles",
+        lambda: profiles,
+    )
+    monkeypatch.setattr(
+        attendance_api.attendance, "admin_overview",
+        lambda rows: {"status": "ok", "users": rows},
+    )
+    monkeypatch.setattr(
+        attendance_api.attendance, "admin_history",
+        lambda profile: {"status": "ok", "profile": profile, "records": []},
+    )
+
+    signed_in(client, role="handler")
+    assert client.get("/attendance/admin/overview").status_code == 403
+
+    signed_in(client, username="operations_admin", role="admin", reference=None)
+    overview = client.get("/attendance/admin/overview")
+    assert overview.status_code == 200
+    assert overview.json()["users"][0]["account_id"] == "handler:referrer-thrilok"
+    history = client.get(
+        "/attendance/admin/history", params={"account_id": "handler:referrer-thrilok"},
+    )
+    assert history.status_code == 200
+    assert history.json()["profile"]["username"] == "thrilok"
+    assert client.get(
+        "/attendance/admin/history", params={"account_id": "admin:operations_admin"},
+    ).status_code == 404
+
+
+def test_admin_overview_registry_includes_active_future_handlers_only(api_client, monkeypatch):
+    _client, attendance_api = api_client
+    monkeypatch.setattr(attendance_api.auth, "audit_operator_accounts", lambda: {"users": [
+        {
+            "username": "operations_admin", "role": "admin", "name": "Operations Admin",
+            "account_id": "admin:operations_admin", "active": True, "orphaned": False,
+        },
+        {
+            "username": "future-handler", "role": "handler", "name": "Future Handler",
+            "account_id": "handler:future-handler", "active": True, "orphaned": False,
+        },
+        {
+            "username": "disabled-handler", "role": "handler", "name": "Disabled Handler",
+            "account_id": "handler:disabled-handler", "active": False, "orphaned": False,
+        },
+    ]})
+    assert attendance_api._attendance_handler_profiles() == [{
+        "username": "future-handler", "role": "handler", "reference": "Future Handler",
+        "display_name": "Future Handler", "account_id": "handler:future-handler",
+    }]
 
 
 def test_login_and_logout_preserve_session_behavior_and_emit_audit_events(api_client, monkeypatch):

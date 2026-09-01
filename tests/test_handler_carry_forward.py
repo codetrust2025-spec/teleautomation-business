@@ -160,6 +160,42 @@ def test_salary_respects_active_until(accounting):
     assert cs._carry_forward_balances("2026-08")["thrilok"]["prior_salary"] == 15_000
 
 
+def test_generic_operations_admin_is_excluded_from_handler_salary_totals(tmp_path, monkeypatch):
+    from features import handler_salaries
+
+    salary_file = tmp_path / "handler_salaries.json"
+    salary_file.write_text(
+        json.dumps({
+            "salaries": {
+                "operations admin": {
+                    "reference": "Operations Admin", "monthly_salary": 40_000,
+                    "active_from": "2026-09", "active_until": "",
+                },
+                "thrilok": {
+                    "reference": "Thrilok", "monthly_salary": 40_000,
+                    "active_from": "2026-09", "active_until": "",
+                },
+            },
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(handler_salaries, "_FILE", str(salary_file))
+    monkeypatch.setattr(
+        handler_salaries, "_generic_admin_reference_keys",
+        lambda: {"operations admin", "operations_admin"},
+    )
+
+    owed = handler_salaries.salary_owed_by_handler("2026-09")
+    assert set(owed) == {"thrilok"}
+    assert handler_salaries.total_salary_owed("2026-09") == 40_000
+    # The raw record remains available for operational/audit reconciliation.
+    assert {row["reference"] for row in handler_salaries.list_salaries()} == {
+        "Operations Admin", "Thrilok",
+    }
+    with pytest.raises(ValueError, match="not eligible"):
+        handler_salaries.set_salary("Operations Admin", 40_000, "2026-09")
+
+
 def test_payout_reduces_the_balance_exactly_once(accounting):
     """A recorded payout is subtracted once, and a voided one not at all."""
     accounting.write_candidates([_candidate("c1", "Thrilok", "2026-06", 20_000)])

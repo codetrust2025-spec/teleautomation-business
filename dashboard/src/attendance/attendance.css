@@ -31,6 +31,9 @@
 .attendance-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .attendance-table th { padding: 10px; border-bottom: 1px solid #2b374c; color: #8ba0bd; text-align: left; text-transform: uppercase; font-size: 9px; letter-spacing: .08em; }
 .attendance-table td { padding: 12px 10px; border-bottom: 1px solid #202b3e; color: #d6deeb; }
+.attendance-user-link { padding: 0; border: 0; background: transparent; color: #93c5fd; font: inherit; font-weight: 700; cursor: pointer; }
+.attendance-user-link:hover, .attendance-user-link:focus-visible { color: #dbeafe; text-decoration: underline; }
+.attendance-cell-note { display: block; margin-top: 4px; color: #8290a5; }
 .attendance-holiday-form { display: grid; grid-template-columns: 170px minmax(220px, 1fr) auto; gap: 9px; margin-top: 15px; }
 .attendance-holiday-form input { min-height: 40px; padding: 8px 11px; border: 1px solid #344157; border-radius: 8px; background: #0d1421; color: #e5edf8; }
 .attendance-list { margin-top: 12px; }

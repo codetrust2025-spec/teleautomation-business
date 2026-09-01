@@ -36,6 +36,24 @@ def _coerce_salary(value: object) -> int:
         return 0
 
 
+def _generic_admin_reference_keys() -> set[str]:
+    """Names/usernames for non-employee Operations administrator accounts."""
+    try:
+        from core import dashboard_auth_vps as auth
+
+        return {
+            str(value).strip().casefold()
+            for row in auth.audit_operator_accounts().get("users", [])
+            if str(row.get("role") or "").casefold() == "admin"
+            for value in (row.get("name"), row.get("username"))
+            if str(value or "").strip()
+        }
+    except Exception:
+        # The standard Operations admin identity must still fail closed if the
+        # credential inventory is temporarily unavailable.
+        return {"operations admin", "operations_admin"}
+
+
 def _load_records() -> list[tuple[str, dict]]:
     """Load supported salary-store shapes and fail closed on invalid data."""
     try:
@@ -93,6 +111,7 @@ def salary_owed_by_handler(month: str | None = None) -> dict[str, dict]:
         return {}
 
     result: dict[str, dict] = {}
+    admin_references = _generic_admin_reference_keys()
     for store_key, record in _load_records():
         reference = str(record.get("reference") or store_key).strip()
         key = reference.lower()
@@ -102,7 +121,7 @@ def salary_owed_by_handler(month: str | None = None) -> dict[str, dict]:
         start_index = _month_index(active_from)
         end_index = _month_index(active_until) if active_until else None
 
-        if not key or not monthly_salary or start_index is None:
+        if not key or key.casefold() in admin_references or not monthly_salary or start_index is None:
             continue
         if end_index is not None and end_index < start_index:
             continue
@@ -156,6 +175,8 @@ def _save_records(rows: list[dict]) -> None:
 def set_salary(reference: str, monthly_salary: int, active_from: str, active_until: str = "") -> dict:
     name = str(reference or "").strip()
     salary = _coerce_salary(monthly_salary)
+    if name.casefold() in _generic_admin_reference_keys():
+        raise ValueError("Generic Operations admin accounts are not eligible for handler salary")
     if not name or not salary or _month_index(active_from) is None:
         raise ValueError("Reference, positive monthly salary, and valid active_from month are required")
     if active_until and _month_index(active_until) is None:
