@@ -236,25 +236,17 @@ def get_credentials() -> tuple[str, str]:
 
 @lru_cache(maxsize=1)
 def _handler_accounts() -> dict[str, dict[str, str]]:
-    """username -> {reference, password} from config/dashboard_handlers.yaml."""
-    path = os.path.join(BASE_DIR, "config", "dashboard_handlers.yaml")
-    if not os.path.isfile(path):
-        return {}
-    try:
-        with open(path, encoding="utf-8") as f:
-            raw = yaml.safe_load(f) or {}
-    except OSError:
-        return {}
-    out: dict[str, dict[str, str]] = {}
-    for row in raw.get("handlers") or []:
-        if not isinstance(row, dict):
-            continue
-        user = str(row.get("username") or "").strip()
-        ref = str(row.get("reference") or "").strip()
-        pwd = str(row.get("password") or "").strip()
-        if user and ref and pwd:
-            out[user.lower()] = {"username": user, "reference": ref, "password": pwd}
-    return out
+    """username -> {username, reference, password} for every handler login.
+
+    Reads through `_load_handlers_yaml` rather than opening a path of its own,
+    so the login path and the admin write path cannot disagree about where the
+    store lives -- and so a login attempt is what recovers the store after the
+    move, without waiting for an admin to edit something.
+    """
+    return {
+        row["username"].lower(): dict(row)
+        for row in _load_handlers_yaml()
+    }
 
 
 def reload_handler_accounts() -> None:
@@ -262,17 +254,32 @@ def reload_handler_accounts() -> None:
 
 
 def _handlers_yaml_path() -> str:
+    """The handler store lives on the data volume, not in the image.
+
+    It used to sit under BASE_DIR -- `/app/config/` in the container -- which is
+    part of the image layer and not mounted. Every deployment recreates the
+    container and took all handler logins with it, while `credentials.json` on
+    the volume kept listing them: the admin screen showed five handlers whose
+    logins had all silently stopped working. The admin password hit the same
+    wall and was moved here for the same reason.
+    """
+    return os.path.join(DATA_DIR, "auth", "dashboard_handlers.yaml")
+
+
+def _legacy_handlers_yaml_path() -> str:
+    """Where the store lived before it was moved onto the volume."""
     return os.path.join(BASE_DIR, "config", "dashboard_handlers.yaml")
 
 
-def _load_handlers_yaml() -> list[dict[str, str]]:
-    path = _handlers_yaml_path()
+def _read_handlers_yaml(path: str) -> list[dict[str, str]]:
     if not os.path.isfile(path):
         return []
     try:
         with open(path, encoding="utf-8") as f:
             raw = yaml.safe_load(f) or {}
-    except OSError:
+    except (OSError, yaml.YAMLError):
+        return []
+    if not isinstance(raw, dict):
         return []
     out: list[dict[str, str]] = []
     for row in raw.get("handlers") or []:
@@ -286,9 +293,52 @@ def _load_handlers_yaml() -> list[dict[str, str]]:
     return out
 
 
+def _handlers_from_credentials_copy() -> list[dict[str, str]]:
+    """Handler rows mirrored into `credentials.json`, which is on the volume.
+
+    This is what survives a deployment that predates the move, so it is the
+    only way to recover logins the old location has already lost. Every writer
+    keeps the two in step -- the sole caller of `admin_remove_handler` deletes
+    from both -- so this cannot resurrect an account somebody removed.
+    """
+    try:
+        from features import data_room_credentials_store as credentials_store
+
+        rows = credentials_store.handler_login_rows()
+    except Exception:
+        # A missing or unreadable mirror is not a reason to fail a login
+        # attempt; it only means there is nothing to recover from.
+        return []
+    out: list[dict[str, str]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        user = str(row.get("username") or "").strip()
+        ref = str(row.get("reference") or user).strip()
+        pwd = str(row.get("password") or "").strip()
+        if user and ref and pwd:
+            out.append({"username": user, "reference": ref, "password": pwd})
+    return out
+
+
+def _load_handlers_yaml() -> list[dict[str, str]]:
+    path = _handlers_yaml_path()
+    if os.path.isfile(path):
+        return _read_handlers_yaml(path)
+    # First read after the move. Recover from the old location when the
+    # container still holds it, and otherwise from the mirror on the volume,
+    # then write the result where it will now survive.
+    recovered = _read_handlers_yaml(_legacy_handlers_yaml_path())
+    if not recovered:
+        recovered = _handlers_from_credentials_copy()
+    if recovered:
+        _save_handlers_yaml(recovered)
+    return recovered
+
+
 def _save_handlers_yaml(rows: list[dict[str, str]]) -> None:
     path = _handlers_yaml_path()
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    directory = os.path.dirname(path)
     payload = {
         "handlers": [
             {
@@ -299,8 +349,25 @@ def _save_handlers_yaml(rows: list[dict[str, str]]) -> None:
             for r in rows
         ]
     }
-    with open(path, "w", encoding="utf-8") as f:
-        yaml.safe_dump(payload, f, default_flow_style=False, sort_keys=False)
+    # These passwords are stored as written, so the file must not be readable
+    # by anything else sharing the volume. Written to a temporary name and
+    # replaced so a crash mid-write cannot leave a truncated store that would
+    # lock every handler out.
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    tmp = f"{path}.{secrets.token_hex(8)}.tmp"
+    try:
+        with open(tmp, "x", encoding="utf-8") as f:
+            yaml.safe_dump(payload, f, default_flow_style=False, sort_keys=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def _reference_matches(expected: str, provided: str) -> bool:
