@@ -379,6 +379,17 @@ def delete_vault_item(section: str, item_id: str) -> dict | None:
     return get_credentials()
 
 
+def handler_login_rows() -> list[dict]:
+    """The handler rows mirrored here, for recovering the auth store.
+
+    `credentials.json` lives on the data volume and the auth YAML historically
+    did not, so after a deployment this copy is all that remains of a handler's
+    login. Returned as plain rows; the caller decides what to do with them.
+    """
+    data = _load()
+    return [row for row in (data.get("handlers") or []) if isinstance(row, dict)]
+
+
 def create_handler_login(row: dict) -> tuple[dict | None, str | None]:
     """Add handler to credentials.json and dashboard_handlers.yaml."""
     if not isinstance(row, dict):
