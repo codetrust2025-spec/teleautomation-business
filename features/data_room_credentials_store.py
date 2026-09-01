@@ -218,7 +218,13 @@ def get_credentials() -> dict:
         "site_url": (data.get("site_url") or "").strip(),
         "vps_host": (data.get("vps_host") or "").strip(),
         "admin": dict(admin) if isinstance(admin, dict) else None,
-        "handlers": [dict(h) for h in handlers if isinstance(h, dict)],
+        # The stored password is a hash and of no use to a caller; withholding
+        # it keeps the secret off the wire and out of anything that logs a
+        # response body.
+        "handlers": [
+            {key: value for key, value in h.items() if key != "password"}
+            for h in handlers if isinstance(h, dict)
+        ],
         "service_accounts": service_accounts,
         "prompts": prompts,
         "resources": resources,
@@ -406,7 +412,12 @@ def create_handler_login(row: dict) -> tuple[dict | None, str | None]:
         return None, err
     data = _load()
     handlers = list(data.get("handlers") or [])
-    entry: dict = {"username": user, "password": pwd, "reference": ref, "role": "handler"}
+    entry: dict = {
+        "username": user,
+        "password": auth.stored_handler_password(user) or "",
+        "reference": ref,
+        "role": "handler",
+    }
     if row.get("notes"):
         entry["notes"] = str(row.get("notes") or "").strip()
     handlers.append(entry)
@@ -453,6 +464,34 @@ def sync_admin_login_copy(updates: dict) -> tuple[dict | None, str | None]:
     data["admin"] = admin
     _save(data)
     return get_credentials(), None
+def set_handler_password_mirror(username: str, stored_password: str) -> bool:
+    """Record an already-stored password value in the mirror, and nothing else.
+
+    Separate from `update_handler_login` on purpose. That function routes a new
+    password through `admin_set_handler_password`, which hashes what it is
+    given -- so feeding a hash back through it would hash the hash and lock the
+    handler out. This writes the mirror only.
+    """
+    user = str(username or "").strip()
+    stored = str(stored_password or "").strip()
+    if not user or not stored:
+        return False
+    data = _load()
+    handlers = list(data.get("handlers") or [])
+    for index, row in enumerate(handlers):
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("username") or "").strip().lower() != user.lower():
+            continue
+        if str(row.get("password") or "") == stored:
+            return False
+        handlers[index] = {**row, "password": stored}
+        data["handlers"] = handlers
+        _save(data)
+        return True
+    return False
+
+
 def update_handler_login(username: str, updates: dict) -> tuple[dict | None, str | None]:
     """Update handler row in credentials.json; syncs password to auth YAML when changed."""
     user = str(username or "").strip()
@@ -486,7 +525,9 @@ def update_handler_login(username: str, updates: dict) -> tuple[dict | None, str
         err = auth.admin_set_handler_password(user, new_pwd)
         if err:
             return None, err
-        merged["password"] = new_pwd
+        # What went in was typed by a person; what is recorded here is the hash
+        # the auth store now holds.
+        merged["password"] = auth.stored_handler_password(user) or ""
     handlers[idx] = merged
     data["handlers"] = handlers
     _save(data)
