@@ -1902,12 +1902,31 @@ def list_realtime_events(*, after_id: str | None = None, limit: int = 100) -> li
     params: list[Any] = []
     where = ""
     if after_id:
-        where = "WHERE created_at>(SELECT created_at FROM mail_realtime_events WHERE id=%s)"
+        where = (
+            "WHERE (created_at,id)>(SELECT created_at,id "
+            "FROM mail_realtime_events WHERE id=%s)"
+        )
         params.append(after_id)
     params.append(max(1, min(limit, 500)))
     with get_connection() as conn, conn.cursor() as cur:
-        cur.execute(f"SELECT * FROM mail_realtime_events {where} ORDER BY created_at ASC LIMIT %s", params)
+        cur.execute(f"SELECT * FROM mail_realtime_events {where} ORDER BY created_at ASC, id ASC LIMIT %s", params)
         return _rows(cur)
+
+
+def latest_realtime_event_id() -> str | None:
+    """Return the present end of the durable realtime log.
+
+    ``list_realtime_events(limit=1)`` intentionally returns the *oldest* row so
+    replay can run forwards.  It must therefore never be used to bootstrap the
+    live tailer: doing so re-emits the whole historical log as live events.
+    """
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT id FROM mail_realtime_events "
+            "ORDER BY created_at DESC, id DESC LIMIT 1"
+        )
+        row = cur.fetchone()
+    return str(row[0]) if row else None
 
 
 def list_notifications(

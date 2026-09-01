@@ -19,10 +19,44 @@ continuously inside the API process.
 from __future__ import annotations
 
 import asyncio
+from contextlib import nullcontext
 
 import pytest
 
 from core import recruitment_realtime as rt
+
+
+def test_live_cursor_reads_the_newest_durable_event(monkeypatch):
+    """The live tailer tip is the newest row, not replay's oldest row."""
+    from core import recruitment_mail_store as store
+
+    class Cursor:
+        statement = ""
+
+        def execute(self, statement, _params=None):
+            self.statement = " ".join(statement.split())
+
+        def fetchone(self):
+            return ("newest-event",)
+
+    class Connection:
+        def __init__(self, cursor):
+            self._cursor = cursor
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def cursor(self):
+            return nullcontext(self._cursor)
+
+    cursor = Cursor()
+    monkeypatch.setattr(store, "get_connection", lambda: Connection(cursor))
+
+    assert store.latest_realtime_event_id() == "newest-event"
+    assert "ORDER BY created_at DESC, id DESC LIMIT 1" in cursor.statement
 
 
 class FakeSocket:
@@ -58,13 +92,10 @@ class TestTheTailerDelivers:
         served = [rows("evt-1"), []]
 
         def fake_list(*, after_id=None, limit=100):
-            # limit=1 is the tailer establishing its starting position: it must
-            # begin at the present, not replay history the client already has.
-            if limit == 1:
-                return []
             return served.pop(0) if served else []
 
         from core import recruitment_mail_store as store
+        monkeypatch.setattr(store, "latest_realtime_event_id", lambda: None)
         monkeypatch.setattr(store, "list_realtime_events", fake_list)
 
         async def run():
@@ -90,13 +121,10 @@ class TestTheTailerDelivers:
         served = [rows("evt-1"), []]
 
         def fake_list(*, after_id=None, limit=100):
-            # limit=1 is the tailer establishing its starting position: it must
-            # begin at the present, not replay history the client already has.
-            if limit == 1:
-                return []
             return served.pop(0) if served else []
 
         from core import recruitment_mail_store as store
+        monkeypatch.setattr(store, "latest_realtime_event_id", lambda: None)
         monkeypatch.setattr(store, "list_realtime_events", fake_list)
 
         async def run():
@@ -117,13 +145,17 @@ class TestTheTailerDelivers:
         rt._connections[socket] = {"username": "operator"}
         calls = {"n": 0}
 
-        def fake_list(*, after_id=None, limit=100):
+        def latest():
             calls["n"] += 1
             if calls["n"] <= 2:
                 raise RuntimeError("database blipped")
+            return None
+
+        def fake_list(*, after_id=None, limit=100):
             return rows("evt-after-failure")
 
         from core import recruitment_mail_store as store
+        monkeypatch.setattr(store, "latest_realtime_event_id", latest)
         monkeypatch.setattr(store, "list_realtime_events", fake_list)
 
         async def run():
@@ -137,6 +169,72 @@ class TestTheTailerDelivers:
 
         asyncio.run(run())
         assert any(p["event_id"] == "evt-after-failure" for p in socket.sent)
+
+    def test_bootstrap_starts_after_current_latest_event(self, monkeypatch):
+        """Historical rows must never be relabeled live on API startup."""
+        socket = FakeSocket()
+        rt._connections[socket] = {"username": "operator"}
+        calls = []
+
+        from core import recruitment_mail_store as store
+        monkeypatch.setattr(store, "latest_realtime_event_id", lambda: "current-tip")
+
+        def fake_list(*, after_id=None, limit=100):
+            calls.append(after_id)
+            return []
+
+        monkeypatch.setattr(store, "list_realtime_events", fake_list)
+
+        async def run():
+            task = asyncio.get_running_loop().create_task(rt._tail_events(poll_seconds=0.01))
+            await asyncio.sleep(0.05)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        asyncio.run(run())
+        assert calls
+        assert set(calls) == {"current-tip"}
+        assert socket.sent == []
+
+    def test_bootstrap_failure_never_reads_without_a_cursor(self, monkeypatch):
+        """A DB blip at startup must fail closed instead of replaying history."""
+        socket = FakeSocket()
+        rt._connections[socket] = {"username": "operator"}
+        attempts = {"latest": 0}
+        after_ids = []
+
+        from core import recruitment_mail_store as store
+
+        def latest():
+            attempts["latest"] += 1
+            if attempts["latest"] < 3:
+                raise RuntimeError("database unavailable")
+            return "recovered-tip"
+
+        def fake_list(*, after_id=None, limit=100):
+            after_ids.append(after_id)
+            return []
+
+        monkeypatch.setattr(store, "latest_realtime_event_id", latest)
+        monkeypatch.setattr(store, "list_realtime_events", fake_list)
+
+        async def run():
+            task = asyncio.get_running_loop().create_task(rt._tail_events(poll_seconds=0.01))
+            await asyncio.sleep(0.08)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        asyncio.run(run())
+        assert after_ids
+        assert None not in after_ids
+        assert set(after_ids) == {"recovered-tip"}
+        assert socket.sent == []
 
 
 class TestPublishStillWorksInProcess:

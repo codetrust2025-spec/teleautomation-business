@@ -154,25 +154,31 @@ async def _tail_events(poll_seconds: float = 2.0) -> None:
     from core import recruitment_mail_store as store
 
     cursor: str | None = None
+    cursor_ready = False
     try:
-        latest = await asyncio.to_thread(store.list_realtime_events, limit=1)
         # Start at the present. Older events are already the client's business
         # via the last_event_id replay it performs on connect.
-        cursor = latest[-1]["id"] if latest else None
+        cursor = await asyncio.to_thread(store.latest_realtime_event_id)
+        cursor_ready = True
     except Exception:
         logger.exception("Mail event tailer could not read its starting position")
 
     while True:
         try:
             await asyncio.sleep(poll_seconds)
+            if not cursor_ready:
+                # Fail closed. A transient bootstrap failure must not turn
+                # after_id=None into a replay of the whole durable table.
+                cursor = await asyncio.to_thread(store.latest_realtime_event_id)
+                cursor_ready = True
+                continue
             if not _connections:
                 # Keep the cursor moving so a client connecting later is not
                 # met with a backlog it has already replayed for itself.
                 try:
-                    latest = await asyncio.to_thread(store.list_realtime_events, limit=1)
-                    if latest:
-                        cursor = latest[-1]["id"]
+                    cursor = await asyncio.to_thread(store.latest_realtime_event_id)
                 except Exception:
+                    cursor_ready = False
                     logger.exception("Mail event tailer could not advance its cursor")
                 continue
             rows = await asyncio.to_thread(
