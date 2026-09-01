@@ -290,7 +290,13 @@ def _read_handlers_yaml(path: str) -> list[dict[str, str]]:
         ref = str(row.get("reference") or "").strip()
         pwd = str(row.get("password") or "").strip()
         if user and ref and pwd:
-            out.append({"username": user, "reference": ref, "password": pwd})
+            account_id = str(row.get("account_id") or "").strip() or f"handler:{user.casefold()}"
+            out.append({
+                "username": user,
+                "reference": ref,
+                "password": pwd,
+                "account_id": account_id,
+            })
     return out
 
 
@@ -318,7 +324,13 @@ def _handlers_from_credentials_copy() -> list[dict[str, str]]:
         ref = str(row.get("reference") or user).strip()
         pwd = str(row.get("password") or "").strip()
         if user and ref and pwd:
-            out.append({"username": user, "reference": ref, "password": pwd})
+            account_id = str(row.get("account_id") or "").strip() or f"handler:{user.casefold()}"
+            out.append({
+                "username": user,
+                "reference": ref,
+                "password": pwd,
+                "account_id": account_id,
+            })
     return out
 
 
@@ -390,6 +402,8 @@ def _save_handlers_yaml(rows: list[dict[str, str]]) -> None:
                 "username": r["username"],
                 "reference": r["reference"],
                 "password": r["password"],
+                "account_id": str(r.get("account_id") or "").strip()
+                or f"handler:{r['username'].casefold()}",
             }
             for r in rows
         ]
@@ -457,7 +471,12 @@ def admin_add_handler(username: str, reference: str, password: str) -> str | Non
     except Exception:
         # Registry unavailable — the username and reference checks above still apply.
         pass
-    rows.append({"username": user, "reference": ref, "password": hash_password(pwd)})
+    rows.append({
+        "username": user,
+        "reference": ref,
+        "password": hash_password(pwd),
+        "account_id": f"handler:{user.casefold()}",
+    })
     rows.sort(key=lambda r: r["reference"].lower())
     _save_handlers_yaml(rows)
     reload_handler_accounts()
@@ -473,6 +492,30 @@ def admin_remove_handler(username: str) -> str | None:
     if len(filtered) == len(rows):
         return "Handler not found"
     _save_handlers_yaml(filtered)
+    reload_handler_accounts()
+    return None
+
+
+def admin_rename_handler(username: str, new_username: str) -> str | None:
+    """Change a login name without changing the employee's stable identity."""
+    current = str(username or "").strip()
+    replacement = str(new_username or "").strip()
+    if not current or not replacement:
+        return "Current and new usernames are required"
+    rows = _load_handlers_yaml()
+    current_key = current.casefold()
+    replacement_key = replacement.casefold()
+    target = next((row for row in rows if row["username"].casefold() == current_key), None)
+    if not target:
+        return "Handler not found"
+    if replacement_key != current_key and any(
+        row["username"].casefold() == replacement_key for row in rows
+    ):
+        return f"Handler already exists: {replacement}"
+    target["account_id"] = str(target.get("account_id") or "").strip() or f"handler:{current_key}"
+    target["username"] = replacement
+    rows.sort(key=lambda row: row["reference"].lower())
+    _save_handlers_yaml(rows)
     reload_handler_accounts()
     return None
 
@@ -505,6 +548,11 @@ def stored_handler_password(username: str) -> str:
     """
     handler = _handler_accounts().get(str(username or "").lower())
     return str((handler or {}).get("password") or "")
+
+
+def stored_handler_account_id(username: str) -> str:
+    handler = _handler_accounts().get(str(username or "").casefold())
+    return str((handler or {}).get("account_id") or "")
 
 
 def handler_self_reset_password(username: str, reference: str, new_password: str) -> str | None:
@@ -636,6 +684,7 @@ def resolve_operator_login(username: str, password: str) -> dict[str, Any] | Non
             "username": handler["username"],
             "role": "handler",
             "reference": handler["reference"],
+            "account_id": handler.get("account_id"),
         })
     return None
 
@@ -793,6 +842,7 @@ def audit_operator_accounts() -> dict[str, Any]:
             "username": username,
             "role": "handler",
             "reference": handler.get("reference"),
+            "account_id": handler.get("account_id"),
         })
         rows[username.casefold()] = {
             "name": profile["display_name"],
@@ -829,6 +879,7 @@ def audit_operator_accounts() -> dict[str, Any]:
                 "username": username,
                 "role": item.get("role") or "handler",
                 "reference": item.get("reference"),
+                "account_id": item.get("account_id"),
             })
             rows[key] = {
                 "name": profile["display_name"],

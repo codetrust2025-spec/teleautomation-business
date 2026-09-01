@@ -169,3 +169,17 @@ def test_the_admin_account_is_untouched_by_any_of_this(store):
     profile = auth.resolve_operator_login("operations_admin", "admin-password")
     assert profile["role"] == "admin"
     assert profile["reference"] is None
+
+
+def test_a_shorter_username_keeps_the_same_attendance_identity(store):
+    assert auth.admin_add_handler("referrer-thrilok", "Thrilok", "pw") is None
+    before = auth.resolve_operator_login("referrer-thrilok", "pw")
+
+    assert auth.admin_rename_handler("referrer-thrilok", "thrilok") is None
+    after = auth.resolve_operator_login("thrilok", "pw")
+
+    assert auth.verify_credentials("referrer-thrilok", "pw") is False
+    assert after["username"] == "thrilok"
+    assert after["account_id"] == before["account_id"] == "handler:referrer-thrilok"
+    audited = next(row for row in auth.audit_operator_accounts()["users"] if row["username"] == "thrilok")
+    assert audited["account_id"] == "handler:referrer-thrilok"

@@ -249,6 +249,33 @@ def test_the_api_response_carries_no_handler_password_at_all(tmp_path, monkeypat
     assert "chosen-pw" not in json.dumps(payload)
 
 
+def test_mirror_rename_keeps_hash_and_stable_account_id(tmp_path, monkeypatch):
+    from features import data_room_credentials_store as creds
+
+    monkeypatch.setattr(creds, "_FILE", str(tmp_path / "credentials.json"))
+    monkeypatch.setenv("DASHBOARD_USERNAME", "operations_admin")
+    monkeypatch.setenv("DASHBOARD_PASSWORD", "admin-password")
+    monkeypatch.setattr(auth, "_refresh_dashboard_env_from_file", lambda: None)
+    monkeypatch.setattr(auth, "DATA_DIR", str(tmp_path / "volume"))
+    monkeypatch.setattr(auth, "BASE_DIR", str(tmp_path / "image"))
+    monkeypatch.setattr(auth, "_handlers_from_credentials_copy", lambda: [])
+    auth.reload_handler_accounts()
+    creds.create_handler_login({
+        "username": "referrer-thrilok", "reference": "Thrilok", "password": "chosen-pw",
+    })
+    stored_before = auth.stored_handler_password("referrer-thrilok")
+
+    _, err = creds.rename_handler_login("referrer-thrilok", "thrilok")
+
+    assert err is None
+    assert auth.verify_credentials("thrilok", "chosen-pw") is True
+    assert auth.stored_handler_password("thrilok") == stored_before
+    assert auth.stored_handler_account_id("thrilok") == "handler:referrer-thrilok"
+    mirror = creds.handler_login_rows()[0]
+    assert mirror["username"] == "thrilok"
+    assert mirror["account_id"] == "handler:referrer-thrilok"
+
+
 def test_mirroring_a_hash_does_not_hash_it_again(tmp_path, monkeypatch):
     """`update_handler_login` routes a password through the hasher. Pushing an
     already-hashed value back through it would hash the hash, and the person's
