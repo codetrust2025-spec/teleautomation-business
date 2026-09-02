@@ -321,7 +321,12 @@ export function SubmitSlotPage() {
   const [technology, setTechnology] = useState('')
   const [serviceType, setServiceType] = useState('profile_service')
   const [showServiceDrop, setShowServiceDrop] = useState(false)
-  const [triedSubmit, setTriedSubmit] = useState(false)
+  // Which one field the form is currently asking for, not merely that a
+  // submit was attempted. The boolean lit every hint at once, so an empty form
+  // answered a single click with six warnings and a global alert on top --
+  // "show only the first error" and "no duplicate global + field error" are the
+  // same fix: name the field, and say it in one place.
+  const [missingField, setMissingField] = useState('')
   const [aiExtraction, setAiExtraction] = useState(null)
   const [aiBlocked, setAiBlocked] = useState('')
   // One ref per field the validation sequence can stop at, so the first
@@ -601,6 +606,23 @@ export function SubmitSlotPage() {
     finally { setBusy(false); setPaymentAnalysing(false) }
   }
 
+  // Clear the message the moment that field is satisfied, rather than leaving
+  // it up until the next Confirm. Otherwise the form still says "enter the
+  // client name" while the name is being typed into the box beside it.
+  useEffect(() => {
+    if (!missingField) return
+    const satisfied = {
+      name: !!effectiveName,
+      phone: serviceType !== 'round_wise' || !!roundWisePhone.trim(),
+      technology: serviceType !== 'round_wise' || !!effectiveTechnology,
+      round: !!interviewRound,
+      payment: !needsPaymentProof,
+      invite: !!slotFile,
+    }[missingField]
+    if (satisfied) setMissingField('')
+  }, [missingField, effectiveName, serviceType, roundWisePhone, effectiveTechnology,
+      interviewRound, needsPaymentProof, slotFile])
+
   async function submitBook(ev) {
     ev.preventDefault()
     if (parsing) {
@@ -620,26 +642,26 @@ export function SubmitSlotPage() {
     // what is owed depends on the service type, the round and the candidate,
     // so validating it earlier would judge an amount that is not settled yet.
     const steps = [
-      { ref: nameRef, fallbackRef: nameFieldRef, ok: !!effectiveName,
-        message: 'Enter the client name for this round.' },
-      { ref: phoneRef, ok: serviceType !== 'round_wise' || !!roundWisePhone.trim(),
-        message: 'Enter the candidate phone number.' },
-      { ref: technologyRef, ok: serviceType !== 'round_wise' || !!effectiveTechnology,
-        message: 'Choose the technology for this interview.' },
-      { ref: roundRef, ok: !!interviewRound,
-        message: 'Choose the interview round.' },
-      { ref: paymentRef, ok: !needsPaymentProof,
-        message: 'Attach a payment screenshot that covers the amount due.' },
-      { ref: inviteRef, ok: !!slotFile,
-        message: 'Attach the interview invite screenshot.' },
+      { key: 'name', ref: nameRef, fallbackRef: nameFieldRef, ok: !!effectiveName },
+      { key: 'phone', ref: phoneRef,
+        ok: serviceType !== 'round_wise' || !!roundWisePhone.trim() },
+      { key: 'technology', ref: technologyRef,
+        ok: serviceType !== 'round_wise' || !!effectiveTechnology },
+      { key: 'round', ref: roundRef, ok: !!interviewRound },
+      { key: 'payment', ref: paymentRef, ok: !needsPaymentProof },
+      { key: 'invite', ref: inviteRef, ok: !!slotFile },
     ]
     const firstMissing = steps.find(step => !step.ok)
     if (firstMissing) {
-      setTriedSubmit(true)
-      setError(firstMissing.message)
+      // The message goes beside the field, and nowhere else. Putting it in the
+      // page-level alert as well said the same thing twice on one screen, once
+      // with the field in front of it and once without.
+      setMissingField(firstMissing.key)
+      setError('')
       focusField(firstMissing.ref?.current ? firstMissing.ref : firstMissing.fallbackRef || firstMissing.ref)
       return
     }
+    setMissingField('')
     if (isPastDate) {
       setError('Interview date is in the past. Please select today or a future date.')
       return
@@ -838,8 +860,8 @@ export function SubmitSlotPage() {
                 ) : (
                   <SlotCandidatePicker candidates={candidates} value={name} onChange={v => { setName(v); resetPaymentProofs() }} disabled={busy || parsing} />
                 )}
-                {triedSubmit && !effectiveName
-                  ? <span className="sbs-hint sbs-hint--warn">Enter client name to confirm.</span>
+                {missingField === 'name'
+                  ? <span className="sbs-hint sbs-hint--warn" role="alert">Enter the client name for this round.</span>
                   : <span className="sbs-hint">{serviceType === "round_wise" ? "Type the client name for this round." : "Pick from the list or type a new client name."}</span>}
               </label>
 
@@ -859,8 +881,8 @@ export function SubmitSlotPage() {
                     placeholder="10-digit phone number"
                     disabled={busy || parsing}
                   />
-                  {triedSubmit && !roundWisePhone.trim()
-                    ? <span className="sbs-hint sbs-hint--warn">Required — round-wise booking needs the candidate phone.</span>
+                  {missingField === 'phone'
+                    ? <span className="sbs-hint sbs-hint--warn" role="alert">Enter the candidate phone number.</span>
                     : <span className="sbs-hint">Identifies the candidate across rounds.</span>}
                 </label>
               )}
@@ -878,21 +900,21 @@ export function SubmitSlotPage() {
                     onChange={value => { setTechnology(value); setUserEditedFields(prev => ({ ...prev, technology: true })) }}
                     disabled={busy || parsing}
                   />
-                  {triedSubmit && !effectiveTechnology
-                    ? <span className="sbs-hint sbs-hint--warn">Required — round-wise booking needs the technology.</span>
+                  {missingField === 'technology'
+                    ? <span className="sbs-hint sbs-hint--warn" role="alert">Choose the technology for this interview.</span>
                     : <span className="sbs-hint">Read from the invite when it says; otherwise pick or type it.</span>}
                 </label>
               )}
 
               <label className="sbs-field">
                 <span className="sbs-label">Interview round <span className="sbs-required" aria-hidden="true">*</span></span>
-                <div className={`sbs-select-wrap${triedSubmit && !interviewRound ? ' sbs-select-wrap--required' : ''}`}>
+                <div className={`sbs-select-wrap${missingField === 'round' ? ' sbs-select-wrap--required' : ''}`}>
                   <select ref={roundRef} className="sbs-select" value={interviewRound} onChange={e => setInterviewRound(e.target.value)} disabled={busy || parsing}>
                     <option value="">Select round (L1, L2…)</option>
                     {ROUND_OPTIONS.map(r => <option key={r} value={r}>{r}</option>)}
                   </select>
                 </div>
-                {triedSubmit && !interviewRound && <span className="sbs-hint sbs-hint--warn">Required — select a round to confirm.</span>}
+                {missingField === 'round' && <span className="sbs-hint sbs-hint--warn" role="alert">Choose the interview round.</span>}
               </label>
 
               {paymentRequired && (
@@ -928,7 +950,7 @@ export function SubmitSlotPage() {
                         compact
                         multiple
                         label={paymentProofIds.length ? 'Add remaining payment screenshots' : 'Payment screenshots'}
-                        hint="Paid in parts? Attach every payment screenshot — they are added up for this booking."
+                        hint="Paid in parts? Attach each screenshot — they are added up."
                         files={paymentFiles}
                         disabled={busy || parsing}
                         busy={busy || paymentAnalysing}
@@ -939,7 +961,7 @@ export function SubmitSlotPage() {
                           ? <><Spinner size={14} />&nbsp;Analysing {paymentFiles.length > 1 ? `${paymentFiles.length} screenshots` : ''}…</>
                           : `Save payment proof${paymentFiles.length > 1 ? 's' : ''}`}
                       </button>
-                      {triedSubmit && needsPaymentProof && <span className="sbs-hint sbs-hint--warn">Upload and save payment proof to confirm.</span>}
+                      {missingField === 'payment' && <span className="sbs-hint sbs-hint--warn" role="alert">Attach a payment screenshot that covers the amount due.</span>}
                     </>
                   )}
                 </div>
@@ -948,7 +970,7 @@ export function SubmitSlotPage() {
               <div ref={inviteRef} className="sbs-field">
                 <span className="sbs-label">Interview invite screenshot</span>
                 <SubmitSlotFileDrop hint="Teams, Gmail, Calendar, or Zoom — date and time must be visible." file={slotFile} previewUrl={slotPreview} disabled={busy} busy={parsing} onFile={onSlotFileChange} />
-                {triedSubmit && !slotFile && <span className="sbs-hint sbs-hint--warn">Upload your interview invite screenshot to confirm.</span>}
+                {missingField === 'invite' && <span className="sbs-hint sbs-hint--warn" role="alert">Attach the interview invite screenshot.</span>}
               </div>
 
               {parsing && <div className="sbs-status sbs-status--loading"><Spinner size={18} /><span>Reading invite with AI… this may take a few minutes</span></div>}

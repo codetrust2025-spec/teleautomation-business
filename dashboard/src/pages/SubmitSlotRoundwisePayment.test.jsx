@@ -268,7 +268,9 @@ describe('Round-wise payment — upload carries correct service_type', () => {
     fireEvent.click(screen.getByRole('button', { name: /confirm booking/i }))
 
     // Technology validation error on the field
-    expect(await screen.findByText(/round-wise booking needs the technology/i)).toBeTruthy()
+    // Wording changed with sequential validation; the field-level
+    // assertion is the point and is unchanged.
+    expect(await screen.findByText(/choose the technology for this interview/i)).toBeTruthy()
   })
 
   it('invite auto-fills technology', async () => {
