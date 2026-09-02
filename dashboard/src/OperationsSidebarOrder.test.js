@@ -108,4 +108,17 @@ describe('operations sidebar order', () => {
     expect(icons).toHaveLength(EXPECTED.length)
     expect(new Set(icons).size).toBe(icons.length)
   })
+
+  it('tells assistive technology which section is current', () => {
+    // The active item was styled by a class and nothing else, so which
+    // section you were in existed only for people who could see the
+    // highlight.
+    expect(app).toMatch(/aria-current=\{view === item\.id \? 'page' : undefined\}/)
+  })
+
+  it('says what the sidebar badge is counting', () => {
+    // countLabel renders a bare number, which reads as "Candidates 3" with
+    // nothing saying what 3 is.
+    expect(app).toMatch(/desktop-sidebar__badge" aria-label=/)
+  })
 })
