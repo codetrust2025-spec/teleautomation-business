@@ -79,4 +79,17 @@ describe('operations sidebar order', () => {
       expect(app).not.toContain(escape)
     }
   })
+
+  it('has no icon that repeats a word of its own label', () => {
+    // The icon span renders immediately before the label, so a word-shaped
+    // icon reads as duplicated text rather than as an icon: `icon: 'AI'`
+    // beside 'AI Mail Review' painted "AI AI Mail Review" in the live
+    // sidebar for as long as it shipped. Every other entry uses a glyph,
+    // which cannot collide with the label this way.
+    const pairs = [...app.matchAll(/\blabel:\s*'([^']+)',\s*icon:\s*'([^']+)'/g)]
+    expect(pairs).toHaveLength(EXPECTED.length)
+    for (const [, label, icon] of pairs) {
+      expect(label.toLowerCase().split(/\s+/)).not.toContain(icon.toLowerCase())
+    }
+  })
 })
