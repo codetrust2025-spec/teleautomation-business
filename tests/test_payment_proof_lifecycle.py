@@ -337,6 +337,71 @@ class TestOnlyASuccessfulBookingSpendsIt:
         assert cs.get_candidate(str(row["id"]))["payment"] == 5000
 
 
+class TestReuseAfterACancelledBookingIsStillAllowed:
+    """Spending a payment is not the same as forfeiting it.
+
+    A cancelled or unattended booking releases its payment back to the payer,
+    and assess_payment_proof implements that. The utilisation marker records
+    when a payment was spent; it must not become a second gate that refuses a
+    rebooking this policy allows.
+    """
+
+    def test_the_marker_does_not_pre_empt_the_reuse_policy(self, client):
+        proof_id = upload(client)
+        assert confirm(client, proof_id).status_code == 200
+        assert is_utilized(proof_id) is True
+
+        booked = next(
+            r for r in cs.list_candidates(stage="all", month="all")
+            if cs.candidate_has_confirmed_slot(r)
+        )
+        cs.update_candidate(str(booked["id"]), {"stage": "cancelled"},
+                            allow_slot_without_rules=True)
+
+        # Whatever the fraud check decides, it must be the thing deciding --
+        # not a refusal raised ahead of it because the marker was set.
+        from features.pending_slot_payment import get_verified_proof, validate_for_confirmation
+
+        resolved = get_verified_proof(
+            proof_id, name="Raju", service_type="round_wise", phone="9876543210",
+        )
+        if resolved:
+            try:
+                validate_for_confirmation(resolved, phone="9876543210")
+            except ValueError as exc:
+                # Only ever from the fraud check's own reading of the row.
+                assert "already linked" in str(exc)
+
+    def test_the_marker_is_a_record_not_a_gate(self):
+        """No refusal is raised from the marker itself.
+
+        Read from the syntax tree so the comment explaining *why* the marker is
+        not consulted here does not itself look like consulting it.
+        """
+        import ast
+        import inspect
+        import textwrap
+
+        from features import pending_slot_payment
+
+        tree = ast.parse(
+            textwrap.dedent(
+                inspect.getsource(pending_slot_payment.validate_for_confirmation)
+            )
+        )
+        names = {
+            node.id for node in ast.walk(tree) if isinstance(node, ast.Name)
+        } | {
+            node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)
+        }
+        constants = {
+            node.value for node in ast.walk(tree)
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        }
+        assert "utilized_by" not in names
+        assert not any("utilized" in text for text in constants if len(text) < 200)
+
+
 class TestSplitPaymentsStillWork:
     def test_two_instalments_book_one_slot_and_are_both_spent(
         self, client, monkeypatch

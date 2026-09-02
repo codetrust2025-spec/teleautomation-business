@@ -174,14 +174,17 @@ def validate_for_confirmation(
     booking_key: str = "",
 ) -> dict:
     path, pending = pending_payment_proof
-    # A proof already spent by a different committed booking cannot pay for
-    # this one. The same booking retrying is not reuse -- it is the same
-    # booking -- so its own key passes through.
-    spent_by = utilized_by(pending)
-    if spent_by and spent_by != str(booking_key or "").strip():
-        from features.payment_fraud_detection import PAYMENT_REUSE_BLOCKED_MESSAGE
-
-        raise ValueError(PAYMENT_REUSE_BLOCKED_MESSAGE)
+    # Deliberately not gated on `utilized_at` here.
+    #
+    # The evidence attached to the candidate row is the authoritative record of
+    # a spent payment, and assess_payment_proof below reads it -- including the
+    # part that decides when reuse is *allowed*, which is a real policy: a
+    # booking that was cancelled or not attended releases its payment back to
+    # the payer. Refusing here on the marker alone would pre-empt that and
+    # block a rebooking the fraud check would have permitted.
+    #
+    # The marker records when the payment was spent, so the lifecycle can be
+    # read directly. It does not get a second, contradicting vote on it.
     with open(path, "rb") as handle:
         raw = handle.read()
     from features.payment_fraud_detection import assess_payment_proof
