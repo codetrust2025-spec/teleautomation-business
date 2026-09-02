@@ -279,11 +279,21 @@ function PaymentAiResultCard({ ai }) {
  * a cause for it.
  */
 async function readApiResponse(response) {
-  const contentType = response.headers?.get?.('content-type') || ''
-  if (contentType.includes('application/json')) return response.json()
+  // Try to parse first and ask what it was afterwards. Keying off the declared
+  // content-type instead turned every response without that header into an
+  // empty object -- the body was there and readable, and the caller got {}.
+  //
+  // A body can only be read once, so keep a clone for the failure path where
+  // one is available; stubs and older environments simply lose the excerpt.
+  const spare = typeof response.clone === 'function' ? response.clone() : null
+  try {
+    return await response.json()
+  } catch {
+    // Not JSON: a proxy error page, most often.
+  }
   let text = ''
   try {
-    text = await response.text()
+    text = await (spare || response).text()
   } catch {
     text = ''
   }
@@ -602,7 +612,10 @@ export function SubmitSlotPage() {
       paymentFiles.forEach(f => fd.append('files', f))
       fd.append('existing_proof_ids', paymentProofIds.join(','))
       const res = await fetch(`${API_BASE}/public/slots/payment-proof`, { method: 'POST', body: fd })
-      const data = await res.json()
+      // Not res.json(): a 502 from the proxy arrives as HTML, and parsing it
+      // threw into the bare catch below, which called it a network fault. That
+      // is the same misreport that hid a working booking on the confirm path.
+      const data = await readApiResponse(res)
       const rejected = data.rejected || []
       setPaymentRejected(rejected)
       if (!res.ok) {
@@ -623,7 +636,12 @@ export function SubmitSlotPage() {
         ...(data.ai_extractions || []).filter(ai => ai && ai.is_payment_screenshot),
       ])
       if (data.payment_complete) setSuccess('Payment proof saved — you can confirm your slot.')
-    } catch { setError('Network error — try again') }
+    } catch (err) {
+      // Only a fetch that never got an answer is a network fault. Anything
+      // else says what it was, rather than sending the payer to check their
+      // connection over a receipt the server actually refused.
+      setError(err instanceof TypeError ? 'Network error — try again' : (err?.message || 'Payment upload failed'))
+    }
     finally { setBusy(false); setPaymentAnalysing(false) }
   }
 
