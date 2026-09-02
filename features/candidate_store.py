@@ -5743,11 +5743,22 @@ def update_candidate(
                             if controlled or proof_total >= recorded
                             else recorded
                         )
-                    # Otherwise every attached proof is pending, queued, under
-                    # review or refused, and a total of zero verified rupees is
-                    # not a statement that zero rupees arrived. It is the
-                    # absence of a statement, so the recorded figure stands and
-                    # the operator can still correct it.
+                    else:
+                        # Every attached proof is pending, queued, under review
+                        # or refused. A verified total of zero is not a
+                        # statement that zero rupees arrived; it is the absence
+                        # of a statement, so the proofs decide nothing here.
+                        #
+                        # The submitted figure is accepted only where it does
+                        # not reduce what is on record. Letting it reduce is
+                        # what erased a recorded 20,000, and leaving that open
+                        # to any caller -- not only the edit form -- is what
+                        # made the erasure possible in the first place. A
+                        # genuine reduction needs the proofs adjudicated, which
+                        # puts the row under proof control and lets the branch
+                        # above apply it.
+                        typed = int(allowed_patch.get("payment") or 0)
+                        allowed_patch["payment"] = max(typed, recorded)
             preview = _normalise(allowed_patch, existing=r)
             is_dropped = preview.get("stage") == "dropped"
             phone_key = candidate_phone_identity(preview.get("phone"))
