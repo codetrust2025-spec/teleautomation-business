@@ -141,6 +141,29 @@ describe('a booking the backend refused', () => {
   })
 })
 
+describe('the body is read, not the label on it', () => {
+  it('shows a refusal that arrived as JSON without a content-type header', async () => {
+    // readApiResponse first keyed off the declared content-type and returned
+    // {} for anything else, so a refusal whose reason was sitting right there
+    // in the body was replaced by a bare "The server returned 409." -- the
+    // same class of thing as calling a working booking a network error.
+    //
+    // A success is not a useful test of this: the confirmation message falls
+    // back to the name already typed into the form, so it reads correctly
+    // either way. The refusal path is where the lost body actually shows.
+    stubFetch(() => Promise.resolve({
+      ok: false, status: 409, headers: { get: () => null },
+      json: () => Promise.resolve({ status: 'error', message: 'That slot is already taken.' }),
+    }))
+    const confirm = await completedForm()
+    fireEvent.click(confirm)
+
+    await waitFor(() =>
+      expect(screen.getByText('That slot is already taken.')).toBeInTheDocument(),
+    )
+  })
+})
+
 describe('a genuine network fault still says so', () => {
   it('reports it when fetch itself rejects', async () => {
     stubFetch(() => Promise.reject(new TypeError('Failed to fetch')))
