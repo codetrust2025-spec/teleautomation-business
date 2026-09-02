@@ -9,10 +9,6 @@ const API_BASE =
       ? `${window.location.protocol}//${window.location.host}`
       : ''
 
-function slugId(text) {
-  return String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40) || `item_${Date.now()}`
-}
-
 async function readApiResponse(response) {
   const contentType = response.headers.get('content-type') || ''
   if (contentType.includes('application/json')) return response.json()
@@ -27,16 +23,27 @@ async function readApiResponse(response) {
   )
 }
 
+// What a person knows that the PDF does not say for itself.
+//
+// The other five boxes asked for values the upload already produces:
+// `create_offer_letter_from_pdf` slugs the id from the filename, reads the
+// filename, size and date from the bytes, records `uploaded_at`, and writes the
+// PDF to DATA_DIR/data_room/offer_letters_cache. `drive_file_id` is set to ""
+// by that path and never filled in by hand. Asking for them offered no
+// information and one way to get each wrong.
+//
+// They are still stored. `update_vault_item` merges the keys it is given, so
+// omitting them from the PATCH preserves whatever the row already holds --
+// which also repairs a quieter fault: the old form sent `size_kb: ''` for any
+// record without one, overwriting a real value with an empty string.
 const OFFER_FIELDS = [
-  { key: 'id', label: 'ID (stable slug)', placeholder: 'e.g. luxoft_2024_01' },
-  { key: 'filename', label: 'Filename' },
   { key: 'candidate', label: 'Candidate name' },
   { key: 'company_name', label: 'Company name' },
-  { key: 'date_modified', label: 'Date modified', placeholder: 'YYYY-MM-DD' },
-  { key: 'size_kb', label: 'Size (KB)' },
-  { key: 'drive_file_id', label: 'Google Drive file ID' },
-  { key: 'notes', label: 'Notes', full: true },
+  { key: 'notes', label: 'Notes (optional)', type: 'textarea', rows: 3, full: true },
 ]
+
+// Only these three are ever sent. Everything else on the row is the upload's.
+const EDITABLE_KEYS = ['candidate', 'company_name', 'notes']
 
 function VaultModal({ title, fields, form, onChange, onSave, onClose, error, uploadPanel, saving }) {
   // Mounted only while open, so the dialog is open for its whole life.
@@ -84,12 +91,15 @@ export function DataRoomOffersTab({ offers = [], onReload }) {
   const openAdd = () => {
     setModalError('')
     setAnalysisMessage('')
-    setModal({ mode: 'create', form: { id: '', filename: '', candidate: '', company_name: '', date_modified: '', size_kb: '', drive_file_id: '', notes: '' } })
+    setModal({ mode: 'create', form: { candidate: '', company_name: '', notes: '' } })
   }
 
   const openEdit = (row) => {
     setModalError('')
-    setModal({ mode: 'edit', id: row.id, form: { id: row.id, filename: row.filename || '', candidate: row.candidate || '', company_name: row.company_name || '', date_modified: row.date_modified || '', size_kb: String(row.size_kb || ''), drive_file_id: row.drive_file_id || '', notes: row.notes || '' } })
+    // Only the editable three are loaded. The rest of the row stays on the
+    // server and is preserved by the merge, so opening and saving an existing
+    // record cannot blank its filename, size, date or drive id.
+    setModal({ mode: 'edit', id: row.id, row, form: { candidate: row.candidate || '', company_name: row.company_name || '', notes: row.notes || '' } })
   }
 
   const handleDelete = async (row) => {
@@ -101,13 +111,18 @@ export function DataRoomOffersTab({ offers = [], onReload }) {
 
   const handleSave = async () => {
     const { mode, form, id } = modal
-    const body = { ...form }
-    if (body.size_kb) body.size_kb = Number(body.size_kb) || body.size_kb
-    if (mode === 'create' && !body.id.trim()) body.id = slugId(body.filename || body.candidate)
-    const url = mode === 'create'
-      ? `${API_BASE}/data-room/credentials/vault/offer_letters`
-      : `${API_BASE}/data-room/credentials/vault/offer_letters/${id}`
-    const method = mode === 'create' ? 'POST' : 'PATCH'
+    // A new offer letter is the PDF. `upload-analyze` writes the file, derives
+    // the row and switches this modal to edit, so reaching Save in create mode
+    // means no PDF was chosen and there is nothing to catalogue.
+    if (mode === 'create') {
+      setModalError('Choose the offer letter PDF first.')
+      return
+    }
+    // Only the editable keys. update_vault_item merges, so everything the
+    // upload derived is preserved by not being sent.
+    const body = Object.fromEntries(EDITABLE_KEYS.map(key => [key, form[key] ?? '']))
+    const url = `${API_BASE}/data-room/credentials/vault/offer_letters/${id}`
+    const method = 'PATCH'
     setSaving(true)
     setModalError('')
     try {
@@ -153,14 +168,10 @@ export function DataRoomOffersTab({ offers = [], onReload }) {
       setModal({
         mode: 'edit',
         id: row.id,
+        row,
         form: {
-          id: row.id || '',
-          filename: row.filename || file.name,
           candidate: row.candidate || '',
           company_name: row.company_name || '',
-          date_modified: row.date_modified || '',
-          size_kb: String(row.size_kb || ''),
-          drive_file_id: row.drive_file_id || '',
           notes: row.notes || '',
         },
       })
@@ -273,7 +284,7 @@ export function DataRoomOffersTab({ offers = [], onReload }) {
       {modal && (
         <VaultModal
           title={modal.mode === 'create' ? 'Add offer letter' : 'Edit offer letter'}
-          fields={OFFER_FIELDS.map(f => modal.mode === 'edit' && f.key === 'id' ? { ...f, readOnly: true } : f)}
+          fields={OFFER_FIELDS}
           form={modal.form}
           onChange={(f) => setModal(s => ({ ...s, form: f }))}
           onSave={handleSave}
@@ -285,7 +296,9 @@ export function DataRoomOffersTab({ offers = [], onReload }) {
               <div className="dr-offer-upload-copy">
                 <strong>{analyzing ? 'Saving and analyzing PDF…' : 'Upload offer letter PDF'}</strong>
                 <span>
-                  The original PDF is saved first. Candidate, company, filename, date, size and notes are then auto-filled for review.
+                  The PDF is stored first, then the candidate and company are
+                  filled in from it for you to check. Filename, size and date are
+                  read from the file.
                 </span>
               </div>
               <label className={`cand-btn cand-btn--primary${analyzing ? ' cand-btn--disabled' : ''}`}>
@@ -302,25 +315,31 @@ export function DataRoomOffersTab({ offers = [], onReload }) {
                   }}
                 />
               </label>
+            </div>
+          ) : (
+            /* A saved record: what it holds, and a way to open it. The
+               filename, size and date are read from the PDF, so they are shown
+               rather than asked for. Preview used to appear only in the moment
+               after an upload; it belongs on every edit. */
+            <div className="dr-offer-attached">
+              <span className="dr-offer-attached-file">
+                {modal.row?.filename
+                  ? `${modal.row.filename}${modal.row.size_kb ? ` · ${modal.row.size_kb} KB` : ''}${modal.row.date_modified ? ` · ${modal.row.date_modified}` : ''}`
+                  : 'No PDF attached to this record.'}
+              </span>
+              {modal.row?.has_pdf && (
+                <a
+                  className="cand-btn cand-btn--sm"
+                  href={`${API_BASE}/data-room/offer-letters/${modal.id}/preview`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  View PDF
+                </a>
+              )}
               {analysisMessage && <p className="dr-offer-analysis-ok">{analysisMessage}</p>}
             </div>
-          ) : analysisMessage ? (
-            <div className="dr-offer-upload-panel">
-              <div className="dr-offer-upload-copy">
-                <strong>PDF saved successfully</strong>
-                <span>Review the auto-filled values below and save any corrections.</span>
-              </div>
-              <a
-                className="cand-btn"
-                href={`${API_BASE}/data-room/offer-letters/${modal.id}/preview`}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                Preview PDF
-              </a>
-              <p className="dr-offer-analysis-ok">{analysisMessage}</p>
-            </div>
-          ) : null}
+          )}
         />
       )}
     </section>
