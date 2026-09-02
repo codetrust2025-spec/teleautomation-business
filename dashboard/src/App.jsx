@@ -21,7 +21,7 @@ import { useAuth } from './context/AuthContext.jsx'
 // then the records behind it.
 const VIEWS = [
   { id: 'daily-ops', label: 'Daily Ops', icon: '▤', badge: 'interviews' },
-  { id: 'attendance', label: 'Attendance', icon: '✓' },
+  { id: 'attendance', label: 'Attendance', icon: '▩' },
   { id: 'mail-notifications', label: 'Mail Alerts', icon: '🔔' },
   { id: 'ai-recruitment', label: 'AI Mail Review', icon: '▧' },
   { id: 'candidates', label: 'Candidates', icon: '▣', badge: 'works' },

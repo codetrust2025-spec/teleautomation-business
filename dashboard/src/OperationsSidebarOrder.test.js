@@ -92,4 +92,20 @@ describe('operations sidebar order', () => {
       expect(label.toLowerCase().split(/\s+/)).not.toContain(icon.toLowerCase())
     }
   })
+
+  it('has no icon that collides with the status glyph below it', () => {
+    // The footer marks "Operations service online" with a check. Attendance
+    // shipped with the same check as its nav icon, so one glyph meant both
+    // "this section" and "the service is up", a few rows apart in one sidebar.
+    const status = app.match(/desktop-sidebar__status-check" aria-hidden>([^<]+)</)?.[1]
+    expect(status).toBeTruthy()
+    const icons = [...app.matchAll(/\bicon:\s*'([^']+)'/g)].map((m) => m[1])
+    expect(icons).not.toContain(status)
+  })
+
+  it('gives every sidebar entry a distinct icon', () => {
+    const icons = [...app.matchAll(/\bicon:\s*'([^']+)'/g)].map((m) => m[1])
+    expect(icons).toHaveLength(EXPECTED.length)
+    expect(new Set(icons).size).toBe(icons.length)
+  })
 })
