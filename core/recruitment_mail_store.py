@@ -1729,19 +1729,21 @@ def should_route_to_mail_alert(
         if structured.get("backend_transition_validated") is not True:
             return False
 
-    if classification.startswith("interview_"):
-        # The one check that survives, and it is temporal rather than semantic:
-        # a rescan of August must not reopen interviews that have already
-        # happened. It says nothing about whether the classification is right.
+    if classification in {"interview_confirmed", "interview_rescheduled"}:
+        # Only scheduled interview transitions have a date proof obligation.
+        # A shortlist is the outcome before a schedule exists, so applying this
+        # gate to every `interview_*` classification made the tracked
+        # interview_shortlisted category impossible to notify.
         interview = structured.get("interview") or {}
         raw_date = str(interview.get("date") or event.get("interview_date") or "").strip()
         try:
             scheduled_date = date.fromisoformat(raw_date)
         except ValueError:
-            return classification == "interview_cancelled"
+            return False
         if scheduled_date < (today or date.today()):
             return False
 
+    if classification.startswith("interview_"):
         # "Trust the classification" means trust Ollama's. These two sources are
         # what the pipeline writes when Ollama produced nothing: during an
         # outage the fallback derives a status from routing context alone, so a
