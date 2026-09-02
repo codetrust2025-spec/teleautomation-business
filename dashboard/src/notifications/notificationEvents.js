@@ -1,5 +1,5 @@
 import { SELECTION_CLASSIFICATIONS, isTrackedMailAlert, showMailAlertNotification } from '../utils/mailAlertSound.js'
-import { describeReconnectTargets } from '../utils/mailboxStatus.js'
+import { describeReconnectTargets, needsReconnect } from '../utils/mailboxStatus.js'
 import { playNotification } from './notificationSounds.js'
 
 const recentMailEvents = new Map()
@@ -34,14 +34,45 @@ function readAlertedMailboxIds() {
   try { return new Set(JSON.parse(sessionStorage.getItem(GMAIL_ALERTED_KEY) || '[]').map(String)) } catch { return new Set() }
 }
 
-export function notifyGmailReconnect(disconnected = []) {
+/**
+ * Alert for mailboxes whose Gmail authorization needs the operator.
+ *
+ * `current` is the mailbox snapshot the list was derived from. Each row is
+ * re-checked against it immediately before firing, so a mailbox that has
+ * recovered between deriving the list and firing does not raise an expiry
+ * alert for a connection that is working again.
+ *
+ * The re-check reads `connection_status` and `last_error_message` -- the
+ * persisted connection state -- and deliberately not the sync-job label. A
+ * failed sync leaves a retry QUEUED, so an expired mailbox reads as "Sync
+ * Queued" on the page while its credentials are dead; suppressing on that
+ * label would silence the true alert for exactly the mailbox that needs it.
+ *
+ * It fails open in both directions that matter. No snapshot, or a row missing
+ * from the snapshot, alerts as before: absence of evidence that a mailbox
+ * recovered is not evidence that it did, and a missed expiry is worse than a
+ * repeated one.
+ */
+export function notifyGmailReconnect(disconnected = [], current = null) {
+  const live = Array.isArray(current)
+    ? new Map(current.map(row => [String(row?.id), row]))
+    : null
+  const stillBroken = live === null
+    ? disconnected
+    : disconnected.filter(row => {
+      const latest = live.get(String(row?.id))
+      return latest === undefined ? true : needsReconnect(latest)
+    })
+
   const alerted = readAlertedMailboxIds()
-  const newly = disconnected.filter(row => !alerted.has(String(row.id)))
+  const newly = stillBroken.filter(row => !alerted.has(String(row.id)))
   if (newly.length) {
     playNotification('gmail_reconnect')
     showMailAlertNotification({ status: 'Gmail connection expired', candidate_name: describeReconnectTargets(newly), notification_id: `gmail-reconnect-${newly.map(row => row.id).join('-')}` })
   }
-  try { sessionStorage.setItem(GMAIL_ALERTED_KEY, JSON.stringify(disconnected.map(row => String(row.id)))) } catch {}
+  // Only mailboxes still broken are remembered, so one that recovers is
+  // dropped and a later, genuinely new failure alerts again.
+  try { sessionStorage.setItem(GMAIL_ALERTED_KEY, JSON.stringify(stillBroken.map(row => String(row.id)))) } catch {}
   return newly.length > 0
 }
 

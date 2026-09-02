@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API } from "../config.js";
 import { useConfirm } from "../context/ConfirmContext.jsx";
-import { needsReconnect } from "../utils/mailboxStatus.js";
+import { mailboxUiStatus } from "../utils/mailboxStatus.js";
 import { ButtonContent, InlineLoader, OverlayLoader } from "../Loader.jsx";
 import { OcrToggle } from "./OcrToggle.jsx";
 
@@ -2352,16 +2352,9 @@ export default function RecruitmentMailPanelRedesign() {
         const syncStatus = String(
           row.stats.latest_sync_status || "",
         ).toUpperCase();
-        const uiStatus =
-          syncStatus === "RUNNING"
-            ? "SYNCING"
-            : syncStatus === "QUEUED"
-              ? "SYNC_QUEUED"
-              : needsReconnect(row.mailbox)
-                ? "RECONNECT_REQUIRED"
-                : !row.mailbox.monitoring_enabled
-                  ? "PAUSED"
-                  : "CONNECTED";
+        // Connection state is decided before sync-job state; see
+        // mailboxUiStatus for why that order matters.
+        const uiStatus = mailboxUiStatus(row.mailbox, syncStatus);
         return { ...row, uiStatus };
       }),
     [mailboxes],
