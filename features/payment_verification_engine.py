@@ -1479,6 +1479,7 @@ def verify_payment_screenshot(
     if normalized_mime not in ALLOWED_PAYMENT_MIME_TYPES:
         raise ValueError("Only payment screenshot image files are allowed")
     from features.ollama_payment_extract import (
+        _drop_sender_values_from_receiver_fields,
         extract_payment_with_ollama,
         verify_payment_against_due,
     )
@@ -1494,6 +1495,16 @@ def verify_payment_screenshot(
         crosscheck_ocr=True,
     )
     normalized_extraction = _normalize_directional_extraction(extraction or {})
+    # Strip the payer's own identifiers out of the receiver fields HERE, where
+    # every extraction path converges.
+    #
+    # This was first put in extract_payment_with_ollama, thirteen conditionals
+    # deep on a `backup_response` branch that the ordinary upload never reaches.
+    # Its unit test called the helper directly, so the test passed and the live
+    # path went on matching the payer's bank account as the payee's -- the exact
+    # shape of failure this repository has been bitten by before: a green test
+    # for a path that never runs.
+    _drop_sender_values_from_receiver_fields(normalized_extraction)
     result = verify_payment_against_due(
         normalized_extraction, max(0, int(expected_amount or 0))
     )
