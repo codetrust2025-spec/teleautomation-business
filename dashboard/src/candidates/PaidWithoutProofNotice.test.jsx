@@ -77,4 +77,24 @@ describe('paid without a payment proof', () => {
     expect(showsMissingNotice(PUJITHA)).toBe(true)
     expect(module_).toContain('l.payment_needs_reconciliation &&')
   })
+
+  it('explains why attached proofs are not counted, instead of a bare zero', () => {
+    // pujitha's real state after the two uploads: 2 proofs, 0 verified. The
+    // engine read and priced both and withheld credit because the payee handle
+    // is masked. "Verified proofs 0" alone was reported as a broken pipeline.
+    expect(module_).toContain('(l.proof_count ?? 0) > 0 && (l.verified_proof_count ?? 0) === 0')
+    expect(module_).toContain('attached but none is verified')
+    expect(module_).toContain('payment_proof_status_counts')
+  })
+
+  it('the two notices cannot both fire', () => {
+    // One is for no proofs at all, the other for proofs that none of which
+    // verified. A row is in exactly one of those states.
+    const noProofs = { payment: 20000, proof_count: 0, verified_proof_count: 0 }
+    const unverified = { payment: 20000, proof_count: 2, verified_proof_count: 0 }
+    const missing = (r) => (r.payment ?? 0) > 0 && (r.proof_count ?? 0) === 0
+    const unverifiedNotice = (r) => (r.proof_count ?? 0) > 0 && (r.verified_proof_count ?? 0) === 0
+    expect([missing(noProofs), unverifiedNotice(noProofs)]).toEqual([true, false])
+    expect([missing(unverified), unverifiedNotice(unverified)]).toEqual([false, true])
+  })
 })

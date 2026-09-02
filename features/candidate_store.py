@@ -5711,12 +5711,32 @@ def update_candidate(
             # A typed Received amount is not authoritative. Where verified proof
             # evidence exists the proofs decide the total, so a manual edit
             # cannot quietly disagree with them.
+            #
+            # But `has_proof_evidence` is true as soon as a proof is ATTACHED,
+            # not once one is verified, and `verified_proof_total` counts only
+            # verified ones. A row whose proofs are all pending or under review
+            # therefore had its recorded amount forced to the verified total,
+            # which is zero -- so uploading two genuine screenshots that the
+            # engine could not confirm erased a recorded 20,000.
+            #
+            # `recalculate_received_total` already refuses that exact reduction,
+            # in those words: on a row that was never under proof control a
+            # shortfall almost always means the payment predates proof capture,
+            # and reducing the total would delete real money. The same rule
+            # applies here. Proofs still win when they raise the figure, and
+            # they win outright once the row is genuinely proof-controlled.
             if "payment" in allowed_patch:
                 existing_proofs = partition_candidate_attachments(r)["payment_proofs"]
                 if payment_receipts.has_proof_evidence(existing_proofs):
-                    allowed_patch["payment"] = payment_receipts.verified_proof_total(
-                        existing_proofs
-                    )
+                    proof_total = payment_receipts.verified_proof_total(existing_proofs)
+                    recorded = int(r.get("payment") or 0)
+                    controlled = _coerce_bool(r.get("payment_proof_controlled"))
+                    if proof_total >= recorded or controlled:
+                        allowed_patch["payment"] = proof_total
+                    else:
+                        # Keep the recorded figure. receipt_summary already
+                        # reports the gap as unevidenced for reconciliation.
+                        allowed_patch["payment"] = recorded
             preview = _normalise(allowed_patch, existing=r)
             is_dropped = preview.get("stage") == "dropped"
             phone_key = candidate_phone_identity(preview.get("phone"))
