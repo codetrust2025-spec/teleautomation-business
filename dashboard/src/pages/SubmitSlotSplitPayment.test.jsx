@@ -126,10 +126,11 @@ describe('Submit slot — split payment screenshots', () => {
     fireEvent.click(screen.getByRole('button', { name: /save payment proof/i }))
 
     expect(await screen.findByText(/₹2,000 verified so far · ₹3,000 still to upload/)).toBeTruthy()
-    // Still short, so the drop stays open for the rest of the payment.
-    const again = screen.getByRole('button', { name: /save payment proof/i })
+    // Still short, so the drop stays open for the rest of the payment. Save
+    // appears with the next instalment rather than waiting around disabled --
+    // attach first, then it is there to click.
     attach(paymentInput(), [screenshot('pay-2')])
-    fireEvent.click(again)
+    fireEvent.click(screen.getByRole('button', { name: /save payment proof/i }))
 
     expect(await screen.findByText(/₹5,000 across 2 screenshots/)).toBeTruthy()
   })

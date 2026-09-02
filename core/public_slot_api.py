@@ -130,6 +130,18 @@ def _json_error(message: str, status: int = 400, **extra: Any) -> JSONResponse:
     return JSONResponse(payload, status_code=status)
 
 
+class BookingNotPersisted(RuntimeError):
+    """The booking did not reach the candidate row.
+
+    Raised before any payment is linked, so the confirmation unwinds with the
+    receipt still reusable rather than reporting a 500 over a spent payment.
+    """
+
+    def __init__(self, action: str = "") -> None:
+        super().__init__(f"confirm_unpersisted action={action}")
+        self.action = action
+
+
 def _pending_proof_ids(*values: str) -> list[str]:
     """Pending payment proof ids from a single field or a split-payment list.
 
@@ -937,8 +949,23 @@ def install_public_slot_routes(app) -> None:
             ).encode("utf-8")
         ).hexdigest()
         candidate_ids_before: set[str] = set()
+        # The row this attempt touched, recorded as soon as it exists. Deleting
+        # rows created during the attempt is not enough on its own: a slot
+        # assigned to a candidate who was already on file leaves that row in
+        # place, and with it any payment evidence attached to it.
+        booked_row_id = ""
 
-        def rollback_new_candidates() -> None:
+        def rollback_attempt() -> None:
+            """Leave the payment exactly as reusable as it was before."""
+            if booked_row_id:
+                requested = set(requested_proof_ids)
+                attached = [
+                    str(proof.get("id") or "")
+                    for proof in (cs.list_attachments(booked_row_id, "payment_proof") or [])
+                    if str(proof.get("pending_proof_id") or "") in requested
+                ]
+                if attached:
+                    cs.detach_booking_payment_proofs(booked_row_id, attached)
             current_ids = {
                 str(candidate.get("id") or "")
                 for candidate in cs.list_candidates(stage="all", month="all")
@@ -983,6 +1010,7 @@ def install_public_slot_routes(app) -> None:
                                 proof,
                                 phone=normalized_phone,
                                 candidate_id=candidate_id.strip(),
+                                booking_key=booking_key,
                             )
                             for proof in pending_payment_proofs
                         ]
@@ -1012,6 +1040,15 @@ def install_public_slot_routes(app) -> None:
                         idempotency_key=booking_key, slot_image=slot_image,
                         slot_image_name=slot_image_name, slot_image_mime=slot_image_mime,
                     )
+                    booked_row_id = str(row.get("id") or "")
+                    # Money is linked only to a booking that exists. This
+                    # check used to sit after the linkage and outside the try,
+                    # so a slot that failed to persist returned a 500 with the
+                    # payment already spent and no rollback -- the receipt was
+                    # then refused as "already linked to an active or completed
+                    # booking" for a booking that had never happened.
+                    if not cs.candidate_has_confirmed_slot(row):
+                        raise BookingNotPersisted(action)
                     row = cs.finalize_public_booking_payment(
                         row, pending_payment_proof=pending_payment_proof,
                         pending_payment_proofs=pending_payment_proofs,
@@ -1019,7 +1056,7 @@ def install_public_slot_routes(app) -> None:
                         idempotency_key=booking_key,
                     )
         except cs.PaymentDueError as e:
-            rollback_new_candidates()
+            rollback_attempt()
             return _json_error(
                 str(e),
                 payment_due=True,
@@ -1027,13 +1064,26 @@ def install_public_slot_routes(app) -> None:
                 name=e.name,
             )
         except cs.SlotBookedError as e:
-            rollback_new_candidates()
+            rollback_attempt()
             return _json_error(str(e), slot_conflict=True, conflicts=e.conflicts)
         except ValueError as e:
-            rollback_new_candidates()
+            rollback_attempt()
             return _json_error(str(e))
+        except BookingNotPersisted as e:
+            rollback_attempt()
+            logger.error(
+                "Invite booking trace phase=confirm_unpersisted trace_id=%s "
+                "image_sha256=%s action=%s",
+                trace_id, image_sha256, _invite_trace_value(e.action),
+            )
+            return _json_error(
+                "Booking did not complete. The interview slot was not saved — "
+                "try again, and if it repeats report this invite.",
+                status=500,
+                failure_reason=str(e),
+            )
         except Exception as e:
-            rollback_new_candidates()
+            rollback_attempt()
             logger.exception("Booking confirmation failed")
             return _json_error(
                 "Booking confirmation failed. No candidate or booking was created.",
@@ -1044,8 +1094,11 @@ def install_public_slot_routes(app) -> None:
         # Success is reported only for a row that really carries the slot. A
         # response of 200 with an unbooked row is what put "Slot confirmed" on
         # screen while Confirmed slots stayed empty, so it is refused here
-        # rather than left to the caller to notice.
+        # rather than left to the caller to notice. The same condition is
+        # checked before the payment is linked; this is the second reading,
+        # after the linkage, and it unwinds the money too.
         if not cs.candidate_has_confirmed_slot(row):
+            rollback_attempt()
             logger.error(
                 "Invite booking trace phase=confirm_unpersisted trace_id=%s "
                 "image_sha256=%s action=%s row_id=%r stored_date=%r stored_time=%r",
@@ -1062,6 +1115,23 @@ def install_public_slot_routes(app) -> None:
                 status=500,
                 failure_reason=f"confirm_unpersisted action={action}",
             )
+
+        # The booking is committed and verified on the row. Only now is the
+        # payment spent -- every earlier exit above leaves it reusable.
+        if requested_proof_ids:
+            try:
+                from features.pending_slot_payment import mark_utilized
+
+                mark_utilized(
+                    requested_proof_ids,
+                    candidate_id=str(row.get("id") or ""),
+                    booking_key=booking_key,
+                )
+            except Exception:
+                # The row attachment is the authoritative consumption record;
+                # this marker is the pending-side mirror of it. Failing to
+                # write it must not fail a booking that already succeeded.
+                logger.exception("Could not mark pending payment proofs utilized")
 
         logger.warning(
             "Invite booking trace phase=confirm_stored trace_id=%s image_sha256=%s "

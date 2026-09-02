@@ -5405,90 +5405,146 @@ def finalize_public_booking_payment(
         if pending_payment_proofs is not None
         else ([pending_payment_proof] if pending_payment_proof else [])
     )
-    for path, pending in proofs:
-        pending_id = _clean_str(pending.get("id"))
-        existing_proof = next(
-            (
-                proof
-                for proof in (current.get("payment_proofs") or [])
-                if _clean_str(proof.get("pending_proof_id")) == pending_id
-            ),
-            None,
-        )
-        if not existing_proof:
-            with open(path, "rb") as handle:
-                raw = handle.read()
-            verification = dict(pending.get("verification") or {})
-            fraud_check = dict(pending.get("fraud_check") or {})
-            entry = add_payment_proof(
-                cid,
-                data=raw,
-                original_name=_clean_str(pending.get("original_name")) or "payment.jpg",
-                mime_type=_clean_str(pending.get("mime_type")) or "image/jpeg",
-                note=_clean_str(pending.get("note"))
-                or "Verified payment proof · submit-slot",
-                metadata={
-                    "pending_proof_id": pending_id,
-                    "sha256": pending.get("sha256") or fraud_check.get("sha256") or "",
-                    "fraud_decision": fraud_check.get("decision") or "",
-                    "fraud_reasons": fraud_check.get("reasons") or [],
-                    "fraud_warnings": fraud_check.get("warnings") or [],
-                    "utr_number": str(
-                        verification.get("utr_number")
-                        or verification.get("reference_number")
-                        or verification.get("transaction_id")
-                        or ""
-                    ),
-                    "transaction_id": verification.get("transaction_id") or "",
-                    "payment_status": verification.get("status") or "",
-                    "company_payment_verified": bool(
-                        verification.get("company_payment_verified")
-                    ),
-                    "booking_eligible": bool(verification.get("booking_eligible")),
-                    "verification_state": verification.get("verification_state") or "",
-                    "receiver_name": verification.get("receiver_name") or "",
-                    "receiver_upi_id": verification.get("receiver_upi_id") or "",
-                    "receiver_phone": verification.get("receiver_phone") or "",
-                    "receiver_account": verification.get("receiver_account") or "",
-                    "receiver_type": verification.get("receiver_type") or "company",
-                    "verified_amount": int(verification.get("amount") or 0),
-                    "payment_scope": verification.get("payment_scope") or "",
-                    "source_module": "public_slot_confirmation",
-                },
+    # Linking money is all-or-nothing. A split payment that attaches its
+    # first instalment and then fails on the second used to leave the first
+    # one spent: the row kept a claim on a receipt for a booking that never
+    # completed, and the payer could not retry with it.
+    attached_now: list[str] = []
+    try:
+        for path, pending in proofs:
+            pending_id = _clean_str(pending.get("id"))
+            existing_proof = next(
+                (
+                    proof
+                    for proof in (current.get("payment_proofs") or [])
+                    if _clean_str(proof.get("pending_proof_id")) == pending_id
+                ),
+                None,
             )
-            if not entry:
-                raise ValueError("Could not attach verified payment proof")
-            current = get_candidate(cid) or current
+            if not existing_proof:
+                with open(path, "rb") as handle:
+                    raw = handle.read()
+                verification = dict(pending.get("verification") or {})
+                fraud_check = dict(pending.get("fraud_check") or {})
+                entry = add_payment_proof(
+                    cid,
+                    data=raw,
+                    original_name=_clean_str(pending.get("original_name")) or "payment.jpg",
+                    mime_type=_clean_str(pending.get("mime_type")) or "image/jpeg",
+                    note=_clean_str(pending.get("note"))
+                    or "Verified payment proof · submit-slot",
+                    metadata={
+                        "pending_proof_id": pending_id,
+                        "sha256": pending.get("sha256") or fraud_check.get("sha256") or "",
+                        "fraud_decision": fraud_check.get("decision") or "",
+                        "fraud_reasons": fraud_check.get("reasons") or [],
+                        "fraud_warnings": fraud_check.get("warnings") or [],
+                        "utr_number": str(
+                            verification.get("utr_number")
+                            or verification.get("reference_number")
+                            or verification.get("transaction_id")
+                            or ""
+                        ),
+                        "transaction_id": verification.get("transaction_id") or "",
+                        "payment_status": verification.get("status") or "",
+                        "company_payment_verified": bool(
+                            verification.get("company_payment_verified")
+                        ),
+                        "booking_eligible": bool(verification.get("booking_eligible")),
+                        "verification_state": verification.get("verification_state") or "",
+                        "receiver_name": verification.get("receiver_name") or "",
+                        "receiver_upi_id": verification.get("receiver_upi_id") or "",
+                        "receiver_phone": verification.get("receiver_phone") or "",
+                        "receiver_account": verification.get("receiver_account") or "",
+                        "receiver_type": verification.get("receiver_type") or "company",
+                        "verified_amount": int(verification.get("amount") or 0),
+                        "payment_scope": verification.get("payment_scope") or "",
+                        "source_module": "public_slot_confirmation",
+                    },
+                )
+                if not entry:
+                    raise ValueError("Could not attach verified payment proof")
+                attached_now.append(_clean_str(entry.get("id")))
+                current = get_candidate(cid) or current
 
-    if proofs:
-        # The proofs decide the amount, not the invoice. Booking used to add
-        # the amount *due* and clamp the running total to the expected figure,
-        # so a candidate who paid ₹6,000 against a ₹5,000 minimum was recorded
-        # as having paid ₹5,000. Expected is a floor, not a ceiling. Summing
-        # over every attached proof is also what makes a split payment add up;
-        # verified_proof_total counts one transaction once, however many times
-        # its screenshot was uploaded.
-        patch["payment"] = payment_receipts.verified_proof_total(
-            partition_candidate_attachments(current)["payment_proofs"]
-        )
+        if proofs:
+            # The proofs decide the amount, not the invoice. Booking used to add
+            # the amount *due* and clamp the running total to the expected figure,
+            # so a candidate who paid ₹6,000 against a ₹5,000 minimum was recorded
+            # as having paid ₹5,000. Expected is a floor, not a ceiling. Summing
+            # over every attached proof is also what makes a split payment add up;
+            # verified_proof_total counts one transaction once, however many times
+            # its screenshot was uploaded.
+            patch["payment"] = payment_receipts.verified_proof_total(
+                partition_candidate_attachments(current)["payment_proofs"]
+            )
 
-    if patch:
-        current = update_candidate(cid, patch, allow_slot_without_rules=True)
-    if reuse.get("reuse_allowed"):
-        previous = get_candidate(_clean_str(reuse.get("previousBookingId")))
-        if not previous:
-            from features.payment_fraud_detection import PAYMENT_REUSE_BLOCKED_MESSAGE
-            raise ValueError(PAYMENT_REUSE_BLOCKED_MESSAGE)
-        existing_rebooking_id = _clean_str(previous.get("paymentReusedByBookingId"))
-        if existing_rebooking_id and existing_rebooking_id != cid:
-            from features.payment_fraud_detection import PAYMENT_REUSE_BLOCKED_MESSAGE
-            raise ValueError(PAYMENT_REUSE_BLOCKED_MESSAGE)
-        update_candidate(
-            str(previous["id"]),
-            {"paymentReusedByBookingId": cid},
-            allow_slot_without_rules=True,
-        )
+        if patch:
+            current = update_candidate(cid, patch, allow_slot_without_rules=True)
+        if reuse.get("reuse_allowed"):
+            previous = get_candidate(_clean_str(reuse.get("previousBookingId")))
+            if not previous:
+                from features.payment_fraud_detection import PAYMENT_REUSE_BLOCKED_MESSAGE
+                raise ValueError(PAYMENT_REUSE_BLOCKED_MESSAGE)
+            existing_rebooking_id = _clean_str(previous.get("paymentReusedByBookingId"))
+            if existing_rebooking_id and existing_rebooking_id != cid:
+                from features.payment_fraud_detection import PAYMENT_REUSE_BLOCKED_MESSAGE
+                raise ValueError(PAYMENT_REUSE_BLOCKED_MESSAGE)
+            update_candidate(
+                str(previous["id"]),
+                {"paymentReusedByBookingId": cid},
+                allow_slot_without_rules=True,
+            )
+    except Exception:
+        detach_booking_payment_proofs(cid, attached_now)
+        raise
     return current
+
+
+def detach_booking_payment_proofs(cid: str, proof_ids) -> dict | None:
+    """Undo payment linkage for a booking that did not complete.
+
+    Attaching a proof is what consumes a payment: the fraud check scans the
+    payment evidence attached to candidate rows, so a receipt that reaches a
+    row is spent from then on. A confirmation that attaches evidence and then
+    fails leaves the payer unable to retry with the receipt they actually paid
+    with -- refused, correctly by its own logic, as "already linked to an
+    active or completed booking" for a booking that never happened.
+
+    So the linkage has to be undoable for exactly as long as the booking is
+    still in doubt. This removes the attachment records named by `proof_ids`
+    and re-derives the recorded payment from what is left, which is what makes
+    a failed attempt leave no trace on the money.
+
+    The uploaded file itself is deliberately kept: it is evidence, it is
+    already mirrored into the managed evidence store, and nothing reads an
+    orphaned file. Only the row's claim on it goes.
+    """
+    target = _clean_str(cid)
+    wanted = {_clean_str(pid) for pid in (proof_ids or []) if _clean_str(pid)}
+    if not target or not wanted:
+        return None
+
+    def _detach(row: dict) -> dict:
+        kept = [
+            proof
+            for proof in (row.get("payment_proofs") or [])
+            if _clean_str(proof.get("id")) not in wanted
+        ]
+        return {"payment_proofs": kept}
+
+    row = _patch_row_fields(target, _detach)
+    if row is None:
+        return None
+    # The amount is derived from the evidence, so it has to be re-derived once
+    # the evidence is gone -- otherwise the row keeps the money it no longer
+    # has proof of.
+    remaining = partition_candidate_attachments(row)["payment_proofs"]
+    return update_candidate(
+        target,
+        {"payment": payment_receipts.verified_proof_total(remaining)},
+        allow_slot_without_rules=True,
+    ) or row
 
 
 def _slot_picker_dedupe_key(row: dict) -> str:

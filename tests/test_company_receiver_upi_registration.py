@@ -276,17 +276,55 @@ class TestExistingProtectionsIntact:
 
         assert result["booking_eligible"] is False
 
-    def test_masked_handle_falls_back_to_name_without_raising_conflict(
+    def test_a_mask_the_registry_can_check_and_does_not_match_is_a_conflict(
         self, monkeypatch
     ):
-        """PhonePe sometimes prints XXXXXX4573@ybl. A mask is not a disagreeing
-        identifier, so it must not manufacture a conflict."""
+        """PhonePe prints XXXXXX4573@ybl, and this used to fall back to the name.
+
+        That was right while masks were unmatchable: a redaction is not a
+        disagreement, and manufacturing a conflict from one refused genuine
+        payments. It stopped being right once masks began resolving against the
+        registry. With an @ybl handle on file for this payee, the digits the
+        mask leaves visible *are* checkable, and 4573 is not 1111 -- so the
+        receipt names an account this payee is not known to hold. Crediting it
+        on the name alone would accept a payment to any account whose owner
+        shares a registered name.
+
+        The operational answer is to register the handle, which is what was
+        done in production: both raviarvind1111@ybl and xxxxxx4573@ybl are on
+        file there, and this receipt resolves at score 100 through
+        masked_upi_alias rather than through the name.
+        """
         _register_company(monkeypatch, APPROVED_UPI)
         receiver = engine.classify_receiver(
             {"receiver_name": COMPANY_NAME, "receiver_upi_id": "XXXXXX4573@ybl"}
         )
 
         assert receiver["receiver_identifier_masked"] is True
+        assert receiver["receiver_identifier_conflict"] is True
+        assert receiver["receiver_match"] != "name"
+
+    def test_registering_the_second_handle_resolves_it(self, monkeypatch):
+        """Production's actual configuration, and the intended remedy."""
+        _register_company(monkeypatch, APPROVED_UPI, "xxxxxx4573@ybl")
+        receiver = engine.classify_receiver(
+            {"receiver_name": COMPANY_NAME, "receiver_upi_id": "XXXXXX4573@ybl"}
+        )
+
+        assert receiver["receiver_type"] == "company"
+        assert receiver["receiver_match"] == "masked_upi_alias"
+        assert receiver["receiver_identifier_conflict"] is False
+
+    def test_a_mask_the_registry_cannot_check_still_falls_back_to_the_name(
+        self, monkeypatch
+    ):
+        """No handle on that provider means nothing to contradict, so the
+        payee's name remains the only evidence there is -- and still counts."""
+        _register_company(monkeypatch, APPROVED_UPI)
+        receiver = engine.classify_receiver(
+            {"receiver_name": COMPANY_NAME, "receiver_upi_id": "XXXXXX4573@okhdfcbank"}
+        )
+
         assert receiver["receiver_identifier_conflict"] is False
         assert receiver["receiver_type"] == "company"
         assert receiver["receiver_match"] == "name"
