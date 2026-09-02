@@ -137,7 +137,9 @@ describe('Submit slot — round-wise technology', () => {
     fireEvent.click(screen.getByRole('button', { name: /confirm booking/i }))
 
     // Flagged on the field, not bounced off the server.
-    expect(await screen.findByText(/round-wise booking needs the technology/i)).toBeTruthy()
+    // Wording changed with sequential validation; the field-level
+    // assertion is the point and is unchanged.
+    expect(await screen.findByText(/choose the technology for this interview/i)).toBeTruthy()
     expect(calls.confirms).toHaveLength(0)
   })
 

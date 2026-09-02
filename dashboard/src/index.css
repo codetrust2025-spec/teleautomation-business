@@ -16966,6 +16966,47 @@ html:has(.app-shell--view-candidates)::-webkit-scrollbar-thumb:active {
   box-shadow: none;
 }
 /* Payment card */
+/* The payment card, tightened to sit level with the invite field below it.
+ *
+ * It stacks more than any other field -- heading, amount, label, drop zone,
+ * a row per attached screenshot, a hint and a Save button -- so the default
+ * spacing between each of those added up to a block roughly twice the height
+ * of the invite section doing the same job.
+ *
+ * Only spacing changes. Nothing here shrinks a tap target below 44px: the drop
+ * zone returns to the 2.75rem base rather than the 3rem the "compact" variant
+ * had raised it to, and the remove button keeps its own size.
+ */
+.sbs-pay-card {
+  gap: 0.3rem;
+  padding: 0.45rem 0.55rem;
+}
+.sbs-pay-card .submit-slot-drop-wrap {
+  gap: 0.3rem;
+}
+.sbs-pay-card .submit-slot-drop-wrap--compact .submit-slot-drop {
+  /* 2.75rem is 44px: the base rule, and still a comfortable target. */
+  min-height: 2.75rem;
+  padding: 0.45rem 0.6rem;
+}
+.sbs-pay-card .submit-slot-drop-list {
+  gap: 0.25rem;
+}
+.sbs-pay-card .submit-slot-drop-list__item {
+  padding: 0.2rem 0.35rem;
+}
+.sbs-pay-card .submit-slot-drop-list__item img {
+  width: 1.75rem;
+  height: 1.75rem;
+}
+.sbs-pay-card .submit-slot-drop-hint {
+  line-height: 1.2;
+}
+.sbs-pay-card .sbs-secondary-btn {
+  min-height: 2.25rem;
+  padding: 0.4rem 0.7rem;
+}
+
 .sbs-pay-card { padding: 0.5rem 0.65rem; border-radius: 0.55rem; border: 1px solid rgba(251,191,36,0.2); background: rgba(251,191,36,0.05); display: flex; flex-direction: column; gap: 0.35rem; }
 .sbs-pay-head { display: flex; justify-content: space-between; align-items: center; font-size: 0.75rem; color: var(--text,#eef2f7); }
 .sbs-pay-ok { margin: 0; font-size: 0.72rem; color: #6ee7b7; font-weight: 500; }

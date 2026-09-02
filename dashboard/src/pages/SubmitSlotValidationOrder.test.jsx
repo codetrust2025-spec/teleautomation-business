@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url'
 
 const SRC = dirname(fileURLToPath(import.meta.url))
 const page = readFileSync(join(SRC, 'SubmitSlotPage.jsx'), 'utf8')
+const css = readFileSync(join(SRC, '..', 'index.css'), 'utf8')
 
 afterEach(() => {
   cleanup()
@@ -59,7 +60,7 @@ function steps() {
   const end = page.indexOf(']', page.indexOf('inviteRef', start))
   expect(start).toBeGreaterThan(-1)
   const block = page.slice(start, end)
-  return [...block.matchAll(/\{ ref: (\w+)(?:, fallbackRef: \w+)?, ok: /g)].map(m => m[1])
+  return [...block.matchAll(/\{ key: '(\w+)'/g)].map(m => m[1])
 }
 
 describe('the browser no longer decides', () => {
@@ -77,7 +78,7 @@ describe('the browser no longer decides', () => {
 describe('validation runs top to bottom', () => {
   it('checks the fields in the order they appear on the form', () => {
     expect(steps()).toEqual([
-      'nameRef', 'phoneRef', 'technologyRef', 'roundRef', 'paymentRef', 'inviteRef',
+      'name', 'phone', 'technology', 'round', 'payment', 'invite',
     ])
   })
 
@@ -85,13 +86,13 @@ describe('validation runs top to bottom', () => {
     // What is owed depends on the service type, the round and the candidate, so
     // checking it earlier would judge an amount that is not settled yet.
     const order = steps()
-    expect(order.indexOf('paymentRef')).toBeGreaterThan(order.indexOf('roundRef'))
-    expect(order.indexOf('paymentRef')).toBeGreaterThan(order.indexOf('technologyRef'))
+    expect(order.indexOf('payment')).toBeGreaterThan(order.indexOf('round'))
+    expect(order.indexOf('payment')).toBeGreaterThan(order.indexOf('technology'))
   })
 
   it('the invite screenshot is checked after payment', () => {
     const order = steps()
-    expect(order.indexOf('inviteRef')).toBeGreaterThan(order.indexOf('paymentRef'))
+    expect(order.indexOf('invite')).toBeGreaterThan(order.indexOf('payment'))
   })
 
   it('stops at the first missing field rather than reporting all of them', () => {
@@ -136,8 +137,10 @@ describe('the rules themselves are unchanged', () => {
 
 describe('every field in the sequence can actually be reached', () => {
   it('each ref is attached to something in the markup', () => {
-    for (const ref of steps()) {
-      expect(page).toContain(`ref={${ref}}`)
+    const refFor = { name: 'nameRef', phone: 'phoneRef', technology: 'technologyRef',
+                     round: 'roundRef', payment: 'paymentRef', invite: 'inviteRef' }
+    for (const key of steps()) {
+      expect(page).toContain(`ref={${refFor[key]}}`)
     }
   })
 
@@ -195,5 +198,106 @@ describe("an empty form reports the first field, not the browser's choice", () =
     await waitFor(() =>
       expect(screen.getByText('Choose the technology for this interview.')).toBeInTheDocument(),
     )
+  })
+})
+
+
+describe('one error, in one place', () => {
+  const warnings = () => [...document.querySelectorAll('.sbs-hint--warn')]
+
+  it('shows exactly one warning, not one per empty field', async () => {
+    // An empty form used to answer a single click with a warning under every
+    // field at once.
+    const confirm = await openForm({ roundWise: true })
+    fireEvent.click(confirm)
+
+    await waitFor(() => expect(warnings()).toHaveLength(1))
+    expect(warnings()[0].textContent).toBe('Enter the client name for this round.')
+  })
+
+  it('does not repeat the same message in the page-level alert', async () => {
+    const confirm = await openForm({ roundWise: true })
+    fireEvent.click(confirm)
+
+    await waitFor(() =>
+      expect(screen.getByText('Enter the client name for this round.')).toBeInTheDocument(),
+    )
+    // One occurrence on the whole screen: beside the field, and nowhere else.
+    expect(screen.getAllByText('Enter the client name for this round.')).toHaveLength(1)
+    expect(document.querySelector('.sbs-alert--error')).toBeNull()
+  })
+
+  it('clears the message as soon as that field is filled', async () => {
+    const confirm = await openForm({ roundWise: true })
+    fireEvent.click(confirm)
+    await waitFor(() => expect(warnings()).toHaveLength(1))
+
+    fireEvent.change(screen.getByPlaceholderText('Type client name'), {
+      target: { value: 'Code Trust' },
+    })
+
+    // Without waiting for another Confirm: the form should stop asking for
+    // something that is now filled in.
+    await waitFor(() => expect(warnings()).toHaveLength(0))
+  })
+
+  it('moves the single warning down the form as each field is filled', async () => {
+    const confirm = await openForm({ roundWise: true })
+    fireEvent.change(screen.getByPlaceholderText('Type client name'), {
+      target: { value: 'Code Trust' },
+    })
+    fireEvent.click(confirm)
+
+    await waitFor(() => expect(warnings()).toHaveLength(1))
+    expect(warnings()[0].textContent).toBe('Enter the candidate phone number.')
+  })
+})
+
+
+describe('the payment card is compact, without shrinking what you tap', () => {
+  // Newline-anchored: ".submit-slot-drop {" also occurs as the tail of
+  // ".sbs-pay-card ...--compact .submit-slot-drop {", and matching that by
+  // accident would have this assert the override against itself.
+  const rule = (selector) => {
+    const at = css.indexOf(`\n${selector} {`)
+    expect(at).toBeGreaterThan(-1)
+    return css.slice(at, css.indexOf('}', at))
+  }
+
+  it('tightens its own spacing rather than the shared drop styles', () => {
+    // Scoped under .sbs-pay-card so the invite field below keeps its sizing.
+    for (const selector of [
+      '.sbs-pay-card .submit-slot-drop-wrap',
+      '.sbs-pay-card .submit-slot-drop-list',
+      '.sbs-pay-card .submit-slot-drop-list__item',
+    ]) {
+      expect(css).toContain(selector)
+    }
+  })
+
+  it('keeps the drop zone at a 44px tap target', () => {
+    // The "compact" variant had raised it to 3rem; this returns it to the
+    // 2.75rem base, which is 44px, and no lower.
+    expect(rule('.sbs-pay-card .submit-slot-drop-wrap--compact .submit-slot-drop'))
+      .toContain('min-height: 2.75rem')
+  })
+
+  it('does not shrink the base drop zone used by the invite field', () => {
+    expect(rule('.submit-slot-drop')).toContain('min-height: 2.75rem')
+  })
+
+  it('fits the split-payment hint on one line', () => {
+    // Two lines of hint inside a card that already stacks seven things is most
+    // of the difference in height against the invite field.
+    expect(page).toContain('Paid in parts? Attach each screenshot — they are added up.')
+    expect(page).not.toContain('they are added up for this booking.')
+  })
+
+  it('leaves upload, multi-file and save behaviour alone', () => {
+    // Only spacing moved: the same drop component, the same multiple flag, the
+    // same save handler.
+    expect(page).toContain('multiple')
+    expect(page).toMatch(/onFiles=\{next => \{ setPaymentFiles\(next\)/)
+    expect(page).toContain('onClick={uploadPaymentProof}')
   })
 })
