@@ -2950,6 +2950,26 @@ export function CandidateEditModal({
                 amount before reducing it.
               </div>
             )}
+            {/* Money recorded and no payment proof at all.
+              *
+              * The reconciliation warning above cannot cover this: it fires on a
+              * shortfall between proofs and the recorded amount, and with no
+              * proofs there is nothing to compare, so `needs_reconciliation`
+              * stays false. The row then reads "✓ Paid" beside an empty proof
+              * cell, which looks exactly like a proof that failed to load. It is
+              * not rare -- 8 of 31 paid candidates are in this state -- so the
+              * absence is stated rather than left to be inferred from blankness.
+              *
+              * The amount is still correct. receipt_summary falls back to the
+              * recorded figure when no proof has been adjudicated, deliberately,
+              * so that rows predating proof capture do not have real money
+              * erased. This says the evidence is missing, not the payment. */}
+            {(l.payment ?? 0) > 0 && (l.proof_count ?? 0) === 0 && (
+              <div className="cand-field cand-receipt-missing">
+                No payment proof on record. {$n(l.payment)} is the recorded
+                figure; upload the receipt to evidence it.
+              </div>
+            )}
             <div className="cand-field">
               <span className={`cand-pay-status cand-pay-status--${E}`}>
                 {E === "paid" && <s.Fragment>✓ Paid ({$n(k)})</s.Fragment>}
