@@ -127,6 +127,44 @@ def test_mail_alert_routing_keeps_future_interview_and_honours_suppression():
     )
 
 
+def test_mail_alert_routing_keeps_validated_shortlist_without_schedule():
+    shortlist = _review_event(
+        "interview_shortlisted",
+        evidence=[{
+            "source": "EMAIL_BODY",
+            "meaning": "INTERVIEW_SHORTLISTED",
+            "text": "Your profile got shortlisted for L1 interview",
+        }],
+        classification_source="OLLAMA",
+        recruitment_relevance_result={"decision": "ESTABLISHED"},
+        backend_transition_validated=True,
+    )
+
+    assert store.should_route_to_mail_alert(
+        shortlist,
+        {"classification": "interview_shortlisted"},
+        source={"subject": "Re: New Job Opportunity Azure Engineer - Remote"},
+        today=date(2026, 9, 2),
+    )
+
+
+def test_mail_alert_routing_still_rejects_confirmed_interview_without_schedule():
+    confirmed = _review_event(
+        "interview_confirmed",
+        evidence=[{"meaning": "INTERVIEW_CONFIRMED"}],
+        classification_source="OLLAMA",
+        recruitment_relevance_result={"decision": "ESTABLISHED"},
+        backend_transition_validated=True,
+    )
+
+    assert not store.should_route_to_mail_alert(
+        confirmed,
+        {"classification": "interview_confirmed"},
+        source={"subject": "Interview confirmation"},
+        today=date(2026, 9, 2),
+    )
+
+
 def test_mailbox_stats_uses_one_qualification_parameter_per_sql_predicate(monkeypatch):
     class Column:
         def __init__(self, name):
