@@ -165,6 +165,28 @@ def _is_masked_identifier(value: Any) -> bool:
 _MASKED_VISIBLE_MIN = 4
 
 
+def _mask_is_comparable(masked: str, registered_ids) -> bool:
+    """Can this registry actually check the digits the mask left visible?
+
+    Only if the payee holds a registered handle with the same provider domain.
+    With one on file, a mask that resolves to none of them is a real
+    disagreement -- the receipt names an account this payee does not hold. With
+    none on file there is nothing to compare against, the mask carries no
+    information either way, and the payee's name remains the only evidence
+    available.
+
+    That distinction is the whole reason the name fallback can be kept safe:
+    it stays reachable exactly where the mask is uncheckable.
+    """
+    _local, _, domain = str(masked or "").partition("@")
+    if not domain:
+        return False
+    return any(
+        str(registered or "").partition("@")[2] == domain
+        for registered in registered_ids or ()
+    )
+
+
 def _masked_upi_alias_match(masked: str, registered_ids: Any) -> str:
     """The registered handle a masked one denotes, or "" when nothing matches.
 
@@ -582,7 +604,27 @@ def classify_receiver(
             # one registered account. That is a registry-backed identification,
             # not a decision to trust masks in general.
             score, matched_by = 100, "masked_upi_alias"
-        elif not (upi or phone or account) and name and name in record["aliases"]:
+        elif (
+            not (upi or phone or account)
+            and name
+            and name in record["aliases"]
+            and not _mask_is_comparable(masked_upi, record["upi_ids"])
+        ):
+            # Name alone, and only where no identifier could be checked.
+            #
+            # Masked handles are dropped from identifier matching above so a
+            # redacted receipt reads as one showing no handle rather than one
+            # that disagrees. Once masks began resolving against the registry
+            # that made an *unresolvable* mask indistinguishable from no
+            # identifier at all, and this branch then credited it on the payee
+            # name alone -- so a receipt naming a registered payee while paying
+            # some other account ending 9999 was accepted as a company payment.
+            #
+            # A mask is only evidence of disagreement when there is something
+            # to disagree with. If this payee holds a registered handle on the
+            # same provider, the visible digits are checkable and failing to
+            # match them is meaningful, so the name must not rescue it. If they
+            # hold none, nothing was checkable and the name still stands.
             score, matched_by = 90, "name"
         if score:
             matches.append((score, record, matched_by))
@@ -596,7 +638,7 @@ def classify_receiver(
         ).strip()
     )
     stable_identifier_present = bool(
-        (_valid_upi(upi) if upi else False) or phone or account
+        (_valid_upi(upi) if upi else False) or phone or account or upi_masked
     )
     if not matches:
         return {

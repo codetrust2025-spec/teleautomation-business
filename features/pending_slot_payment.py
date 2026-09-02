@@ -128,13 +128,63 @@ def get_verified_proof(proof_id: str, *, name: str, service_type: str, phone: st
     return (path, entry) if os.path.isfile(path) else None
 
 
+def utilized_by(entry: dict) -> str:
+    """Which committed booking, if any, has already spent this proof."""
+    return str((entry or {}).get("utilized_by_booking_key") or "")
+
+
+def mark_utilized(proof_ids, *, candidate_id: str = "", booking_key: str = "") -> list[str]:
+    """Record that a committed booking consumed these proofs.
+
+    This runs only once the slot is on the candidate row -- verified, not
+    assumed. Until then a proof stays reusable, so an upload, a refused
+    confirmation, a dropped connection or an abandoned form all leave the payer
+    able to try again with the receipt they actually paid with.
+
+    The row attachment is what the fraud check reads and remains the real
+    consumption record; this is the pending side of the same fact, kept so the
+    lifecycle can be seen and asserted on directly rather than inferred from
+    the absence of an attachment somewhere else.
+    """
+    wanted = [str(pid or "").strip() for pid in (proof_ids or []) if str(pid or "").strip()]
+    if not wanted:
+        return []
+    marked: list[str] = []
+    with _lock:
+        index = _load()
+        proofs = index.get("proofs") or {}
+        for pid in wanted:
+            entry = proofs.get(pid)
+            if not isinstance(entry, dict) or entry.get("utilized_at"):
+                continue
+            entry["utilized_at"] = _now_iso()
+            entry["utilized_by_candidate_id"] = str(candidate_id or "").strip()
+            entry["utilized_by_booking_key"] = str(booking_key or "").strip()
+            marked.append(pid)
+        if marked:
+            _save(index)
+    return marked
+
+
 def validate_for_confirmation(
     pending_payment_proof: tuple[str, dict],
     *,
     phone: str = "",
     candidate_id: str = "",
+    booking_key: str = "",
 ) -> dict:
     path, pending = pending_payment_proof
+    # Deliberately not gated on `utilized_at` here.
+    #
+    # The evidence attached to the candidate row is the authoritative record of
+    # a spent payment, and assess_payment_proof below reads it -- including the
+    # part that decides when reuse is *allowed*, which is a real policy: a
+    # booking that was cancelled or not attended releases its payment back to
+    # the payer. Refusing here on the marker alone would pre-empt that and
+    # block a rebooking the fraud check would have permitted.
+    #
+    # The marker records when the payment was spent, so the lifecycle can be
+    # read directly. It does not get a second, contradicting vote on it.
     with open(path, "rb") as handle:
         raw = handle.read()
     from features.payment_fraud_detection import assess_payment_proof

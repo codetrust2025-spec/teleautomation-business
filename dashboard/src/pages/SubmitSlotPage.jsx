@@ -965,9 +965,25 @@ export function SubmitSlotPage() {
                   state this is an ordinary field on the form. */}
               {paymentRequired && (
                 <div className={`sbs-pay-card${paymentRejected.length || missingField === 'payment' ? ' sbs-pay-card--warn' : ''}`}>
+                  {/* One row carries the whole control surface: what is owed,
+                      and the action for it. Save used to sit below as a
+                      full-width block that was present and disabled even with
+                      nothing to save, which is most of the time. */}
                   <div ref={paymentRef} className="sbs-pay-head">
                     <span>Payment due</span>
-                    <strong>{paymentAmountDue == null ? '—' : `₹${paymentAmountDue.toLocaleString('en-IN')}`}</strong>
+                    <span className="sbs-pay-head__end">
+                      <strong>{paymentAmountDue == null ? '—' : `₹${paymentAmountDue.toLocaleString('en-IN')}`}</strong>
+                      {/* Short on screen because it sits in a narrow header beside
+                          the amount; the full name is kept for assistive tech,
+                          where "Save" on its own says too little. */}
+                      {!paymentComplete && paymentFiles.length > 0 && (
+                        <button type="button" className="sbs-secondary-btn sbs-pay-save" aria-label={`Save payment proof${paymentFiles.length > 1 ? 's' : ''}`} disabled={busy || parsing || paymentAnalysing} onClick={uploadPaymentProof}>
+                          {paymentAnalysing
+                            ? <><Spinner size={12} />&nbsp;Analysing…</>
+                            : `Save${paymentFiles.length > 1 ? ` ${paymentFiles.length}` : ''}`}
+                        </button>
+                      )}
+                    </span>
                   </div>
                   {paymentProofIds.length > 0 && (
                     <>
@@ -992,21 +1008,17 @@ export function SubmitSlotPage() {
                     <>
                       {/* Split payments are normal here — one screenshot per
                           transfer, and the AI totals them for this booking. */}
+                      {/* No label: the header above already names this, and a
+                          second caption for one drop zone was pure height. */}
                       <SubmitSlotFileDrop
                         compact
                         multiple
-                        label={paymentProofIds.length ? 'Add remaining payment screenshots' : 'Payment screenshots'}
                         hint="Paid in parts? Attach each screenshot — they are added up."
                         files={paymentFiles}
                         disabled={busy || parsing}
                         busy={busy || paymentAnalysing}
                         onFiles={next => { setPaymentFiles(next); setPaymentRejected([]) }}
                       />
-                      <button type="button" className="sbs-secondary-btn" disabled={busy || parsing || paymentAnalysing || !paymentFiles.length} onClick={uploadPaymentProof}>
-                        {paymentAnalysing
-                          ? <><Spinner size={14} />&nbsp;Analysing {paymentFiles.length > 1 ? `${paymentFiles.length} screenshots` : ''}…</>
-                          : `Save payment proof${paymentFiles.length > 1 ? 's' : ''}`}
-                      </button>
                       {missingField === 'payment' && <span className="sbs-hint sbs-hint--warn" role="alert">Attach a payment screenshot that covers the amount due.</span>}
                     </>
                   )}

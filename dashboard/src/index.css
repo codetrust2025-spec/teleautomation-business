@@ -16997,10 +16997,24 @@ html:has(.app-shell--view-candidates)::-webkit-scrollbar-thumb:active {
 }
 .sbs-pay-card .submit-slot-drop-hint {
   line-height: 1.2;
+  font-size: 0.66rem;
 }
-.sbs-pay-card .sbs-secondary-btn {
-  min-height: 2.25rem;
-  padding: 0.4rem 0.7rem;
+/* Save rides in the header row, so it must not set the row's height. It is
+ * only rendered when there is something to save; the full-width block it
+ * replaced was present and disabled in the idle state, which is most of the
+ * time, and cost 36px there for nothing. */
+.sbs-pay-head__end {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.sbs-pay-card .sbs-pay-save {
+  min-height: 0;
+  padding: 0.15rem 0.5rem;
+  font-size: 0.7rem;
+  line-height: 1.4;
+  display: inline-flex;
+  align-items: center;
 }
 
 /* Payment is a field on this form, not a warning about it.
