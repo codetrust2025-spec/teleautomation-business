@@ -92,7 +92,7 @@ class TestTheSavePathRuleMatchesTheRecalculationRule:
         """
         if controlled or proof_total > 0:
             return proof_total if (controlled or proof_total >= recorded) else recorded
-        return recorded if typed is None else typed
+        return max(typed if typed is not None else recorded, recorded)
 
     def test_unverified_proofs_do_not_erase_the_recorded_amount(self):
         # pujitha: two attached proofs, zero verified, 20,000 recorded.
@@ -115,6 +115,15 @@ class TestTheSavePathRuleMatchesTheRecalculationRule:
         right. Nothing verified means no opinion, not an opinion of zero."""
         assert self.decide(proof_total=0, recorded=0, controlled=False, typed=20000) == 20000
 
+    def test_no_caller_can_reduce_it_while_proofs_are_unverified(self):
+        """The edit form already omits a proof-derived amount, so the erasure
+        did not come from there. Leaving the reduction open to any other caller
+        is what made it possible, so the floor is enforced here rather than
+        trusted to each caller."""
+        assert self.decide(proof_total=0, recorded=20000, controlled=False, typed=0) == 20000
+        assert self.decide(proof_total=0, recorded=20000, controlled=False, typed=5000) == 20000
+        assert self.decide(proof_total=0, recorded=20000, controlled=False, typed=25000) == 25000
+
     def test_the_rule_is_the_one_in_the_source(self):
         from pathlib import Path
 
@@ -122,6 +131,7 @@ class TestTheSavePathRuleMatchesTheRecalculationRule:
             encoding="utf-8"
         )
         assert "if controlled or proof_total > 0:" in source
+        assert 'allowed_patch["payment"] = max(typed, recorded)' in source
         assert "if controlled or proof_total >= recorded" in source
 
 
