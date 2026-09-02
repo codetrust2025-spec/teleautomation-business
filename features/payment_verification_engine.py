@@ -131,7 +131,18 @@ def _valid_upi(value: Any) -> bool:
     return bool(re.fullmatch(r"[a-z0-9._-]{2,}@[a-z][a-z0-9.-]{1,}", normalized))
 
 
-_MASK_RUN_RE = re.compile(r"[x*#•·]{3,}")
+# A run of any of these is a redaction, not a handle. The period is here
+# because that is what actually arrives: Google Pay draws the payee as
+# "••••1111@ybl", and the extractor transcribes those bullets as full stops, so
+# production saw ".....1111@ybl". Without the period in this class the string was
+# not recognised as masked -- and since dots are legal inside a real VPA local
+# part, `_valid_upi` then accepted it as a genuine handle that matched no
+# registered account, which is how a payment to a registered account was
+# reported as a receiver-identity conflict.
+#
+# Three in a row is the threshold on purpose: single dots are ordinary in a real
+# handle (john.doe@okhdfcbank), runs of them are not.
+_MASK_RUN_RE = re.compile(r"[x*#•·.]{3,}")
 
 
 def _is_masked_identifier(value: Any) -> bool:
@@ -172,7 +183,7 @@ def _masked_upi_alias_match(masked: str, registered_ids: Any) -> str:
     local, _, domain = str(masked or "").partition("@")
     if not domain:
         return ""
-    visible = local.lstrip("Xx*• ").strip()
+    visible = local.lstrip("Xx*#•·. ").strip()
     if len(visible) < _MASKED_VISIBLE_MIN:
         return ""
     for registered in registered_ids or ():
