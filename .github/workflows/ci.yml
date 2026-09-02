@@ -1,7 +1,95 @@
 name: ci
-on: [push, pull_request]
+
+# `on: [push, pull_request]` ran this workflow twice for every branch with a PR
+# open: once for the push, once for the pull_request, executing an identical job
+# both times. Restricting push to main keeps the post-merge run -- which is the
+# safety net the fast lane below depends on -- and drops only the duplicate.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Superseded runs on the same PR are cancelled. main is never cancelled: the
+# post-merge run is what proves a merged commit passes the full suite.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
+  # Which lane a change takes. Fail-safe by construction: the fast lane requires
+  # every changed path to match a narrow allowlist, so anything unrecognised --
+  # a new file type, a renamed directory, an empty or failed file listing --
+  # falls through to `full`.
+  classify:
+    runs-on: ubuntu-latest
+    outputs:
+      lane: ${{ steps.pick.outputs.lane }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          # A push to main always runs the full suite. The fast lane is a
+          # pre-merge gate only, so every commit that lands still gets complete
+          # verification even when its PR was fast-laned.
+          if [ "$EVENT" != "pull_request" ]; then
+            echo "lane=full" >> "$GITHUB_OUTPUT"
+            echo "::notice::full lane: event is $EVENT, not a pull request"
+            exit 0
+          fi
+          FILES=$(gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[].filename') || FILES=""
+          echo "changed files:"
+          printf '%s\n' "$FILES" | sed 's/^/  /'
+          # The rule itself lives in scripts/ci_lane.sh, which
+          # tests/test_ci_lane_selection.py drives directly. An empty list
+          # reaches it as no paths, which it classifies as full.
+          LANE=$(printf '%s\n' "$FILES" | bash scripts/ci_lane.sh)
+          echo "lane=$LANE" >> "$GITHUB_OUTPUT"
+          echo "::notice::lane=$LANE"
+
+  # Fast lane. Runs every dashboard check the full lane runs -- the complete
+  # vitest suite, the audit, and the production build -- and skips only the
+  # backend and image steps.
+  #
+  # Why skipping those is safe rather than merely quicker, for these paths:
+  #   - No Python test reads the dashboard tree. The one test that walks the
+  #     repository (tests/test_interview_booking_regression_baseline.py) lists
+  #     "dashboard" in its skip set, so pytest's inputs are byte-identical to
+  #     the last run on main.
+  #   - The image's web stage is `npm ci && npm run build` from dashboard/
+  #     (Dockerfile, web-build). `npm run build` here is that same command, so a
+  #     frontend change that would break the image build fails this job first.
+  #   - package.json and package-lock.json are outside the allowlist, so `npm ci`
+  #     inside the image resolves an unchanged lockfile.
+  #   - The container health, migration and persistence steps exercise Python
+  #     this lane cannot have changed.
+  # The deploy still builds the real image and verifies /version, health, every
+  # container and public 200 on the host.
+  frontend:
+    needs: classify
+    if: needs.classify.outputs.lane == 'frontend'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: "22", cache: npm, cache-dependency-path: dashboard/package-lock.json}
+      - run: npm ci
+        working-directory: dashboard
+      - run: npm audit --omit=dev --audit-level=critical
+        working-directory: dashboard
+      - run: npm test -- --run
+        working-directory: dashboard
+      - run: npm run build
+        working-directory: dashboard
+
   verify:
+    needs: classify
+    if: needs.classify.outputs.lane == 'full'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -64,3 +152,42 @@ jobs:
             'SELECT count(*) FROM ci_persistence_probe' | tr -d '[:space:]')" = "1"
       - if: always()
         run: docker compose down -v
+
+  # One check that always runs and always reflects the whole workflow.
+  #
+  # Neither repository has branch protection -- private repositories on this
+  # plan cannot -- so nothing on GitHub's side requires a status before a merge.
+  # The only gate is `gh pr checks --watch` in fix_and_deploy.sh. A workflow
+  # whose every job can be skipped could therefore present nothing to fail on,
+  # so this job runs unconditionally and fails unless the lane that was actually
+  # selected succeeded.
+  ci:
+    needs: [classify, frontend, verify]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          LANE: ${{ needs.classify.outputs.lane }}
+          CLASSIFY: ${{ needs.classify.result }}
+          FRONTEND: ${{ needs.frontend.result }}
+          VERIFY: ${{ needs.verify.result }}
+        run: |
+          set -eu
+          echo "lane=$LANE classify=$CLASSIFY frontend=$FRONTEND verify=$VERIFY"
+          if [ "$CLASSIFY" != success ]; then
+            echo "::error::classification failed"; exit 1
+          fi
+          case "$LANE" in
+            frontend)
+              [ "$FRONTEND" = success ] || { echo "::error::frontend lane failed"; exit 1; }
+              [ "$VERIFY" = skipped ] || { echo "::error::verify should be skipped on the frontend lane"; exit 1; }
+              ;;
+            full)
+              [ "$VERIFY" = success ] || { echo "::error::full lane failed"; exit 1; }
+              [ "$FRONTEND" = skipped ] || { echo "::error::frontend should be skipped on the full lane"; exit 1; }
+              ;;
+            *)
+              echo "::error::unknown lane '$LANE'"; exit 1
+              ;;
+          esac
+          echo "ci gate passed on the $LANE lane"
