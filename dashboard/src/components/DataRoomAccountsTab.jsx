@@ -45,13 +45,20 @@ function isPrimary(row) {
   return label.includes('current') || label.includes('2026')
 }
 
+// What an operator actually has to type.
+//
+// `id` and `service` were asked for on this form and neither needed to be. The
+// id is a stable slug the backend requires but nobody chooses: `slugId` already
+// derived one from the title whenever the box was left blank, so the field only
+// ever offered a way to get it wrong. `service` was free text rendered with a
+// "Gmail" fallback in the table, which is what almost every row said anyway.
+//
+// The id is still generated and still sent; it is just no longer asked for.
 const SVC_FIELDS = [
-  { key: 'id', label: 'ID (stable slug)', placeholder: 'e.g. gmail_karthik_2026' },
-  { key: 'label', label: 'Label / title' },
-  { key: 'service', label: 'Service (e.g. Gmail)' },
-  { key: 'username', label: 'Username / email' },
+  { key: 'label', label: 'Account name', placeholder: 'e.g. Karthik Gmail (current)', full: true },
+  { key: 'username', label: 'Username / email', placeholder: 'name@example.com' },
   { key: 'password', label: 'Password', type: 'password' },
-  { key: 'notes', label: 'Notes', full: true },
+  { key: 'notes', label: 'Notes (optional)', type: 'textarea', rows: 3, full: true },
 ]
 
 function VaultModal({ title, fields, form, onChange, onSave, onClose, error }) {
@@ -309,7 +316,9 @@ export function DataRoomAccountsTab({ accounts = [], onReload }) {
       {modal && (
         <VaultModal
           title={modal.mode === 'create' ? 'Add service account' : 'Edit service account'}
-          fields={SVC_FIELDS.map(f => modal.mode === 'edit' && f.key === 'id' ? { ...f, readOnly: true } : f)}
+          // `id` and `service` stay on the form object so an edit preserves
+          // what a row already has; they are simply not asked for.
+          fields={SVC_FIELDS}
           form={modal.form}
           onChange={(f) => setModal(s => ({ ...s, form: f }))}
           onSave={handleSave}
