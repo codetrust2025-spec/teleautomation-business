@@ -917,8 +917,11 @@ export function SubmitSlotPage() {
                 {missingField === 'round' && <span className="sbs-hint sbs-hint--warn" role="alert">Choose the interview round.</span>}
               </label>
 
+              {/* Amber only when something is actually wrong: a screenshot was
+                  refused, or the sequence is asking for one. In every other
+                  state this is an ordinary field on the form. */}
               {paymentRequired && (
-                <div className="sbs-pay-card">
+                <div className={`sbs-pay-card${paymentRejected.length || missingField === 'payment' ? ' sbs-pay-card--warn' : ''}`}>
                   <div ref={paymentRef} className="sbs-pay-head">
                     <span>Payment due</span>
                     <strong>{paymentAmountDue == null ? '—' : `₹${paymentAmountDue.toLocaleString('en-IN')}`}</strong>

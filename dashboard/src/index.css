@@ -16977,10 +16977,6 @@ html:has(.app-shell--view-candidates)::-webkit-scrollbar-thumb:active {
  * zone returns to the 2.75rem base rather than the 3rem the "compact" variant
  * had raised it to, and the remove button keeps its own size.
  */
-.sbs-pay-card {
-  gap: 0.3rem;
-  padding: 0.45rem 0.55rem;
-}
 .sbs-pay-card .submit-slot-drop-wrap {
   gap: 0.3rem;
 }
@@ -17007,8 +17003,46 @@ html:has(.app-shell--view-candidates)::-webkit-scrollbar-thumb:active {
   padding: 0.4rem 0.7rem;
 }
 
-.sbs-pay-card { padding: 0.5rem 0.65rem; border-radius: 0.55rem; border: 1px solid rgba(251,191,36,0.2); background: rgba(251,191,36,0.05); display: flex; flex-direction: column; gap: 0.35rem; }
-.sbs-pay-head { display: flex; justify-content: space-between; align-items: center; font-size: 0.75rem; color: var(--text,#eef2f7); }
+/* Payment is a field on this form, not a warning about it.
+ *
+ * This was an amber panel -- amber border, amber wash -- which read as a
+ * caution card sitting inside the form rather than part of it, and it said so
+ * permanently, including when nothing was wrong. The surface now matches
+ * .sbs-input exactly: same background, same border, same radius. Amber and red
+ * are kept for --warn, which is set only when a screenshot was refused or the
+ * sequence is asking for one.
+ *
+ * These declarations live here, after the compaction block above, because both
+ * rules have the same specificity and the later one wins -- which is why the
+ * card kept its old padding while the descendants got tighter. */
+.sbs-pay-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: 0.5rem;
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  background: rgba(255, 255, 255, 0.04);
+}
+.sbs-pay-card--warn {
+  border-color: rgba(251, 191, 36, 0.45);
+  background: rgba(251, 191, 36, 0.06);
+}
+/* A compact header row: label left, amount right, on one line. */
+.sbs-pay-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text, #eef2f7);
+}
+.sbs-pay-head strong {
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
 .sbs-pay-ok { margin: 0; font-size: 0.72rem; color: #6ee7b7; font-weight: 500; }
 .sbs-pay-partial { margin: 0; font-size: 0.72rem; color: #fbbf24; font-weight: 500; }
 .sbs-pay-list { display: flex; flex-direction: column; gap: 0.25rem; }
