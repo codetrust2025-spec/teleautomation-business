@@ -535,8 +535,17 @@ export function SubmitSlotPage() {
       fd.append('existing_proof_ids', paymentProofIds.join(','))
       const res = await fetch(`${API_BASE}/public/slots/payment-proof`, { method: 'POST', body: fd })
       const data = await res.json()
-      setPaymentRejected(data.rejected || [])
-      if (!res.ok) { setError(data.message || 'Payment upload failed'); return }
+      const rejected = data.rejected || []
+      setPaymentRejected(rejected)
+      if (!res.ok) {
+        // The per-screenshot reasons are already listed against the files they
+        // belong to. Repeating one of them as a page-level alert showed the
+        // same sentence twice on one screen, once with a filename and once
+        // without, which reads as two problems.
+        const duplicated = rejected.some(item => item.message && item.message === data.message)
+        if (!rejected.length || !duplicated) setError(data.message || 'Payment upload failed')
+        return
+      }
       setPaymentProofIds(data.proof_ids || [])
       setPaymentTotals(data)
       setPaymentFiles([])

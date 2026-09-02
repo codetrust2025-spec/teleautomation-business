@@ -557,11 +557,16 @@ def classify_receiver(
             score, matched_by = 100, "account"
         elif (
             upi_masked
-            and not (upi or phone or account)
             and name
             and name in record["aliases"]
             and _masked_upi_alias_match(masked_upi, record["upi_ids"])
         ):
+            # Reached whatever else was extracted, deliberately. This used to
+            # require that no other identifier existed at all, so one stray
+            # value -- the payer's own bank account, read off the line below the
+            # payee -- silently disabled the only field the screenshot actually
+            # labels as the receiver's. An identifier that matches no registered
+            # receiver is not a reason to ignore one that does.
             # Name, provider domain and the digits the mask left all agree with
             # one registered account. That is a registry-backed identification,
             # not a decision to trust masks in general.

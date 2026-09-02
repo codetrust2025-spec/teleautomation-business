@@ -503,6 +503,43 @@ def _extract_date_from_text(text: str) -> str:
     return ""
 
 
+def _drop_sender_values_from_receiver_fields(result: dict) -> None:
+    """Clear receiver identifiers that merely echo the sender's own.
+
+    Compared on digits and normalised handles, so "State Bank of India 4485"
+    and "4485" are recognised as the same value however each was written. Only
+    the receiver side is cleared: the sender fields are left exactly as read, so
+    nothing is lost and the receipt can still be audited in full.
+    """
+    def digits(value: object) -> str:
+        return "".join(ch for ch in str(value or "") if ch.isdigit())
+
+    def handle(value: object) -> str:
+        return str(value or "").strip().lower()
+
+    sender_accounts = {
+        digits(result.get("sender_account_identifier")),
+        digits(result.get("sender_account")),
+        digits(result.get("debited_from_identifier")),
+    } - {""}
+    sender_handles = {
+        handle(result.get("sender_upi_id")),
+        handle(result.get("debited_from_identifier")),
+    } - {""}
+    sender_phones = {
+        digits(result.get("sender_phone_number")),
+        digits(result.get("sender_phone")),
+    } - {""}
+
+    if digits(result.get("receiver_account")) and digits(result.get("receiver_account")) in sender_accounts:
+        result["receiver_account"] = ""
+        result["receiver_account_identifier"] = ""
+    if handle(result.get("receiver_upi_id")) and handle(result.get("receiver_upi_id")) in sender_handles:
+        result["receiver_upi_id"] = ""
+    if digits(result.get("receiver_phone")) and digits(result.get("receiver_phone")) in sender_phones:
+        result["receiver_phone"] = ""
+        result["receiver_phone_number"] = ""
+
 def _extract_receiver_upi_from_text(text: str) -> str:
     """Extract the visible paid-to UPI identifier from OCR text."""
     match = re.search(r"\b[A-Za-z0-9._-]{2,}@[A-Za-z][A-Za-z0-9.-]{1,}\b", text)
@@ -789,6 +826,22 @@ def extract_payment_with_ollama(
             or result.get("receiver_account")
             or ""
         )
+        # A receiver identifier that is really the sender's is worse than none.
+        #
+        # A Google Pay receipt shows the payee as "To: J RAVINDER, PhonePe
+        # ••••1111@ybl" and the payer's own funding account below it as "State
+        # Bank of India 4485". The model put 4485 in receiver_account_identifier,
+        # and from there it was treated as the receiver's account: it matched no
+        # registered receiver, and because a stable identifier was now present
+        # alongside a matching receiver NAME, the payment was reported as a
+        # receiver-identity conflict -- "the receiver name resembles a
+        # registered account, but the visible payment identifier does not match
+        # it" -- for a payment to an account that is registered.
+        #
+        # The schema has always had somewhere else for those values to go, so
+        # anything that merely repeats the sender's side is dropped rather than
+        # carried into receiver matching.
+        _drop_sender_values_from_receiver_fields(result)
         result["amount"] = _amount_from_model(result)
         if not result.get("confidence_score") and isinstance(
             result.get("confidence"), dict
