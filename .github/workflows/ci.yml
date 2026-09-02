@@ -9,6 +9,12 @@ on:
     branches: [main]
   pull_request:
 
+# Nothing here writes to the repository. Saying so removes the dependence on a
+# repository-level default that can change without touching this file, and that
+# already differed between the two repositories.
+permissions:
+  contents: read
+
 # Superseded runs on the same PR are cancelled. main is never cancelled: the
 # post-merge run is what proves a merged commit passes the full suite.
 concurrency:
@@ -26,12 +32,13 @@ jobs:
       lane: ${{ steps.pick.outputs.lane }}
     steps:
       - uses: actions/checkout@v4
+        # Full history, so the diff against the base commit is available
+        # locally and the classifier needs no API call for it.
+        with: {fetch-depth: 0}
       - id: pick
         env:
-          GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
-          PR: ${{ github.event.pull_request.number }}
-          REPO: ${{ github.repository }}
+          BASE: ${{ github.event.pull_request.base.sha }}
         run: |
           set -uo pipefail
           # A push to main always runs the full suite. The fast lane is a
@@ -42,7 +49,11 @@ jobs:
             echo "::notice::full lane: event is $EVENT, not a pull request"
             exit 0
           fi
-          FILES=$(gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[].filename') || FILES=""
+          # From git rather than the API. `gh api .../pulls/N/files` needs
+          # `pull-requests: read`, and the default token was refused it in the
+          # peer repository: 403, an empty list, and a permanent fall back to
+          # the full lane. A diff against the base needs only this checkout.
+          FILES=$(git diff --name-only "$BASE...HEAD") || FILES=""
           echo "changed files:"
           printf '%s\n' "$FILES" | sed 's/^/  /'
           # The rule itself lives in scripts/ci_lane.sh, which
