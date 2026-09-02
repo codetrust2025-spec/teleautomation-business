@@ -5731,12 +5731,23 @@ def update_candidate(
                     proof_total = payment_receipts.verified_proof_total(existing_proofs)
                     recorded = int(r.get("payment") or 0)
                     controlled = _coerce_bool(r.get("payment_proof_controlled"))
-                    if proof_total >= recorded or controlled:
-                        allowed_patch["payment"] = proof_total
-                    else:
-                        # Keep the recorded figure. receipt_summary already
-                        # reports the gap as unevidenced for reconciliation.
-                        allowed_patch["payment"] = recorded
+                    if controlled or proof_total > 0:
+                        # Proofs speak. They may raise the total freely; they may
+                        # lower it only once the row is genuinely proof-
+                        # controlled, because on any other row a shortfall
+                        # almost always means the payment predates proof
+                        # capture and reducing it would delete real money --
+                        # the rule recalculate_received_total already applies.
+                        allowed_patch["payment"] = (
+                            proof_total
+                            if controlled or proof_total >= recorded
+                            else recorded
+                        )
+                    # Otherwise every attached proof is pending, queued, under
+                    # review or refused, and a total of zero verified rupees is
+                    # not a statement that zero rupees arrived. It is the
+                    # absence of a statement, so the recorded figure stands and
+                    # the operator can still correct it.
             preview = _normalise(allowed_patch, existing=r)
             is_dropped = preview.get("stage") == "dropped"
             phone_key = candidate_phone_identity(preview.get("phone"))

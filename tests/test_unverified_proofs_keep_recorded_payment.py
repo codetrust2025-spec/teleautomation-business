@@ -83,9 +83,16 @@ class TestTheSavePathRuleMatchesTheRecalculationRule:
     may only lower it once the row is genuinely under proof control."""
 
     @staticmethod
-    def decide(proof_total: int, recorded: int, controlled: bool) -> int:
-        # The rule as written in update_candidate.
-        return proof_total if (proof_total >= recorded or controlled) else recorded
+    def decide(proof_total: int, recorded: int, controlled: bool, typed: int | None = None) -> int:
+        """The rule as written in update_candidate.
+
+        `typed` is what the operator submitted; it stands only when no proof has
+        been verified, because a total of zero verified rupees is the absence of
+        a statement about the amount, not a statement that zero arrived.
+        """
+        if controlled or proof_total > 0:
+            return proof_total if (controlled or proof_total >= recorded) else recorded
+        return recorded if typed is None else typed
 
     def test_unverified_proofs_do_not_erase_the_recorded_amount(self):
         # pujitha: two attached proofs, zero verified, 20,000 recorded.
@@ -101,14 +108,21 @@ class TestTheSavePathRuleMatchesTheRecalculationRule:
     def test_an_equal_total_is_unchanged(self):
         assert self.decide(proof_total=20000, recorded=20000, controlled=False) == 20000
 
+    def test_a_recorded_amount_can_still_be_corrected_while_proofs_are_unverified(self):
+        """The first attempt at this fix stopped the erasure and also froze the
+        field: with the recorded figure already zero, `proof_total >= recorded`
+        forced zero straight back, so the destroyed amount could not be put
+        right. Nothing verified means no opinion, not an opinion of zero."""
+        assert self.decide(proof_total=0, recorded=0, controlled=False, typed=20000) == 20000
+
     def test_the_rule_is_the_one_in_the_source(self):
         from pathlib import Path
 
         source = (Path(__file__).resolve().parents[1] / "features" / "candidate_store.py").read_text(
             encoding="utf-8"
         )
-        assert "if proof_total >= recorded or controlled:" in source
-        assert 'allowed_patch["payment"] = recorded' in source
+        assert "if controlled or proof_total > 0:" in source
+        assert "if controlled or proof_total >= recorded" in source
 
 
 class TestOtherCandidatesAreCoveredToo:
