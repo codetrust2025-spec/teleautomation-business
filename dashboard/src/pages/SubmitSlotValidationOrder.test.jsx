@@ -301,3 +301,57 @@ describe('the payment card is compact, without shrinking what you tap', () => {
     expect(page).toContain('onClick={uploadPaymentProof}')
   })
 })
+
+
+describe('the payment card looks like a form field, not a warning', () => {
+  const rule = (selector) => {
+    const at = css.indexOf(`
+${selector} {`)
+    expect(at).toBeGreaterThan(-1)
+    return css.slice(at, css.indexOf('}', at))
+  }
+
+  it('uses the same surface as a normal input', () => {
+    // .sbs-input is the reference: same background, border and radius.
+    const card = rule('.sbs-pay-card')
+    const input = rule('.sbs-input')
+    for (const property of ['background', 'border-radius']) {
+      // Whitespace-insensitive: "rgba(255,255,255,0.04)" and
+      // "rgba(255, 255, 255, 0.04)" are the same colour.
+      const from = (text) =>
+        text.match(new RegExp(`${property}: ([^;]+);`))?.[1].replace(/\s+/g, '')
+      expect(from(card)).toBe(from(input))
+    }
+    expect(card).toContain('border: 1px solid rgba(148, 163, 184, 0.15)')
+  })
+
+  it('carries no amber in its normal state', () => {
+    // The panel used to be amber bordered and amber washed, permanently, so it
+    // read as a caution card sitting inside the form.
+    const card = rule('.sbs-pay-card')
+    expect(card).not.toMatch(/251,\s*191,\s*36/)
+  })
+
+  it('keeps amber for the state that earns it', () => {
+    expect(rule('.sbs-pay-card--warn')).toMatch(/251,\s*191,\s*36/)
+  })
+
+  it('applies the warning class only on a refusal or a missing proof', () => {
+    expect(page).toContain(
+      "`sbs-pay-card${paymentRejected.length || missingField === 'payment' ? ' sbs-pay-card--warn' : ''}`",
+    )
+  })
+
+  it('there is exactly one card rule, so nothing later overrides it', () => {
+    // The compaction shipped before this had a second .sbs-pay-card rule
+    // earlier in the file; the original amber one came later and won on every
+    // property they shared, which is why the box never got smaller.
+    const matches = css.match(/\n\.sbs-pay-card \{/g) || []
+    expect(matches).toHaveLength(1)
+  })
+
+  it('states the amount on one compact header row', () => {
+    expect(rule('.sbs-pay-head')).toContain('justify-content: space-between')
+    expect(css).toContain('.sbs-pay-head strong')
+  })
+})
