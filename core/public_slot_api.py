@@ -344,6 +344,34 @@ def install_public_slot_routes(app) -> None:
                             " ".join(ai_extraction["company_payment_reasons"])
                             or "This receipt is not a verified payment to a registered company or referrer account."
                         )
+                    # What the model actually read, on the one path that
+                    # refuses a receipt. A rejected upload is never stored -- the
+                    # payee check fails closed and nothing is written before it
+                    # passes -- so without this the extraction that caused the
+                    # refusal is gone the moment the response is sent, and the
+                    # only way to reason about a live rejection is to guess at
+                    # it. Identifiers here are masked by the payment app before
+                    # they ever reach us.
+                    logger.warning(
+                        "payment proof refused: state=%s receiver_name=%r "
+                        "receiver_upi=%r receiver_account=%r sender_name=%r "
+                        "sender_upi=%r sender_account=%r amount=%r status=%r "
+                        "utr=%r txn=%r match=%r conflict=%r reasons=%s",
+                        ai_extraction.get("verification_state"),
+                        ai_extraction.get("receiver_name"),
+                        ai_extraction.get("receiver_upi_id"),
+                        ai_extraction.get("receiver_account"),
+                        ai_extraction.get("sender_name"),
+                        ai_extraction.get("sender_upi_id"),
+                        ai_extraction.get("sender_account_identifier"),
+                        ai_extraction.get("amount"),
+                        ai_extraction.get("payment_status") or ai_extraction.get("status"),
+                        ai_extraction.get("utr_number"),
+                        ai_extraction.get("transaction_id"),
+                        ai_extraction.get("receiver_match"),
+                        ai_extraction.get("receiver_identifier_conflict"),
+                        ai_extraction.get("company_payment_reasons"),
+                    )
                     rejected.append({
                         "filename": label,
                         "message": message,
