@@ -148,6 +148,42 @@ def _is_masked_identifier(value: Any) -> bool:
     return bool(local) and bool(_MASK_RUN_RE.search(local))
 
 
+# Minimum unmasked characters a masked handle must show before it can be matched
+# against the registry. PhonePe leaves four; fewer is not enough to distinguish
+# two accounts at the same provider.
+_MASKED_VISIBLE_MIN = 4
+
+
+def _masked_upi_alias_match(masked: str, registered_ids: Any) -> str:
+    """The registered handle a masked one denotes, or "" when nothing matches.
+
+    PhonePe renders the payee as ``XXXXXX4573@ybl``. The mask hides the prefix
+    by policy, but what it leaves is not nothing: the provider domain and the
+    trailing characters both survive, and together they pick out one registered
+    account or none.
+
+    This never makes a masked handle trustworthy on its own. The caller pairs it
+    with a receiver-name match against the same record, so a mask is only ever
+    read as the account whose name, provider and visible tail all agree with it.
+    A mask whose visible tail contradicts the registered handle -- ``4573``
+    against a registered ``...1111@ybl`` -- matches nothing here and stays in
+    review, which is the entire point: the unmasked part is evidence too.
+    """
+    local, _, domain = str(masked or "").partition("@")
+    if not domain:
+        return ""
+    visible = local.lstrip("Xx*• ").strip()
+    if len(visible) < _MASKED_VISIBLE_MIN:
+        return ""
+    for registered in registered_ids or ():
+        reg_local, _, reg_domain = str(registered or "").partition("@")
+        if reg_domain != domain:
+            continue
+        if reg_local.endswith(visible):
+            return str(registered)
+    return ""
+
+
 def _norm_digits(value: Any, *, last: int = 0) -> str:
     digits = "".join(ch for ch in str(value or "") if ch.isdigit())
     return digits[-last:] if last and len(digits) >= last else digits
@@ -490,6 +526,7 @@ def classify_receiver(
     """Deterministically match extracted receiver facts to the registry."""
     upi = _norm_upi(extraction.get("receiver_upi_id"))
     upi_masked = _is_masked_identifier(upi)
+    masked_upi = upi if upi_masked else ""
     if upi_masked:
         # Drop it from matching entirely so the screenshot is treated the same
         # as one that showed no handle at all, rather than one whose handle
@@ -518,6 +555,17 @@ def classify_receiver(
             score, matched_by = 100, "phone"
         elif account and account in record["accounts"]:
             score, matched_by = 100, "account"
+        elif (
+            upi_masked
+            and not (upi or phone or account)
+            and name
+            and name in record["aliases"]
+            and _masked_upi_alias_match(masked_upi, record["upi_ids"])
+        ):
+            # Name, provider domain and the digits the mask left all agree with
+            # one registered account. That is a registry-backed identification,
+            # not a decision to trust masks in general.
+            score, matched_by = 100, "masked_upi_alias"
         elif not (upi or phone or account) and name and name in record["aliases"]:
             score, matched_by = 90, "name"
         if score:
@@ -596,7 +644,9 @@ def classify_receiver(
         # receiver_registry_conflicts().
         "receiver_match_duplicates": collapsed_duplicates,
         "receiver_identifier_present": stable_identifier_present,
-        "receiver_identifier_complete": matched_by in {"upi", "phone", "account"},
+        "receiver_identifier_complete": matched_by in {
+            "upi", "phone", "account", "masked_upi_alias",
+        },
         "receiver_identifier_conflict": False,
         "receiver_identifier_masked": upi_masked,
         "receiver_account_active": currently_active,
@@ -1487,7 +1537,9 @@ def verify_payment_screenshot(
     ).strip()
     has_stable_receiver_match = (
         result.get("receiver_type") in {"company", "referrer"}
-        and result.get("receiver_match") in {"upi", "phone", "account"}
+        and result.get("receiver_match") in {
+            "upi", "phone", "account", "masked_upi_alias",
+        }
         and int(result.get("receiver_match_score") or 0) >= 100
     )
     if (

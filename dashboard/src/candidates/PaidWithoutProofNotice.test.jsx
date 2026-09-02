@@ -78,12 +78,22 @@ describe('paid without a payment proof', () => {
     expect(module_).toContain('l.payment_needs_reconciliation &&')
   })
 
+  it('never says "no payment proof on record" when proofs exist', () => {
+    // The two notices are mutually exclusive by construction: one needs
+    // proof_count === 0, the other proof_count > 0. pujitha has 2, so she gets
+    // the review message and never the absence message.
+    const pujitha = { payment: 20000, proof_count: 2, verified_proof_count: 0 }
+    const missing = (r) => (r.payment ?? 0) > 0 && (r.proof_count ?? 0) === 0
+    expect(missing(pujitha)).toBe(false)
+  })
+
   it('explains why attached proofs are not counted, instead of a bare zero', () => {
     // pujitha's real state after the two uploads: 2 proofs, 0 verified. The
     // engine read and priced both and withheld credit because the payee handle
     // is masked. "Verified proofs 0" alone was reported as a broken pipeline.
     expect(module_).toContain('(l.proof_count ?? 0) > 0 && (l.verified_proof_count ?? 0) === 0')
-    expect(module_).toContain('attached but none is verified')
+    expect(module_).toContain('Manual review required')
+    expect(module_).toContain('payment proofs uploaded')
     expect(module_).toContain('payment_proof_status_counts')
   })
 

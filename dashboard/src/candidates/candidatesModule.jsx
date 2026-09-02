@@ -2987,17 +2987,18 @@ export function CandidateEditModal({
               * own verdict rather than a second opinion about it. */}
             {(l.proof_count ?? 0) > 0 && (l.verified_proof_count ?? 0) === 0 && (
               <div className="cand-field cand-receipt-missing">
-                {l.proof_count === 1 ? "1 payment proof is" : `${l.proof_count} payment proofs are`}{" "}
-                attached but none is verified, so none counts towards the total
+                {l.proof_count === 1
+                  ? "1 payment proof uploaded"
+                  : `${l.proof_count} payment proofs uploaded`}{" "}
+                · Manual review required
                 {(() => {
                   const counts = l.payment_proof_status_counts || {};
                   const named = Object.entries(counts)
-                    .filter(([, n]) => Number(n) > 0)
-                    .map(([status, n]) => `${n} ${String(status).toLowerCase().replace(/_/g, " ")}`)
+                    .filter(([status, n]) => Number(n) > 0 && status !== "VERIFIED")
+                    .map(([status]) => String(status).toLowerCase().replace(/_/g, " "))
                     .join(", ");
-                  return named ? ` — ${named}` : "";
+                  return named ? ` (${named})` : "";
                 })()}
-                . Open the proof to see the reason and adjudicate it.
               </div>
             )}
             {(l.payment ?? 0) > 0 && (l.proof_count ?? 0) === 0 && (
