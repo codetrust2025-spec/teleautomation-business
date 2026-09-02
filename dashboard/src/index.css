@@ -14773,17 +14773,43 @@ html:has(.app-shell--view-candidates)::-webkit-scrollbar-thumb:active {
   justify-content: center;
   padding: 24px;
 }
+/* The dialog surface.
+ *
+ * This carried `cand-card` for its background and nothing else, and
+ * `.cand-card` is not defined anywhere in this stylesheet -- `.cand-input`,
+ * `.cand-btn` and `.cand-title` all are, which is why the fields and buttons
+ * looked right while the panel behind them was transparent and the page showed
+ * through the form. The surface is declared here rather than depending on a
+ * class that does not exist. */
 .dr-modal {
   width: min(560px, 100%);
-  max-height: 90vh;
+  max-height: min(90vh, 760px);
   overflow: auto;
-  padding: 20px;
+  padding: 22px 24px;
+  background: var(--surface-card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+  color: var(--text);
+}
+.dr-modal .cand-title {
+  margin: 0 0 4px;
 }
 .dr-form-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  margin: 16px 0;
+  gap: 14px 16px;
+  margin: 18px 0 20px;
+}
+/* One column on narrow screens. The two-column grid squeezed both fields and
+ * their labels below roughly 560px, which is every phone. */
+@media (max-width: 640px) {
+  .dr-modal {
+    padding: 18px 16px;
+  }
+  .dr-form-grid {
+    grid-template-columns: 1fr;
+  }
 }
 .dr-form-grid label {
   display: flex;
