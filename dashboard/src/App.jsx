@@ -114,11 +114,21 @@ function OperationsShell({ view, onNavigate }) {
                 key={item.id}
                 type="button"
                 className={`desktop-sidebar__link${view === item.id ? ' desktop-sidebar__link--active' : ''}`}
+                // Which section you are in was carried by the active class
+                // alone, so it existed only for people who can see the
+                // highlight. aria-current says the same thing out loud.
+                aria-current={view === item.id ? 'page' : undefined}
                 onClick={() => navigate(item.id)}
               >
                 <span className="desktop-sidebar__link-icon" aria-hidden>{item.icon}</span>
                 <span>{item.label}</span>
-                {badgeValue > 0 && <span className="desktop-sidebar__badge">{countLabel(badgeValue)}</span>}
+                {/* The badge is a bare number, which reads as "Candidates 3"
+                    with nothing saying what the 3 counts. */}
+                {badgeValue > 0 && (
+                  <span className="desktop-sidebar__badge" aria-label={`${badgeValue} pending`}>
+                    {countLabel(badgeValue)}
+                  </span>
+                )}
               </button>
             )
           })}
