@@ -14,7 +14,16 @@ from pathlib import Path
 from typing import Any
 
 _LOCK = threading.RLock()
-_DEFAULT_PRIMARY = "jagadeesh"
+# Normal priority is the order of `configured_nodes()`: RTX 4060, then
+# Jagadeesh, then Praveen. This name is only the last resort for when every
+# node is cooling off and one still has to be quoted.
+_DEFAULT_PRIMARY = "rtx4060"
+
+# How long a hand-picked primary outranks normal priority before the pool
+# returns to choosing for itself. An override is for working through an
+# incident, not a permanent re-pin, and one left in place silently became the
+# configuration nobody remembered making.
+_OVERRIDE_SECONDS = 3600.0
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -86,10 +95,22 @@ def configured_nodes() -> list[dict[str, str]]:
 
 
 def _state_path() -> Path:
+    """Where the pool's runtime state lives.
+
+    On the data volume, not under the application directory. `/app/data` comes
+    from the image, so a deploy replaced it and took the state with it -- a
+    one-hour override could be silently discarded ten minutes in by an
+    unrelated release.
+    """
     configured = (os.getenv("OLLAMA_NODE_STATE_FILE") or "").strip()
     if configured:
         return Path(configured)
-    return Path(__file__).resolve().parents[1] / "data" / "ollama_nodes_state.json"
+    try:
+        from core.config import DATA_DIR
+
+        return Path(DATA_DIR) / "ollama_nodes_state.json"
+    except Exception:  # pragma: no cover - configuration unavailable
+        return Path(__file__).resolve().parents[1] / "data" / "ollama_nodes_state.json"
 
 
 def _valid_node_ids() -> set[str]:
@@ -188,12 +209,64 @@ def set_model_node(model: str, node_id: str | None, *, force: bool = False) -> N
     _write_state({"model_nodes": saved})
 
 
+def _healthy(node_id: str) -> bool:
+    """Usable right now, judged from the breaker the request path maintains.
+
+    Deliberately not a live probe: this is called on the way to every inference
+    and a network round trip per call would cost more than the failover it
+    guards against. `record_failure` already knows when a node stopped
+    answering.
+    """
+    return not in_cooldown(node_id)
+
+
+def primary_override() -> dict[str, Any]:
+    """The hand-picked primary, if one is still in force.
+
+    Returns the node and the seconds remaining, or an empty mapping. An expired
+    override is reported as absent rather than cleared here, so a read stays a
+    read; `set_primary_node` overwrites it and nothing else needs to.
+    """
+    state = _read_state()
+    node_id = str(state.get("primary_node") or "")
+    if node_id not in _valid_node_ids():
+        return {}
+    expires_at = float(state.get("primary_expires_at") or 0.0)
+    remaining = expires_at - time.time()
+    if remaining <= 0:
+        return {}
+    return {
+        "node_id": node_id,
+        "expires_at": expires_at,
+        "expires_in_s": int(remaining),
+        "healthy": _healthy(node_id),
+    }
+
+
 def primary_node_id() -> str:
-    default = (os.getenv("OLLAMA_PRIMARY_NODE") or _DEFAULT_PRIMARY).strip()
-    if default not in _valid_node_ids():
-        default = _DEFAULT_PRIMARY
-    selected = str(_read_state().get("primary_node") or "")
-    return selected if selected in _valid_node_ids() else default
+    """The node production routes to, decided fresh on every call.
+
+    Normal priority is the configured order -- RTX 4060, Jagadeesh, Praveen --
+    and the highest node that is not cooling off takes it. A hand-picked
+    primary outranks that for an hour, but only while it is actually up: an
+    override on a node that has gone down is not a reason to keep sending work
+    to it, so failover is immediate and needs no one to cancel anything.
+    """
+    override = primary_override()
+    if override and override["healthy"]:
+        return str(override["node_id"])
+
+    configured = (os.getenv("OLLAMA_PRIMARY_NODE") or "").strip()
+    order = [node["id"] for node in configured_nodes()]
+    if configured in _valid_node_ids():
+        order = [configured] + [node_id for node_id in order if node_id != configured]
+
+    for node_id in order:
+        if _healthy(node_id):
+            return node_id
+    # Everything is cooling off. Something still has to be named, and naming the
+    # top of the order means recovery is tried there first.
+    return order[0] if order else _DEFAULT_PRIMARY
 
 
 def required_models() -> list[str]:
@@ -243,8 +316,16 @@ def set_primary_node(node_id: str, *, force: bool = False) -> str:
                 f"{selected} is missing required model(s): {', '.join(absent)}. "
                 "Install them, or pass force=True to accept a degraded primary."
             )
-    _write_state({"primary_node": selected})
+    _write_state({
+        "primary_node": selected,
+        "primary_expires_at": time.time() + _OVERRIDE_SECONDS,
+    })
     return selected
+
+
+def clear_primary_override() -> None:
+    """Hand the choice back to normal priority immediately."""
+    _write_state({"primary_node": "", "primary_expires_at": 0.0})
 
 
 def node(node_id: str) -> dict[str, str]:

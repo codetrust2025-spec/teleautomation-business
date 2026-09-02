@@ -5,11 +5,15 @@ import pytest
 from core import ollama_nodes
 
 
-def test_jagadeesh_is_default_primary(monkeypatch, tmp_path):
+def test_the_top_of_the_priority_order_is_primary_by_default(monkeypatch, tmp_path):
+    """Normal priority is RTX 4060, Jagadeesh, Praveen, and the highest healthy
+    node takes primary without anyone choosing it. It used to be a fixed
+    default of jagadeesh regardless of what was up."""
     monkeypatch.setenv("OLLAMA_NODE_STATE_FILE", str(tmp_path / "nodes.json"))
     monkeypatch.delenv("OLLAMA_PRIMARY_NODE", raising=False)
-    assert ollama_nodes.primary_node_id() == "jagadeesh"
-    assert ollama_nodes.primary_base_url() == "http://127.0.0.1:11435"
+    ollama_nodes.reset_breakers()
+    assert ollama_nodes.primary_node_id() == "rtx4060"
+    assert ollama_nodes.primary_base_url() == "http://127.0.0.1:11437"
 
 
 def test_primary_selection_is_persisted(monkeypatch, tmp_path):
@@ -19,9 +23,12 @@ def test_primary_selection_is_persisted(monkeypatch, tmp_path):
     # that gate is exercised in test_ollama_pool_failover.py and would
     # otherwise need a live node to answer.
     assert ollama_nodes.set_primary_node("our_machine", force=True) == "our_machine"
-    assert json.loads(state.read_text(encoding="utf-8")) == {
-        "primary_node": "our_machine"
-    }
+    saved = json.loads(state.read_text(encoding="utf-8"))
+    assert saved["primary_node"] == "our_machine"
+    # The choice carries its own expiry: an override outranks normal priority
+    # for an hour and then the pool goes back to choosing for itself.
+    assert saved["primary_expires_at"] > 0
+    ollama_nodes.reset_breakers()
     assert ollama_nodes.primary_node_id() == "our_machine"
 
 
@@ -41,13 +48,17 @@ def test_node_health_reports_model_and_loaded_state(monkeypatch, tmp_path):
         return {"models": [{"name": "qwen3-vl:8b-instruct"}]}
 
     monkeypatch.setattr(ollama_nodes, "_request", respond)
+    monkeypatch.delenv("OLLAMA_PRIMARY_NODE", raising=False)
+    ollama_nodes.reset_breakers()
     status = ollama_nodes.node_health(
         "jagadeesh", model="qwen3-vl:8b-instruct"
     )
     assert status["status"] == "online"
     assert status["model_available"] is True
     assert status["model_loaded"] is True
-    assert status["primary"] is True
+    # Not primary: rtx4060 is healthy and outranks it. The flag reports who is
+    # serving, which is the point of it.
+    assert status["primary"] is False
 
 
 def test_unload_uses_keep_alive_zero(monkeypatch, tmp_path):

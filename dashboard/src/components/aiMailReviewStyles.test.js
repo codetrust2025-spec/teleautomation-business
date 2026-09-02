@@ -48,11 +48,12 @@ describe('AI nodes pool is styled', () => {
 
   it('renders at least the section, grid and card classes', () => {
     expect(classes).toEqual(expect.arrayContaining([
-      'sot-ai-nodes', 'sot-ai-node-grid', 'sot-ai-node', 'sot-ai-node-title',
+      'sot-ai-nodes', 'sot-ai-node-grid', 'sot-ai-node', 'sot-ai-node-name',
     ]))
   })
 
-  for (const cls of ['sot-ai-nodes', 'sot-ai-node-grid', 'sot-ai-node', 'sot-ai-node-title',
+  for (const cls of ['sot-ai-nodes', 'sot-ai-node-grid', 'sot-ai-node', 'sot-ai-node-name',
+                     'sot-ai-node-primary', 'sot-ai-node-state', 'sot-ai-node-latency',
                      'sot-ai-node-actions', 'sot-ai-node-error']) {
     it(`.${cls} has a rule`, () => {
       expect(hasRule(cls)).toBe(true)

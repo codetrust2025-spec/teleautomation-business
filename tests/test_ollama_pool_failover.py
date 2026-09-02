@@ -146,7 +146,7 @@ def test_an_unknown_persisted_primary_falls_back_instead_of_crashing(tmp_path):
     (tmp_path / "state.json").write_text(
         json.dumps({"primary_node": "a-node-that-was-removed"}), encoding="utf-8"
     )
-    assert ollama_nodes.primary_node_id() == "jagadeesh"
+    assert ollama_nodes.primary_node_id() == "rtx4060"
 
 
 def test_selecting_an_unknown_node_is_refused():
@@ -253,14 +253,27 @@ def test_when_everything_is_cooling_the_pool_still_probes(monkeypatch):
 
 
 def test_failover_never_rewrites_the_configured_primary(monkeypatch):
-    """The anti-flap rule. Routing around a sick node is per-request; changing
-    production's primary stays a deliberate admin action."""
+    """The anti-flap rule, and it still holds: routing around a sick node never
+    edits the stored choice, so the node reclaims primary the moment it
+    recovers and nobody has to set it again.
+
+    What changed is what `primary_node_id()` reports. It used to name the
+    stored node whether or not it was up, which meant an operator watching the
+    dashboard saw work attributed to a machine that was answering nothing. It
+    now names whoever is actually serving -- while leaving the stored choice
+    exactly where it was."""
     ollama_nodes.set_primary_node("rtx4060", force=True)
     _stub_health(monkeypatch, {"our_machine"})
 
     for _ in range(5):
         assert ollama_nodes.select_available_node(model=MODEL)["node_id"] == "our_machine"
 
+    stored = ollama_nodes.primary_override()
+    assert stored["node_id"] == "rtx4060", "the stored choice must survive failover"
+    assert ollama_nodes.primary_node_id() == "our_machine"
+
+    # And it comes straight back, with no second admin action.
+    ollama_nodes.record_success("rtx4060")
     assert ollama_nodes.primary_node_id() == "rtx4060"
 
 
