@@ -15,6 +15,33 @@ export function needsReconnect(mailbox) {
 }
 
 /**
+ * The status the Mailboxes page shows for one mailbox.
+ *
+ * Connection state is decided BEFORE sync-job state, and that order is the
+ * whole point of this function.
+ *
+ * A failed sync leaves a retry queued, so a mailbox whose Gmail authorization
+ * has expired has a job row sitting in QUEUED while its credentials are dead.
+ * The page used to test the job first, so that mailbox rendered "Sync Queued /
+ * Waiting to start…", never reached RECONNECT_REQUIRED, and never showed the
+ * expiry banner or the Reconnect button. The page reported a mailbox as busy
+ * working when nothing it queued could succeed.
+ *
+ * mounika0009000@gmail.com on 2026-09-02 is the case this came from: the sync
+ * created at 07:38:36Z failed on expired Gmail authorization, the retry stayed
+ * QUEUED, and the page showed "Sync Queued" while the desktop alert correctly
+ * reported the connection as expired. The alert was right; this was wrong.
+ */
+export function mailboxUiStatus(mailbox, latestSyncStatus) {
+  const sync = String(latestSyncStatus || '').toUpperCase()
+  if (needsReconnect(mailbox)) return 'RECONNECT_REQUIRED'
+  if (sync === 'RUNNING') return 'SYNCING'
+  if (sync === 'QUEUED') return 'SYNC_QUEUED'
+  if (!mailbox?.monitoring_enabled) return 'PAUSED'
+  return 'CONNECTED'
+}
+
+/**
  * The reconnect-required mailboxes, in the one shape both callers use.
  *
  * `/api/candidate-mailboxes/health` and `/api/candidate-mailboxes/overview`
