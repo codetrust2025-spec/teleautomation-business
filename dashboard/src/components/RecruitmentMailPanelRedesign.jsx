@@ -1465,68 +1465,41 @@ function AiNodeManager({
               className={`sot-ai-node is-${node.status || "offline"}`}
               key={node.id}
             >
-              <div className="sot-ai-node-title">
+              {/* One row per node, and only what an operator acts on. The host
+                * URL, Ollama version, acceleration split and last success and
+                * failure timestamps were diagnostics that pushed the three
+                * nodes into a tall stack; they are still on the health
+                * endpoint for anyone debugging. */}
+              <span className="sot-ai-node-name">
                 <i aria-hidden="true" />
                 <strong>{node.label}</strong>
-                {node.primary && <span>PRIMARY</span>}
-              </div>
-              <dl>
-                <div>
-                  <dt>Health</dt>
-                  <dd>{human(node.status || "offline")}</dd>
-                </div>
-                <div>
-                  <dt>Required models</dt>
-                  <dd>{node.ready ? "Ready" : "Missing / unavailable"}</dd>
-                </div>
-                <div>
-                  <dt>Vision model</dt>
-                  <dd>{node.model_loaded ? "Loaded" : "Idle"}</dd>
-                </div>
-                <div>
-                  <dt>Response</dt>
-                  <dd>
-                    {node.response_time_ms == null
-                      ? "—"
-                      : `${node.response_time_ms} ms`}
-                  </dd>
-                </div>
-                <div>
-                  <dt>Endpoint</dt>
-                  <dd>{node.endpoint || "—"}</dd>
-                </div>
-                <div>
-                  <dt>Acceleration</dt>
-                  <dd>
-                    {node.gpu
-                      ? node.gpu.accelerated
-                        ? `GPU ${Math.round((node.gpu.gpu_fraction || 0) * 100)}%`
-                        : "CPU only"
-                      : "—"}
-                  </dd>
-                </div>
-                <div>
-                  <dt>Ollama</dt>
-                  <dd>{node.ollama_version || "—"}</dd>
-                </div>
-                <div>
-                  <dt>Last success</dt>
-                  <dd>{whenever(node.breaker?.last_success_at)}</dd>
-                </div>
-                <div>
-                  <dt>Last failure</dt>
-                  <dd>{whenever(node.breaker?.last_failure_at)}</dd>
-                </div>
-              </dl>
-              {node.breaker?.in_cooldown && (
-                <small className="sot-ai-node-error">
-                  Cooling off after {node.breaker.consecutive_failures} failures
-                  {node.breaker.cooldown_remaining_s
-                    ? ` — retrying in ${node.breaker.cooldown_remaining_s}s`
-                    : ""}
-                </small>
-              )}
-              <div className="sot-ai-node-actions">
+                {node.primary && (
+                  <span className="sot-ai-node-primary">PRIMARY</span>
+                )}
+              </span>
+              <span
+                className={`sot-ai-node-state is-${
+                  node.endpoint_reachable ? "up" : "down"
+                }`}
+              >
+                {node.endpoint_reachable ? "Online" : "Offline"}
+              </span>
+              <span className="sot-ai-node-state">
+                {/* Busy and Ready are different facts -- a model held in memory
+                  * versus every required model installed -- so they are shown
+                  * as one state rather than one label meaning either. */}
+                {node.model_loaded
+                  ? "Busy"
+                  : node.ready
+                    ? "Ready"
+                    : "Not ready"}
+              </span>
+              <span className="sot-ai-node-latency">
+                {node.response_time_ms == null
+                  ? "—"
+                  : `${node.response_time_ms} ms`}
+              </span>
+              <span className="sot-ai-node-actions">
                 {!node.primary && (
                   <button
                     type="button"
@@ -1534,7 +1507,7 @@ function AiNodeManager({
                     onClick={() => onMakePrimary(node)}
                     title={
                       node.ready
-                        ? `Route AI work to ${node.label}`
+                        ? `Route AI work to ${node.label} for one hour`
                         : "This node is failing its model check — you will be asked to confirm"
                     }
                   >
@@ -1550,12 +1523,7 @@ function AiNodeManager({
                 >
                   Unload
                 </button>
-              </div>
-              {!node.endpoint_reachable && (
-                <small className="sot-ai-node-error">
-                  Connection unavailable
-                </small>
-              )}
+              </span>
             </article>
           ))
         ) : (

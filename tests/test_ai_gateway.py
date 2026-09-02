@@ -60,7 +60,8 @@ def test_invalid_node_url_is_configuration_error(monkeypatch):
     unchanged — an operator must not go hunting for a dead laptop when the real
     problem is a typo in configuration.
     """
-    monkeypatch.setenv("OLLAMA_NODE_JAGADEESH_URL", "not-a-url")
+    # Injected into the node that is primary under normal priority.
+    monkeypatch.setenv("OLLAMA_NODE_RTX4060_URL", "not-a-url")
     result = ai_gateway.health(model="gemma4:12b")
     assert result["diagnostic_status"] == "CONFIGURATION_ERROR"
     assert result["serviceReachable"] is False

@@ -513,7 +513,7 @@
 }
 
 .sot-ai-nodes > header,
-.sot-ai-node-title,
+.sot-ai-node-name,
 .sot-ai-node-actions {
   display: flex;
   align-items: center;
@@ -540,17 +540,65 @@
   font-weight: 600;
 }
 
+/* The three nodes sit side by side on a desktop. Two columns stacked them into
+ * a block taller than the panel it lives in, for information that is glanced at
+ * rather than read. */
 .sot-ai-node-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 
-.sot-ai-node {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+.sot-ai-node-name {
+  display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 100%;
+}
+.sot-ai-node-name strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sot-ai-node-primary {
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  background: rgba(34, 197, 94, 0.18);
+  color: var(--green, #22c55e);
+}
+.sot-ai-node-state,
+.sot-ai-node-latency {
+  font-size: 0.72rem;
+  color: var(--text-muted, #94a3b8);
+  white-space: nowrap;
+}
+.sot-ai-node-state.is-up {
+  color: var(--green, #22c55e);
+}
+.sot-ai-node-state.is-down {
+  color: var(--red, #ef4444);
+}
+.sot-ai-node-latency {
+  margin-left: auto;
+}
+.sot-ai-node-actions {
+  display: flex;
+  gap: 6px;
+  flex: 1 1 100%;
+}
+.sot-ai-node-actions button {
+  flex: 1 1 auto;
+}
+
+.sot-ai-node {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
   min-height: 48px;
   padding: 8px 10px;
   border: 1px solid #314b6b;
@@ -570,11 +618,8 @@
   border-color: rgba(239, 68, 68, 0.5);
 }
 
-.sot-ai-node-title {
-  gap: 7px;
-}
 
-.sot-ai-node-title i {
+.sot-ai-node-name i {
   width: 7px;
   height: 7px;
   border-radius: 50%;
@@ -582,22 +627,22 @@
   box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.12);
 }
 
-.sot-ai-node.is-online .sot-ai-node-title i {
+.sot-ai-node.is-online .sot-ai-node-name i {
   background: #22c55e;
   box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.12);
 }
 
-.sot-ai-node.is-degraded .sot-ai-node-title i {
+.sot-ai-node.is-degraded .sot-ai-node-name i {
   background: #f59e0b;
   box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.12);
 }
 
-.sot-ai-node-title strong {
+.sot-ai-node-name strong {
   font-size: 13px;
   white-space: nowrap;
 }
 
-.sot-ai-node-title > span {
+.sot-ai-node-name > span {
   border: 1px solid #2563eb;
   border-radius: 999px;
   padding: 2px 5px;
