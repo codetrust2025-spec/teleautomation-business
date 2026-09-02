@@ -1761,12 +1761,25 @@ def should_route_to_mail_alert(
     return True
 
 
-def create_monitoring_notification(event: dict[str, Any], analysis: dict[str, Any]) -> dict[str, Any]:
+def create_monitoring_notification(
+    event: dict[str, Any],
+    analysis: dict[str, Any],
+    *,
+    silent: bool = False,
+) -> dict[str, Any]:
     """Create a user-facing notification only for tracked classifications.
 
     Only auto interview slot booking and job confirmed monitoring mails produce
     notifications. Other classifications are still processed for candidate status
     updates and offer tracking but do not generate notifications.
+
+    `silent=True` writes the alert without the `notification_created` realtime
+    event. The browser turns that event into a sound, and a sound is a claim
+    that something just happened. Recovering an alert for mail that arrived
+    weeks ago is worth doing -- the alert was genuinely missed and belongs on
+    the screen -- but announcing it is not: it would interrupt an operator for
+    a month-old email and, done in bulk, would fire once per recovered row.
+    Live classification never passes this; only a backfill does.
     """
     message_id = event.get("mailbox_message_id")
     structured = event.get("structured_result") or {}
@@ -1839,10 +1852,108 @@ def create_monitoring_notification(event: dict[str, Any], analysis: dict[str, An
             "priority": priority,
             "provider_message_id": provider_id,
         }
+        if silent:
+            notification["_created_realtime_event"] = None
+            notification["_recovered_silently"] = True
+            return notification
         notification["_created_realtime_event"] = _record_realtime_event(
             cur, "notification_created", realtime_payload,
         )
         return notification
+
+
+def recover_missing_notifications(
+    start: str,
+    end: str,
+    *,
+    silent: bool = True,
+    limit: int | None = None,
+) -> dict[str, Any]:
+    """Write the alerts that tracked, already-classified events never produced.
+
+    An event can be classified correctly and still never reach the Mail Alerts
+    screen, because routing is decided separately and a routing bug leaves the
+    event untouched. 92 August `interview_shortlisted` events are exactly that:
+    each one correct, each one invisible, because the gate applied an
+    interview-date requirement to a classification that by definition has no
+    date yet. Nothing about them needs reclassifying -- re-running the model
+    would spend hours to reproduce the answers already on record.
+
+    So this replays only the routing decision, through the same
+    `create_monitoring_notification` the live path uses, which re-checks
+    `should_route_to_mail_alert` itself and is idempotent on
+    (gmail_message_id, classification). Rows that should not be alerts stay out
+    on their own merits; rows already alerted are left alone.
+
+    Silent by default: see `create_monitoring_notification`.
+    """
+    recovered: list[dict[str, Any]] = []
+    skipped_existing = 0
+    not_routable = 0
+
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT e.id
+                 FROM ai_recruitment_events e
+                 JOIN mailbox_messages m ON m.id = e.mailbox_message_id
+            LEFT JOIN mail_monitoring_notifications n
+                   ON n.ai_recruitment_event_id = e.id
+                WHERE m.sent_at >= %s AND m.sent_at < %s
+                  AND e.classification = ANY(%s)
+                  AND n.id IS NULL
+             ORDER BY m.sent_at""",
+            (start, end, sorted(TRACKED_NOTIFICATION_CLASSIFICATIONS)),
+        )
+        event_ids = [row["id"] for row in _rows(cur)]
+
+    if limit is not None:
+        event_ids = event_ids[:limit]
+
+    for event_id in event_ids:
+        with get_connection() as conn, conn.cursor() as cur:
+            cur.execute("SELECT * FROM ai_recruitment_events WHERE id=%s", (event_id,))
+            rows = _rows(cur)
+            if not rows:
+                continue
+            event = rows[0]
+            cur.execute(
+                """SELECT * FROM mail_ai_analyses WHERE mailbox_message_id=%s
+                   ORDER BY created_at DESC LIMIT 1""",
+                (event["mailbox_message_id"],),
+            )
+            analyses = _rows(cur)
+        if not analyses:
+            # No recorded analysis means nothing to attribute the alert to, and
+            # inventing one would fabricate the evidence the alert rests on.
+            not_routable += 1
+            continue
+        analysis = analyses[0]
+        analysis["classification"] = event["classification"]
+        analysis["candidate_status"] = event.get("candidate_status")
+
+        notification = create_monitoring_notification(event, analysis, silent=silent)
+        if not notification:
+            not_routable += 1
+            continue
+        if notification.get("_recovered_silently") or notification.get("_created_realtime_event"):
+            recovered.append({
+                "event_id": event_id,
+                "notification_id": notification["id"],
+                "classification": event["classification"],
+                "recovered_now": True,
+                "sound_fired": not silent,
+            })
+        else:
+            skipped_existing += 1
+
+    return {
+        "candidates_considered": len(event_ids),
+        "recovered": recovered,
+        "recovered_count": len(recovered),
+        "already_alerted": skipped_existing,
+        "not_routable": not_routable,
+        "sound_fired": not silent,
+    }
 
 
 def finalize_detection(event: dict[str, Any], *, result: dict[str, Any], model: str, duration_ms: int) -> dict[str, Any]:
