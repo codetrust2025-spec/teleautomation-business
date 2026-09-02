@@ -102,3 +102,39 @@ class TestItCountsAsAStableIdentifier:
         for code in ("TRANSACTION_FAILED", "AMOUNT_UNREADABLE", "AMOUNT_INSUFFICIENT",
                      "TRANSACTION_REFERENCE_MISSING"):
             assert code in source
+
+
+class TestOnePayeeWithTwoRegisteredHandles:
+    """J Ravinder receives on two company accounts: raviarvind1111@ybl, and a
+    second whose prefix PhonePe masks, registered as XXXXXX4573@ybl on the
+    operator's confirmation. Both are the same payee, on one record, so neither
+    resolves through the ambiguity branch that a second record would create.
+    """
+
+    BOTH = ("raviarvind1111@ybl", "xxxxxx4573@ybl")
+
+    @pytest.mark.parametrize("mask,expected", [
+        ("XXXXXX1111@ybl", "raviarvind1111@ybl"),
+        ("XXXXXX4573@ybl", "xxxxxx4573@ybl"),
+    ])
+    def test_a_mask_of_either_account_resolves(self, mask, expected):
+        assert eng._masked_upi_alias_match(mask, self.BOTH) == expected
+
+    def test_each_mask_resolves_to_its_own_account_only(self):
+        """Two handles at one provider must not collapse into each other."""
+        assert eng._masked_upi_alias_match("XXXXXX1111@ybl", self.BOTH) != "xxxxxx4573@ybl"
+        assert eng._masked_upi_alias_match("XXXXXX4573@ybl", self.BOTH) != "raviarvind1111@ybl"
+
+    @pytest.mark.parametrize("mask,why", [
+        ("XXXXXX9999@ybl", "a tail belonging to neither account"),
+        ("XXXXXX4573@okaxis", "the registered tail at a provider it is not registered for"),
+        ("XXXXXX1111@okaxis", "the other tail, likewise"),
+        ("XXXXXXXXXX@ybl", "nothing left visible to match on"),
+    ])
+    def test_registering_a_second_handle_widens_nothing_else(self, mask, why):
+        assert eng._masked_upi_alias_match(mask, self.BOTH) == "", why
+
+    def test_adding_a_handle_does_not_make_masks_trusted_in_general(self):
+        """The rule is per-registered-handle. An account registered nowhere is
+        still refused however ordinary its mask looks."""
+        assert eng._masked_upi_alias_match("XXXXXX4573@ybl", ("someoneelse0000@ybl",)) == ""
