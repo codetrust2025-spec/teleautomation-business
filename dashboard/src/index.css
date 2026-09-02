@@ -14882,6 +14882,33 @@ html:has(.app-shell--view-candidates)::-webkit-scrollbar-thumb:active {
   color: var(--text-muted, #94a3b8);
 }
 /* Service account screenshot: the thumbnail and its controls. */
+/* Payment-evidence notices on a candidate row.
+ *
+ * `cand-receipt-warning` was already in the markup with no rules anywhere, so
+ * the shortfall message rendered as plain body text indistinguishable from the
+ * figures above it. Both notices are styled here so a statement about missing
+ * evidence reads as one.
+ *
+ * `cand-receipt-missing` is the quieter of the two on purpose: an unevidenced
+ * payment is a gap in records, not a discrepancy in them. */
+.cand-receipt-warning,
+.cand-receipt-missing {
+  padding: 7px 10px;
+  border-radius: 8px;
+  font-size: 0.74rem;
+  line-height: 1.45;
+}
+.cand-receipt-warning {
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  color: #fca5a5;
+}
+.cand-receipt-missing {
+  background: rgba(148, 163, 184, 0.12);
+  border: 1px solid var(--border);
+  color: var(--text-muted, #94a3b8);
+}
+
 .dr-acct-image-panel {
   display: flex;
   align-items: flex-start;
