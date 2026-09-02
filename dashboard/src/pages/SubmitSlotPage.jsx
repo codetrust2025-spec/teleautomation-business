@@ -264,6 +264,35 @@ function PaymentAiResultCard({ ai }) {
   )
 }
 
+/** Bring a field into view and put the cursor in it.
+ *
+ * `block: 'center'` rather than the default: on a phone the sticky Confirm bar
+ * covers the bottom of the form, and scrolling a field just into view can leave
+ * it underneath. `preventScroll` on the focus stops the browser undoing the
+ * smooth scroll with a jump of its own.
+ */
+function focusField(ref) {
+  const node = ref?.current
+  if (!node) return
+  // Both calls are optional. jsdom implements neither, and a container element
+  // is not focusable at all -- neither is a reason for a submit to blow up, so
+  // the field simply does not move rather than the click failing.
+  if (typeof node.scrollIntoView === 'function') {
+    try {
+      node.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    } catch {
+      /* older engines reject the options object; position is cosmetic */
+    }
+  }
+  if (typeof node.focus === 'function') {
+    try {
+      node.focus({ preventScroll: true })
+    } catch {
+      /* preventScroll is not universal, and focus is a convenience here */
+    }
+  }
+}
+
 export function SubmitSlotPage() {
   const [tab, setTab] = useState('book')
   const [candidates, setCandidates] = useState([])
@@ -295,6 +324,19 @@ export function SubmitSlotPage() {
   const [triedSubmit, setTriedSubmit] = useState(false)
   const [aiExtraction, setAiExtraction] = useState(null)
   const [aiBlocked, setAiBlocked] = useState('')
+  // One ref per field the validation sequence can stop at, so the first
+  // problem can be brought into view instead of being highlighted somewhere
+  // off screen.
+  const nameRef = useRef(null)
+  // Client name renders as a text input for round-wise and a picker for
+  // profile service, so the wrapper is what the sequence scrolls to; nameRef
+  // is only for putting the cursor in the box when that box exists.
+  const nameFieldRef = useRef(null)
+  const phoneRef = useRef(null)
+  const technologyRef = useRef(null)
+  const roundRef = useRef(null)
+  const paymentRef = useRef(null)
+  const inviteRef = useRef(null)
   const [userEditedFields, setUserEditedFields] = useState({})
   const [paymentAiResults, setPaymentAiResults] = useState([])
   const [paymentRejected, setPaymentRejected] = useState([])
@@ -565,11 +607,37 @@ export function SubmitSlotPage() {
       setError('Please wait until invite reading is complete.')
       return
     }
-    if (!effectiveName || !slotFile || !interviewRound || needsPaymentProof
-        || (serviceType === 'round_wise' && !roundWisePhone.trim())
-        || (serviceType === 'round_wise' && !effectiveTechnology)) {
+    // Validate down the form, and stop at the first thing that is missing.
+    //
+    // This was one OR across every rule: it flagged all of them at once, said
+    // nothing about any of them, and left the browser to pick where to go --
+    // which meant Interview round, the only control carrying `required`, even
+    // with the three fields above it empty. Being told to select a round while
+    // the name box is blank is not an explanation of what to do next.
+    //
+    // The rules themselves are unchanged; they are only ordered and reported
+    // one at a time. Payment sits after the candidate details deliberately:
+    // what is owed depends on the service type, the round and the candidate,
+    // so validating it earlier would judge an amount that is not settled yet.
+    const steps = [
+      { ref: nameRef, fallbackRef: nameFieldRef, ok: !!effectiveName,
+        message: 'Enter the client name for this round.' },
+      { ref: phoneRef, ok: serviceType !== 'round_wise' || !!roundWisePhone.trim(),
+        message: 'Enter the candidate phone number.' },
+      { ref: technologyRef, ok: serviceType !== 'round_wise' || !!effectiveTechnology,
+        message: 'Choose the technology for this interview.' },
+      { ref: roundRef, ok: !!interviewRound,
+        message: 'Choose the interview round.' },
+      { ref: paymentRef, ok: !needsPaymentProof,
+        message: 'Attach a payment screenshot that covers the amount due.' },
+      { ref: inviteRef, ok: !!slotFile,
+        message: 'Attach the interview invite screenshot.' },
+    ]
+    const firstMissing = steps.find(step => !step.ok)
+    if (firstMissing) {
       setTriedSubmit(true)
-      setError('')
+      setError(firstMissing.message)
+      focusField(firstMissing.ref?.current ? firstMissing.ref : firstMissing.fallbackRef || firstMissing.ref)
       return
     }
     if (isPastDate) {
@@ -740,7 +808,13 @@ export function SubmitSlotPage() {
         ) : (
           /* ── Book slot tab — direct booking form only ─────── */
           <div className="sbs-body">
-            <form className="sbs-form" onSubmit={submitBook}>
+            {/* noValidate: the browser validated only the one control that
+                  carried `required` -- Interview round -- so it jumped
+                  there past three empty fields above it and said
+                  "Please select an item in the list.", which names
+                  neither the field nor what to do. Every rule here is
+                  the application's. */}
+            <form className="sbs-form" noValidate onSubmit={submitBook}>
               <div className="sbs-field">
                 <span className="sbs-label">Service type</span>
                 <div className="sbs-select-wrap sbs-select-wrap--custom">
@@ -757,10 +831,10 @@ export function SubmitSlotPage() {
                 </div>
               </div>
 
-              <label className="sbs-field">
+              <label ref={nameFieldRef} className="sbs-field">
                 <span className="sbs-label">Client name</span>
                 {serviceType === "round_wise" ? (
-                  <input className="sbs-input" type="text" value={name} onChange={e => { setName(e.target.value); resetPaymentProofs(); }} placeholder="Type client name" disabled={busy || parsing} />
+                  <input ref={nameRef} className="sbs-input" type="text" value={name} onChange={e => { setName(e.target.value); resetPaymentProofs(); }} placeholder="Type client name" disabled={busy || parsing} />
                 ) : (
                   <SlotCandidatePicker candidates={candidates} value={name} onChange={v => { setName(v); resetPaymentProofs() }} disabled={busy || parsing} />
                 )}
@@ -772,7 +846,7 @@ export function SubmitSlotPage() {
               {serviceType === "round_wise" && (
                 // /bookings/confirm rejects a round-wise booking without a valid
                 // phone identity, so it has to be collected here.
-                <label className="sbs-field">
+                <label ref={phoneRef} className="sbs-field">
                   <span className="sbs-label">Candidate phone <span className="sbs-required" aria-hidden="true">*</span></span>
                   <input
                     className="sbs-input"
@@ -796,7 +870,7 @@ export function SubmitSlotPage() {
                 // technology and tells the candidate to select one, so there
                 // has to be somewhere to select it. The invite fills it in when
                 // it names the technology; often it does not.
-                <label className="sbs-field">
+                <label ref={technologyRef} className="sbs-field">
                   <span className="sbs-label">Technology <span className="sbs-required" aria-hidden="true">*</span></span>
                   <SlotTechnologyPicker
                     options={technologyOptions}
@@ -813,7 +887,7 @@ export function SubmitSlotPage() {
               <label className="sbs-field">
                 <span className="sbs-label">Interview round <span className="sbs-required" aria-hidden="true">*</span></span>
                 <div className={`sbs-select-wrap${triedSubmit && !interviewRound ? ' sbs-select-wrap--required' : ''}`}>
-                  <select className="sbs-select" value={interviewRound} onChange={e => setInterviewRound(e.target.value)} disabled={busy || parsing} required>
+                  <select ref={roundRef} className="sbs-select" value={interviewRound} onChange={e => setInterviewRound(e.target.value)} disabled={busy || parsing}>
                     <option value="">Select round (L1, L2…)</option>
                     {ROUND_OPTIONS.map(r => <option key={r} value={r}>{r}</option>)}
                   </select>
@@ -823,7 +897,7 @@ export function SubmitSlotPage() {
 
               {paymentRequired && (
                 <div className="sbs-pay-card">
-                  <div className="sbs-pay-head">
+                  <div ref={paymentRef} className="sbs-pay-head">
                     <span>Payment due</span>
                     <strong>{paymentAmountDue == null ? '—' : `₹${paymentAmountDue.toLocaleString('en-IN')}`}</strong>
                   </div>
@@ -871,7 +945,7 @@ export function SubmitSlotPage() {
                 </div>
               )}
 
-              <div className="sbs-field">
+              <div ref={inviteRef} className="sbs-field">
                 <span className="sbs-label">Interview invite screenshot</span>
                 <SubmitSlotFileDrop hint="Teams, Gmail, Calendar, or Zoom — date and time must be visible." file={slotFile} previewUrl={slotPreview} disabled={busy} busy={parsing} onFile={onSlotFileChange} />
                 {triedSubmit && !slotFile && <span className="sbs-hint sbs-hint--warn">Upload your interview invite screenshot to confirm.</span>}
