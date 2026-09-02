@@ -2964,6 +2964,33 @@ export function CandidateEditModal({
               * recorded figure when no proof has been adjudicated, deliberately,
               * so that rows predating proof capture do not have real money
               * erased. This says the evidence is missing, not the payment. */}
+            {/* Proofs are attached but none counted.
+              *
+              * "Payment proofs 2 / Verified proofs 0" with nothing else said is
+              * indistinguishable from a broken pipeline, and was reported as
+              * one. The proofs had in fact been read, fraud-checked and priced;
+              * the engine withheld credit because the payee handle in the
+              * screenshot is masked (PhonePe renders it XXXXXX4573@ybl), and a
+              * mask matches no registry entry and looks like every other mask
+              * from that bank. Refusing it is deliberate. Not saying so is not.
+              *
+              * The counts come from receipt_summary, so this states the engine's
+              * own verdict rather than a second opinion about it. */}
+            {(l.proof_count ?? 0) > 0 && (l.verified_proof_count ?? 0) === 0 && (
+              <div className="cand-field cand-receipt-missing">
+                {l.proof_count === 1 ? "1 payment proof is" : `${l.proof_count} payment proofs are`}{" "}
+                attached but none is verified, so none counts towards the total
+                {(() => {
+                  const counts = l.payment_proof_status_counts || {};
+                  const named = Object.entries(counts)
+                    .filter(([, n]) => Number(n) > 0)
+                    .map(([status, n]) => `${n} ${String(status).toLowerCase().replace(/_/g, " ")}`)
+                    .join(", ");
+                  return named ? ` — ${named}` : "";
+                })()}
+                . Open the proof to see the reason and adjudicate it.
+              </div>
+            )}
             {(l.payment ?? 0) > 0 && (l.proof_count ?? 0) === 0 && (
               <div className="cand-field cand-receipt-missing">
                 No payment proof on record. {$n(l.payment)} is the recorded
