@@ -772,3 +772,127 @@ def create_offer_letter_from_pdf(filename: str, pdf_data: bytes) -> dict:
             pass
         raise ValueError(error)
     return find_offer_letter(item_id) or row
+
+
+# ── service account screenshots ──────────────────────────────────────────────
+#
+# Stored the way offer-letter PDFs are: the bytes live on the data volume and
+# the vault row keeps only a reference. Putting a screenshot in the row itself
+# would inline base64 into `credentials.json`, which is read whole on every
+# Data Room request and rewritten whole on every edit -- a few screenshots
+# would make every unrelated save slower and the file unreadable.
+
+_ACCOUNT_IMAGE_DIR = os.path.join(DATA_DIR, "data_room", "service_account_images")
+_MAX_ACCOUNT_IMAGE_BYTES = 5 * 1024 * 1024
+
+# Sniffed from the bytes, not from the filename or the browser's content-type,
+# both of which the uploader controls.
+_IMAGE_SIGNATURES = (
+    (b"\x89PNG\r\n\x1a\n", "png", "image/png"),
+    (b"\xff\xd8\xff", "jpg", "image/jpeg"),
+)
+
+
+def _account_image_kind(data: bytes) -> tuple[str, str] | None:
+    """Return (extension, media type) for a supported image, else None."""
+    for signature, extension, media_type in _IMAGE_SIGNATURES:
+        if data.startswith(signature):
+            return extension, media_type
+    # WebP is RIFF....WEBP: a four-byte length sits between the two markers.
+    if len(data) >= 12 and data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        return "webp", "image/webp"
+    return None
+
+
+def find_service_account(item_id: str) -> dict | None:
+    rid = str(item_id or "").strip()
+    if not rid:
+        return None
+    for row in get_credentials().get("service_accounts") or []:
+        if str(row.get("id") or "") == rid:
+            return dict(row)
+    return None
+
+
+def _account_image_path(item_id: str, extension: str) -> str:
+    return os.path.join(_ACCOUNT_IMAGE_DIR, f"{item_id}.{extension}")
+
+
+def _existing_account_image(item_id: str) -> tuple[str, str] | None:
+    for _, extension, media_type in _IMAGE_SIGNATURES + ((b"", "webp", "image/webp"),):
+        path = _account_image_path(item_id, extension)
+        if os.path.isfile(path):
+            return path, media_type
+    return None
+
+
+def save_service_account_image(item_id: str, data: bytes, filename: str = "") -> dict:
+    """Store or replace one service account's screenshot."""
+    if not data:
+        raise ValueError("Empty upload")
+    if len(data) > _MAX_ACCOUNT_IMAGE_BYTES:
+        raise ValueError(
+            f"Image too large (max {_MAX_ACCOUNT_IMAGE_BYTES // (1024 * 1024)} MB)"
+        )
+    kind = _account_image_kind(data)
+    if kind is None:
+        raise ValueError("Only PNG, JPG, JPEG and WebP images are supported")
+    extension, media_type = kind
+    if not find_service_account(item_id):
+        raise FileNotFoundError("Service account not found")
+
+    # A replacement can arrive in a different format, so any previous file is
+    # removed rather than left orphaned beside the new one.
+    delete_service_account_image(item_id, forget=False)
+
+    os.makedirs(_ACCOUNT_IMAGE_DIR, exist_ok=True)
+    path = _account_image_path(item_id, extension)
+    tmp = path + ".tmp"
+    with open(tmp, "wb") as handle:
+        handle.write(data)
+    os.replace(tmp, path)
+
+    update_vault_item("service_accounts", item_id, {
+        "has_image": True,
+        "image_filename": str(filename or f"{item_id}.{extension}")[:200],
+        "image_type": media_type,
+        "image_size_kb": max(1, (len(data) + 1023) // 1024),
+        "image_uploaded_at": _now_iso(),
+    })
+    return find_service_account(item_id) or {}
+
+
+def resolve_service_account_image(item_id: str) -> tuple[str, str, dict]:
+    """Return (path, media type, row) for a stored screenshot."""
+    row = find_service_account(item_id)
+    if not row:
+        raise FileNotFoundError("Service account not found")
+    found = _existing_account_image(item_id)
+    if not found:
+        raise FileNotFoundError("No image stored for this account")
+    path, media_type = found
+    return path, str(row.get("image_type") or media_type), row
+
+
+def delete_service_account_image(item_id: str, *, forget: bool = True) -> dict | None:
+    """Remove a stored screenshot. `forget` also clears the row's reference."""
+    rid = str(item_id or "").strip()
+    if not rid:
+        return None
+    for extension in ("png", "jpg", "webp"):
+        path = _account_image_path(rid, extension)
+        if os.path.isfile(path):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+    if not forget:
+        return None
+    update_vault_item("service_accounts", rid, {
+        "has_image": False,
+        "image_filename": None,
+        "image_type": None,
+        "image_size_kb": None,
+        "image_uploaded_at": None,
+    })
+    return find_service_account(rid)

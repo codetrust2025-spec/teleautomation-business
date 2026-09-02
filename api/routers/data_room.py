@@ -104,6 +104,63 @@ async def data_room_delete_vault_item(section: str, item_id: str, request: Reque
     if not updated:
         return {"status": "error", "message": "Vault entry not found"}
     return {"status": "ok", "credentials": updated}
+@router.post("/data-room/service-accounts/{item_id}/image")
+async def data_room_service_account_image_upload(
+    item_id: str,
+    request: Request,
+    file: UploadFile = File(...),
+):
+    """Store one service account's screenshot on the data volume.
+
+    Only a reference is written to the vault row; the bytes never enter
+    `credentials.json`, which is read whole on every Data Room request.
+    """
+    from core.dashboard_access import require_fleet_admin
+    from features import data_room_credentials_store as creds
+
+    require_fleet_admin(request)
+    try:
+        raw = await file.read()
+        row = creds.save_service_account_image(item_id, raw, file.filename or "")
+    except FileNotFoundError as exc:
+        return {"status": "error", "message": str(exc)}
+    except ValueError as exc:
+        return {"status": "error", "message": str(exc)}
+    return {"status": "ok", "service_account": row}
+
+
+@router.get("/data-room/service-accounts/{item_id}/image")
+async def data_room_service_account_image(item_id: str, request: Request):
+    from fastapi import HTTPException
+
+    from features import data_room_credentials_store as creds
+
+    if not _data_room_admin_only(request):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    try:
+        path, media_type, row = creds.resolve_service_account_image(item_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    name = str(row.get("image_filename") or f"{item_id}.png").replace('"', "")
+    return FileResponse(
+        path,
+        media_type=media_type,
+        headers={"Content-Disposition": f'inline; filename="{name}"'},
+    )
+
+
+@router.delete("/data-room/service-accounts/{item_id}/image")
+async def data_room_service_account_image_delete(item_id: str, request: Request):
+    from core.dashboard_access import require_fleet_admin
+    from features import data_room_credentials_store as creds
+
+    require_fleet_admin(request)
+    row = creds.delete_service_account_image(item_id)
+    if row is None:
+        return {"status": "error", "message": "Service account not found"}
+    return {"status": "ok", "service_account": row}
+
+
 @router.get("/data-room/offer-letters/{item_id}/preview")
 async def data_room_offer_letter_preview(item_id: str, request: Request):
     from fastapi import HTTPException

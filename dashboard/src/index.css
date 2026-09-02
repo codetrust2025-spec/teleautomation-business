@@ -14881,6 +14881,64 @@ html:has(.app-shell--view-candidates)::-webkit-scrollbar-thumb:active {
   font-size: 0.78rem;
   color: var(--text-muted, #94a3b8);
 }
+/* Service account screenshot: the thumbnail and its controls. */
+.dr-acct-image-panel {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 12px;
+  background: var(--surface-inset);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.dr-acct-image-preview,
+.dr-acct-image-empty {
+  width: 96px;
+  height: 96px;
+  flex: 0 0 96px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-card);
+  object-fit: cover;
+}
+.dr-acct-image-empty {
+  display: grid;
+  place-items: center;
+  font-size: 0.7rem;
+  color: var(--text-muted, #94a3b8);
+  border-style: dashed;
+}
+.dr-acct-image-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.dr-acct-image-actions strong {
+  font-size: 0.84rem;
+}
+.dr-acct-image-hint {
+  font-size: 0.72rem;
+  color: var(--text-muted, #94a3b8);
+}
+.dr-acct-image-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+}
+@media (max-width: 640px) {
+  .dr-acct-image-panel {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .dr-acct-image-preview,
+  .dr-acct-image-empty {
+    width: 100%;
+    height: 140px;
+    flex: none;
+  }
+}
 .dr-offer-attached-file {
   min-width: 0;
   overflow-wrap: anywhere;

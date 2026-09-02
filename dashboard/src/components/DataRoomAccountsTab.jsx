@@ -54,6 +54,10 @@ function isPrimary(row) {
 // "Gmail" fallback in the table, which is what almost every row said anyway.
 //
 // The id is still generated and still sent; it is just no longer asked for.
+// Sniffed again in the backend from the bytes; this is only the picker filter.
+const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp']
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024
+
 const SVC_FIELDS = [
   { key: 'label', label: 'Account name', placeholder: 'e.g. Karthik Gmail (current)', full: true },
   { key: 'username', label: 'Username / email', placeholder: 'name@example.com' },
@@ -61,7 +65,7 @@ const SVC_FIELDS = [
   { key: 'notes', label: 'Notes (optional)', type: 'textarea', rows: 3, full: true },
 ]
 
-function VaultModal({ title, fields, form, onChange, onSave, onClose, error }) {
+function VaultModal({ title, fields, form, onChange, onSave, onClose, error, imagePanel }) {
   // Mounted only while open, so the dialog is open for its whole life.
   const dialogRef = useDialogA11y(true, onClose)
   useEffect(() => {
@@ -88,6 +92,7 @@ function VaultModal({ title, fields, form, onChange, onSave, onClose, error }) {
       >
         <h2 id="dr-vault-modal-title" className="cand-title">{title}</h2>
         {error && <p className="dr-error">{error}</p>}
+        {imagePanel}
         <div className="dr-form-grid">
           {fields.map((f) => (
             <label key={f.key} className={f.full ? 'dr-form-full' : ''}>
@@ -128,6 +133,40 @@ export function DataRoomAccountsTab({ accounts = [], onReload }) {
   const [modal, setModal] = useState(null)
   const [modalError, setModalError] = useState('')
   const [search, setSearch] = useState('')
+  // The chosen screenshot is held here until Save. A new account has no id to
+  // upload against yet, so the file waits for the row to exist; an edit uses
+  // the same path so both behave identically.
+  const [pendingImage, setPendingImage] = useState(null)
+  const [previewUrl, setPreviewUrl] = useState('')
+  const [removeImage, setRemoveImage] = useState(false)
+
+  const clearImageState = useCallback(() => {
+    setPendingImage(null)
+    setRemoveImage(false)
+    setPreviewUrl((url) => {
+      if (url) URL.revokeObjectURL(url)
+      return ''
+    })
+  }, [])
+
+  const chooseImage = (file) => {
+    if (!file) return
+    if (!IMAGE_TYPES.includes(file.type)) {
+      setModalError('Choose a PNG, JPG, JPEG or WebP image.')
+      return
+    }
+    if (file.size > MAX_IMAGE_BYTES) {
+      setModalError('Image is too large. Maximum size is 5 MB.')
+      return
+    }
+    setModalError('')
+    setRemoveImage(false)
+    setPendingImage(file)
+    setPreviewUrl((url) => {
+      if (url) URL.revokeObjectURL(url)
+      return URL.createObjectURL(file)
+    })
+  }
 
   const onCopy = useCallback(async (key, text) => {
     const ok = await copyToClipboard(text)
@@ -137,12 +176,14 @@ export function DataRoomAccountsTab({ accounts = [], onReload }) {
 
   const openAdd = () => {
     setModalError('')
+    clearImageState()
     setModal({ mode: 'create', form: { id: '', label: '', service: '', username: '', password: '', notes: '' } })
   }
 
   const openEdit = (row) => {
     setModalError('')
-    setModal({ mode: 'edit', id: row.id, form: { id: row.id, label: row.label || '', service: row.service || '', username: row.username || '', password: row.password || '', notes: row.notes || '' } })
+    clearImageState()
+    setModal({ mode: 'edit', id: row.id, row, form: { id: row.id, label: row.label || '', service: row.service || '', username: row.username || '', password: row.password || '', notes: row.notes || '' } })
   }
 
   const handleDelete = async (row) => {
@@ -163,6 +204,24 @@ export function DataRoomAccountsTab({ accounts = [], onReload }) {
     const res = await fetch(url, { method, credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
     const data = await res.json()
     if (data.status !== 'ok') { setModalError(data.message || 'Save failed'); return }
+
+    // The screenshot is applied after the row exists, so a new account has an
+    // id to attach it to. A failure here leaves the account saved and says so
+    // rather than discarding the rest of the edit.
+    const targetId = mode === 'create' ? body.id : id
+    if (removeImage && !pendingImage) {
+      const gone = await fetch(`${API_BASE}/data-room/service-accounts/${targetId}/image`, { method: 'DELETE', credentials: 'include' })
+        .then(r => r.json()).catch(() => null)
+      if (!gone || gone.status !== 'ok') { setModalError('Account saved, but the image could not be removed.'); return }
+    } else if (pendingImage) {
+      const fd = new FormData()
+      fd.append('file', pendingImage)
+      const up = await fetch(`${API_BASE}/data-room/service-accounts/${targetId}/image`, { method: 'POST', credentials: 'include', body: fd })
+        .then(r => r.json()).catch(() => null)
+      if (!up || up.status !== 'ok') { setModalError((up && up.message) || 'Account saved, but the image upload failed.'); return }
+    }
+
+    clearImageState()
     setModal(null)
     onReload()
   }
@@ -322,8 +381,64 @@ export function DataRoomAccountsTab({ accounts = [], onReload }) {
           form={modal.form}
           onChange={(f) => setModal(s => ({ ...s, form: f }))}
           onSave={handleSave}
-          onClose={() => setModal(null)}
+          onClose={() => { clearImageState(); setModal(null) }}
           error={modalError}
+          imagePanel={(
+            <div className="dr-acct-image-panel">
+              {previewUrl ? (
+                <img className="dr-acct-image-preview" src={previewUrl} alt="Selected screenshot preview" />
+              ) : modal.row?.has_image && !removeImage ? (
+                <img
+                  className="dr-acct-image-preview"
+                  src={`${API_BASE}/data-room/service-accounts/${modal.id}/image`}
+                  alt={`Screenshot for ${modal.row.label || modal.id}`}
+                />
+              ) : (
+                <div className="dr-acct-image-empty" aria-hidden>No image</div>
+              )}
+              <div className="dr-acct-image-actions">
+                <strong>Screenshot</strong>
+                <span className="dr-acct-image-hint">PNG, JPG, JPEG or WebP, up to 5 MB.</span>
+                <div className="dr-acct-image-buttons">
+                  <label className="cand-btn cand-btn--sm">
+                    {previewUrl || (modal.row?.has_image && !removeImage) ? 'Replace' : 'Choose image'}
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      style={{ display: 'none' }}
+                      onChange={(event) => {
+                        const file = event.target.files?.[0]
+                        event.target.value = ''
+                        chooseImage(file)
+                      }}
+                    />
+                  </label>
+                  {modal.row?.has_image && !removeImage && !previewUrl && (
+                    <a
+                      className="cand-btn cand-btn--sm"
+                      href={`${API_BASE}/data-room/service-accounts/${modal.id}/image`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      View image
+                    </a>
+                  )}
+                  {(previewUrl || (modal.row?.has_image && !removeImage)) && (
+                    <button
+                      type="button"
+                      className="cand-btn cand-btn--sm cand-btn--danger"
+                      onClick={() => { clearImageState(); setRemoveImage(true) }}
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+                {removeImage && !previewUrl && (
+                  <span className="dr-acct-image-hint">Image will be removed when you save.</span>
+                )}
+              </div>
+            </div>
+          )}
         />
       )}
     </section>
