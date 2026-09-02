@@ -2896,7 +2896,16 @@ export function CandidateEditModal({
                 min="0"
                 step="500"
                 value={l.payment}
-                onChange={(C) => g("payment", C.target.value)}
+                /* Read-only means the figure is the system's, not the
+                 * operator's. It was still submitted on save, so opening a
+                 * candidate and pressing Save wrote the displayed number back
+                 * over the stored one -- which is how a recorded 20,000 became
+                 * 0 once two unverifiable screenshots made the display 0. A
+                 * derived value is never sent. */
+                onChange={(C) => {
+                  if (l.payment_is_proof_derived) return;
+                  g("payment", C.target.value);
+                }}
                 placeholder="0"
                 readOnly={!!l.payment_is_proof_derived}
                 disabled={!!l.payment_is_proof_derived}
