@@ -271,6 +271,27 @@ function PaymentAiResultCard({ ai }) {
  * it underneath. `preventScroll` on the focus stops the browser undoing the
  * smooth scroll with a jump of its own.
  */
+/** Read an API response without assuming it is JSON.
+ *
+ * A 502 from the proxy arrives as HTML and a 413 arrives with no body at all;
+ * `res.json()` throws on both, and the caller's catch then reported those as a
+ * network fault. This carries the status into the message instead of inventing
+ * a cause for it.
+ */
+async function readApiResponse(response) {
+  const contentType = response.headers?.get?.('content-type') || ''
+  if (contentType.includes('application/json')) return response.json()
+  let text = ''
+  try {
+    text = await response.text()
+  } catch {
+    text = ''
+  }
+  if (response.ok) return {}
+  const detail = text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120)
+  throw new Error(`The server returned ${response.status}.${detail ? ` ${detail}` : ''}`)
+}
+
 function focusField(ref) {
   const node = ref?.current
   if (!node) return
@@ -667,6 +688,9 @@ export function SubmitSlotPage() {
       return
     }
     setBusy(true); setError(''); setSuccess('')
+    // Whether the server accepted the booking, so a fault in the code that runs
+    // afterwards cannot be reported as a booking failure.
+    let booked = false
     try {
       const fd = new FormData()
       fd.append('name', effectiveName)
@@ -697,18 +721,37 @@ export function SubmitSlotPage() {
       fd.append('file', slotFile)
       // /public/slots/book is retired and answers 410. /bookings/confirm is the
       // only public booking creation boundary.
+      // `readApiResponse` rather than `res.json()`: a 502 from the proxy
+      // arrives as HTML and `res.json()` throws on it, which the catch below
+      // then reported as a network fault. It carries the status into the
+      // message instead of inventing a cause.
       const res = await fetch(`${API_BASE}/bookings/confirm`, { method: 'POST', body: fd })
-      const data = await res.json()
+      const data = await readApiResponse(res)
       if (!res.ok) { setError(data.payment_due ? (data.message || 'Payment required.') : (data.message || 'Could not book slot')); return }
+      booked = true
       if (slotPreview) URL.revokeObjectURL(slotPreview)
       setSlotFile(null); setSlotPreview(''); setParsedSlot(null); setManualDate(''); setManualTime(''); setInterviewRound(''); setTechnology(''); setServiceType('profile_service'); resetPaymentProofs()
       setName(''); setRoundWisePhone('')
-      setTriedSubmit(false)
+      setMissingField('')
       setSuccess(`Slot confirmed for ${data.candidate?.name || effectiveName}.`)
       // Refresh data first, then switch to confirmed tab after 2 seconds
       await refresh()
       setTimeout(() => { setTab('confirmed'); setSuccess('') }, 2000)
-    } catch { setError('Network error — try again') }
+    } catch (err) {
+      // Only a fetch that never got an answer is a network error. Everything
+      // else -- a body that would not parse, a fault in this handler -- used to
+      // be reported as one, which is how a ReferenceError on a line after the
+      // booking succeeded came out as "Network error — try again" while the
+      // slot existed on the server and the message asked for it again.
+      if (booked) {
+        setSuccess(`Slot confirmed for ${effectiveName}.`)
+        setError('')
+      } else if (err instanceof TypeError) {
+        setError('Network error — try again')
+      } else {
+        setError(err?.message || 'Could not book slot')
+      }
+    }
     finally { setBusy(false) }
   }
 
