@@ -701,8 +701,9 @@ def insert_message(mailbox: dict[str,Any], message: dict[str,Any], score: float)
           reply_to_email,return_path_email,created_at,updated_at)
           VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'FILTERED',%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s,%s,now(),now())
           ON CONFLICT(mailbox_id,provider_message_id) DO UPDATE SET
-            body_text=COALESCE(mailbox_messages.body_text,EXCLUDED.body_text),
-            html_body_text=COALESCE(mailbox_messages.html_body_text,EXCLUDED.html_body_text),
+            body_text=COALESCE(NULLIF(EXCLUDED.body_text,''),mailbox_messages.body_text),
+            html_body_text=COALESCE(NULLIF(EXCLUDED.html_body_text,''),mailbox_messages.html_body_text),
+            body_hash=CASE WHEN NULLIF(EXCLUDED.body_text,'') IS NOT NULL THEN EXCLUDED.body_hash ELSE mailbox_messages.body_hash END,
             authentication_results=COALESCE(EXCLUDED.authentication_results,mailbox_messages.authentication_results),
             received_spf=COALESCE(EXCLUDED.received_spf,mailbox_messages.received_spf),
             reply_to_email=COALESCE(EXCLUDED.reply_to_email,mailbox_messages.reply_to_email),
