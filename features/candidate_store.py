@@ -24,7 +24,7 @@ Schema (one row):
         "slot_confirmed_at": ISO timestamp when slot was confirmed (blank ok),
         "slots_group_posted": true after slot screenshot posted in Interview slots WA group,
         "interview_attendee": "Nikhila | Bhavana | Tool — who supported the live interview (set when marking attendance)",
-        "interview_attendance_status": "attended | not_attended | cancelled | rescheduled | blank (pending)",
+        "interview_attendance_status": "attended | not_attended | cancelled | rescheduled | re_service | blank (pending)",
         "interview_attendance_remark": "optional note when logging attendance",
         "interview_attended": legacy bool — true when status is attended,
         "interview_attended_at": ISO timestamp when attendance was logged,
@@ -2650,8 +2650,10 @@ def _filter_upcoming_only_rows(rows: list[dict]) -> list[dict]:
     """Daily ops Upcoming tab — pending slots only (exclude resolved attendance)."""
     out: list[dict] = []
     for row in rows:
-        status = row_interview_attendance_status(row)
-        if status in ("attended", "not_attended", "cancelled", "rescheduled"):
+        # Any stored status is a resolved one. Naming four of them left a
+        # Re-Service row sitting in Upcoming as though nothing had happened to
+        # it, which is the same omission the counters had.
+        if row_interview_attendance_status(row) in INTERVIEW_ATTENDANCE_STATUSES:
             continue
         out.append(row)
     out.sort(key=_slot_chronological_sort_key)
@@ -3952,7 +3954,11 @@ def set_interview_attendance(
                     r["interview_attendee"] = normalise_interview_attendee_name(fallback)
             else:
                 r["interview_attendee"] = row_interview_attendee(r)
-        elif resolved_status in {"cancelled", "rescheduled"}:
+        elif resolved_status in {"cancelled", "rescheduled", RE_SERVICE_STATUS}:
+            # No attendee: nobody sat these interviews. The note is kept
+            # because the form requires one for every status change, and
+            # dropping it for Re-Service discarded what an admin had just been
+            # made to type — on the one status that is an admin-only grant.
             r["interview_attendance_remark"] = remark_text
             r["interview_attended_at"] = _now_iso()
             r["interview_attended_by"] = (by or "").strip()[:120]
