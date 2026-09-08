@@ -7,7 +7,7 @@ import { formatClockTime } from '../utils/istTime.js'
 import { bookingSourceMeta as sharedBookingSourceMeta } from '../utils/bookingSource.js'
 import { addDaysIso, todayIso } from './calendarDates.js'
 import { publishPendingWorkChanged } from './PendingWorksProvider.jsx'
-import { STATUS_OPTIONS, emptyStatusCounts, matchesStatusFilter, readStatusCounts, statusLabel, statusTone } from './interviewStatuses.js'
+import { STATUS_OPTIONS, countStatusRows, emptyStatusCounts, matchesStatusFilter, statusLabel, statusTone } from './interviewStatuses.js'
 
 const ATTENDEES = ['Nikhila', 'Bhavana', 'Tool']
 
@@ -196,6 +196,9 @@ export function InterviewRoster({
   upcomingOnly = false,
   onRosterMutate,
   onRosterCountsChange,
+  // Bumped by the panel's Refresh. The counters are tallied from these rows
+  // now, so refreshing the summary alone would leave them on the old numbers.
+  refreshNonce = 0,
 }) {
   const { role, enabled, reference } = useAuth()
   const { confirm } = useConfirm()
@@ -264,9 +267,13 @@ export function InterviewRoster({
         throw new Error(data.message || data.detail || `Failed to load roster (${res.status})`)
       }
       setRows(data.interviews || [])
-      const nextCounts = readStatusCounts(data)
+      // Counted from the rows just loaded rather than read off the payload:
+      // the top counter and the sidebar badge disagreed with the table and
+      // with each other because all three measured different things.
+      const nextCounts = countStatusRows(data.interviews || [], resolvedStatus)
       setCounts(nextCounts)
       rosterCountsRef.current?.(nextCounts, { isUpcomingView: upcomingOnly })
+      publishPendingWorkChanged(nextCounts.pending_count)
       setError('')
     } catch (err) {
       if (!silent) {
@@ -306,7 +313,7 @@ export function InterviewRoster({
     }
   }, [day, attendeeFilter, channelFilter, hasRange])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => { load() }, [load, refreshNonce])
   useEffect(() => {
     const refresh = () => load({ silent: true })
     window.addEventListener('teleautomation:slot-booking-updated', refresh)

@@ -74,8 +74,11 @@ function usePendingWorksQuery({ month = 'all', enabled = true } = {}) {
  */
 const PENDING_CHANGED = 'teleautomation:pending-work-changed'
 
-export function publishPendingWorkChanged() {
-  window.dispatchEvent(new CustomEvent(PENDING_CHANGED))
+export function publishPendingWorkChanged(pendingCount) {
+  const detail = Number.isFinite(Number(pendingCount))
+    ? { pendingCount: Math.max(0, Number(pendingCount)) }
+    : {}
+  window.dispatchEvent(new CustomEvent(PENDING_CHANGED, { detail }))
 }
 
 function usePendingInterviewsQuery({ enabled = true, deferMs = 5000, days = 7 } = {}) {
@@ -98,7 +101,10 @@ function usePendingInterviewsQuery({ enabled = true, deferMs = 5000, days = 7 } 
       }
       const data = await res.json()
       if (!res.ok || data.status !== 'ok') throw new Error(data.message || 'Failed to load pending interviews')
-      setPendingCount(data.scheduled_count || data.pending_count || 0)
+      // pending_count, not scheduled_count. scheduled_count is a slot phase --
+      // every row whose slot has not ended yet -- so taking it first made the
+      // sidebar report a number that was never Pending at all.
+      setPendingCount(data.pending_count || 0)
       setError('')
     } catch (err) {
       if (!silent) setError(err.message || 'Failed to load')
@@ -123,7 +129,17 @@ function usePendingInterviewsQuery({ enabled = true, deferMs = 5000, days = 7 } 
   // reader asked for, so it must not flash a loading state over the sidebar.
   useEffect(() => {
     if (!enabled) return undefined
-    const onChanged = () => reload({ silent: true })
+    // The roster counts its own rows, so when it publishes a number that is
+    // the canonical one and there is nothing to re-fetch. The reload is for
+    // the changes it cannot see -- another view, another tab.
+    const onChanged = (event) => {
+      const published = Number(event?.detail?.pendingCount)
+      if (Number.isFinite(published)) {
+        setPendingCount(Math.max(0, published))
+        return
+      }
+      reload({ silent: true })
+    }
     window.addEventListener(PENDING_CHANGED, onChanged)
     return () => window.removeEventListener(PENDING_CHANGED, onChanged)
   }, [enabled, reload])

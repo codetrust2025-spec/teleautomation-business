@@ -121,7 +121,10 @@ describe('the count refreshes on a status change', () => {
     // two-minute poll.
     expect(provider).toContain("const PENDING_CHANGED = 'teleautomation:pending-work-changed'")
     expect(provider).toMatch(/window\.addEventListener\(PENDING_CHANGED, onChanged\)/)
-    expect(provider).toMatch(/const onChanged = \(\) => reload\(\{ silent: true \}\)/)
+    // It takes a published count when there is one and reloads otherwise, so
+    // the handler is a block rather than the one-liner it used to be.
+    expect(provider).toMatch(/const onChanged = \(event\) => \{/)
+    expect(provider).toMatch(/reload\(\{ silent: true \}\)/)
   })
 
   it('announces from every roster mutation path', () => {

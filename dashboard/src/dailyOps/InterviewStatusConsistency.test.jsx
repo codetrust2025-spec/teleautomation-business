@@ -203,12 +203,10 @@ describe('the counters come from the API', () => {
     await renderPanel()
     expect(tab('Cancelled').textContent).toMatch(/Cancelled\s*1/)
 
+    // The counters are tallied from the rows, so the rows are what changes.
     payload = {
-      ...oneOfEach(),
+      status: 'ok',
       interviews: [interviewRow('Cancelled Chandra', 'cancelled'), interviewRow('Also Cancelled', 'cancelled')],
-      count: 2,
-      pending_count: 0, attended_count: 0, not_attended_count: 0,
-      cancelled_count: 2, rescheduled_count: 0, re_service_count: 0,
     }
     fireEvent.click(tab('Scheduled'))
     fireEvent.click(screen.getByRole('button', { name: 'Filter interviews by date' }))
@@ -351,10 +349,14 @@ describe('changing a row refreshes the counters', () => {
     fireEvent.change(note, { target: { value: 'Candidate cancelled the interview.' } })
 
     // What the API will report once the change has landed.
+    // Chandra was already cancelled; Priya joins her, so two rows are.
     payload = {
-      ...oneOfEach(),
-      pending_count: 0, attended_count: 1, not_attended_count: 1,
-      cancelled_count: 2, rescheduled_count: 1, re_service_count: 1,
+      status: 'ok',
+      interviews: oneOfEach().interviews.map(row =>
+        row.name === 'Pending Priya'
+          ? { ...row, interview_attendance_status: 'cancelled' }
+          : row,
+      ),
     }
     fireEvent.submit(form)
 
@@ -369,10 +371,8 @@ describe('changing a row refreshes the counters', () => {
   it('re-reads the counts when Refresh is pressed', async () => {
     await renderPanel()
     payload = {
-      ...oneOfEach(),
-      pending_count: 3, attended_count: 0, not_attended_count: 0,
-      cancelled_count: 0, rescheduled_count: 0, re_service_count: 0,
-      count: 3,
+      status: 'ok',
+      interviews: Array.from({ length: 3 }, (_, i) => interviewRow(`Pending ${i}`, '')),
     }
     fireEvent.click(screen.getByRole('button', { name: /Refresh|Updating/ }))
     await waitFor(() => expect(tab('Pending').textContent).toMatch(/Pending\s*3/))
