@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import uuid
@@ -12,6 +13,8 @@ from datetime import date, datetime, timezone
 from typing import Any
 
 from core.db.connection import get_connection, use_postgres
+
+logger = logging.getLogger(__name__)
 from core.recruitment_offer_visibility import (
     qualified_event_sql,
     should_show_in_selection_offer_review,
@@ -2143,12 +2146,12 @@ def list_notifications(
                      ORDER BY created_at {order}""",
                 params + candidate_ids,
             )
-            return _rows(cur), total
+            return reconcile_booking_claims(_rows(cur)), total
         cur.execute(f"SELECT count(*) FROM mail_monitoring_notifications WHERE {clause}", params)
         total = int(cur.fetchone()[0])
         cur.execute(f"SELECT * FROM mail_monitoring_notifications WHERE {clause} ORDER BY created_at {order} LIMIT %s OFFSET %s", params + [page, skip])
         rows = _rows(cur)
-    return rows, total
+    return reconcile_booking_claims(rows), total
 
 
 def list_notification_candidates() -> list[dict[str, Any]]:
@@ -2179,6 +2182,83 @@ def list_notification_candidates() -> list[dict[str, Any]]:
             list(TRACKED_NOTIFICATION_CLASSIFICATIONS),
         )
         return _rows(cur)
+
+
+# A mail may claim a booking only for as long as that booking exists.
+#
+# These statuses assert a slot is on the roster. They were written once, when
+# the slot really was there and had been re-read to prove it, and then never
+# revisited -- so removing the slot afterwards left the alert asserting a
+# booking that Confirmed Slots and Daily Ops no longer had. Cancelling from the
+# candidates screen is the quietest way in: it clears the row and writes no
+# audit and no notification at all.
+BOOKED_BOOKING_STATUSES = ("Auto Booked", "Approved & Booked", "Rescheduled")
+
+# Not "Cancelled": nobody cancelled these. The booking they named is simply not
+# there any more, and a human has to decide what that means.
+RELEASED_BOOKING_STATUS = "Needs Review"
+
+
+def reconcile_booking_claims(rows):
+    """Never report a booking the roster does not have.
+
+    The stored column is corrected wherever a slot is removed, but that only
+    covers the removals that go through the store. This is the guarantee: a row
+    claiming a booking is checked against the roster as it stands right now, so
+    Mail Alerts cannot disagree with Confirmed Slots and Daily Ops whatever put
+    them out of step.
+    """
+    claims = [
+        row for row in (rows or [])
+        if isinstance(row, dict)
+        and str(row.get("booking_status") or "") in BOOKED_BOOKING_STATUSES
+        and str(row.get("booking_id") or "").strip()
+    ]
+    if not claims:
+        return rows
+    try:
+        from features import candidate_store
+
+        for row in claims:
+            booked = candidate_store.get_candidate(str(row["booking_id"]).strip())
+            if booked and candidate_store.candidate_has_confirmed_slot(booked):
+                continue
+            row["booking_status"] = RELEASED_BOOKING_STATUS
+            row["booking_claim_released"] = True
+    except Exception:
+        # A reconciliation that cannot run must not blank the screen. The
+        # stored column is still the one written under the persistence checks.
+        logger.exception("Could not reconcile booking claims against the roster")
+    return rows
+
+
+def release_booking_claims(candidate_id: str, *, reason: str = "slot_removed") -> int:
+    """Stop any mail claiming a booking on this candidate, and say how many.
+
+    Called wherever a slot leaves the roster, which is the one choke point every
+    removal goes through. Rows already recording a cancellation or a block are
+    left alone -- they are not claiming a booking.
+    """
+    target = str(candidate_id or "").strip()
+    if not target:
+        return 0
+    placeholders = ", ".join("%s" for _ in BOOKED_BOOKING_STATUSES)
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            f"""UPDATE mail_monitoring_notifications
+                   SET booking_status=%s, updated_at=now()
+                 WHERE booking_id=%s
+                   AND booking_status IN ({placeholders})
+             RETURNING id""",
+            (RELEASED_BOOKING_STATUS, target, *BOOKED_BOOKING_STATUSES),
+        )
+        released = cur.fetchall()
+    if released:
+        logger.warning(
+            "released %d booking claim(s) for candidate=%s reason=%s",
+            len(released), target, reason,
+        )
+    return len(released)
 
 
 def visible_rows_sql() -> tuple[str, list[Any]]:
