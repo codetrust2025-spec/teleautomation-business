@@ -407,11 +407,25 @@ def test_validation_enforces_evidence_and_manual_review_confidence():
     agent.validate_result(medium,source,[])
     assert medium["status"] == "MANUAL_REVIEW_REQUIRED"
     assert medium["confidence"] == .85
+    # Evidence that is not verbatim is never trusted -- that part is unchanged
+    # and is what this test exists for. What changed is where the message goes
+    # afterwards: the source here does say "You have been selected", so the
+    # classification may well be right and the model merely failed to quote it.
+    # Silently ignoring that hid real outcomes, so it now goes to a human.
+    # Nothing is validated, nothing is recorded as an outcome, nothing books.
     unsupported=structured("SELECTED",.95,"invented evidence")
     agent.validate_result(unsupported,message("Congratulations","You have been selected."),[])
-    assert unsupported["status"] == "IGNORED_NOT_OFFER_RELATED"
     assert unsupported["backend_transition_validated"] is False
-    assert unsupported["ignore_reason"] == "EVIDENCE_DOES_NOT_ENTAIL_TRANSITION"
+    assert unsupported["ignore_reason"] == "EVIDENCE_NOT_VERBATIM"
+    assert unsupported["status"] == "MANUAL_REVIEW_REQUIRED"
+    assert unsupported["is_selection_or_offer_related"] is False
+    assert unsupported["is_job_outcome"] is False
+    assert unsupported["lifecycle_event"] == "NONE"
+    # A source that proves nothing is still ignored outright, never reviewed.
+    unprovable=structured("SELECTED",.95,"invented evidence")
+    agent.validate_result(unprovable,message("Newsletter","The team meets on Monday."),[])
+    assert unprovable["status"] == "IGNORED_NOT_OFFER_RELATED"
+    assert unprovable["backend_transition_validated"] is False
 
 
 def test_low_confidence_result_requires_review_without_status_overwrite():
