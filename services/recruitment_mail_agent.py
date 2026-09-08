@@ -1476,6 +1476,35 @@ def validate_result(
             supported = supported + entailing
             value["backend_evidence_recovered"] = True
     if not entailing:
+        # Two different failures were landing in the same silent ignore.
+        #
+        # If the mail itself contains a sentence entailing the transition, the
+        # classification is plausibly right and the model simply failed to
+        # quote it -- it paraphrased, so nothing it cited is verbatim and the
+        # anti-hallucination guard refused to trust it. That is not the same as
+        # a mail that says no such thing. It must never auto-book, because no
+        # verified verbatim evidence entails the transition, but disappearing
+        # as "not offer related" hides a real interview from everyone.
+        #
+        # A mail whose source proves nothing stays rejected exactly as before,
+        # which is what keeps rejections and job adverts out.
+        if _entailing_evidence_from_source(sources, safe_status):
+            value.update(
+                status="MANUAL_REVIEW_REQUIRED", classification="needs_review",
+                candidate_status="Needs Review", is_selection_or_offer_related=False,
+                should_create_review_record=True, requires_manual_review=True,
+                ignore_reason="EVIDENCE_NOT_VERBATIM", validation_status="NEEDS_REVIEW",
+                lifecycle_event="NONE", interview_event="NONE", business_domain="NONE",
+                is_job_outcome=False, is_current_event=False, evidence=supported,
+                backend_transition_validated=False,
+                backend_validation_reason="EVIDENCE_NOT_VERBATIM",
+                downgraded_from=proposed_status,
+                summary=(
+                    "The email supports this outcome but the AI did not quote it "
+                    "verbatim, so it needs a human to confirm before booking."
+                ),
+            )
+            return
         value.update(
             status="IGNORED_NOT_OFFER_RELATED", classification="not_relevant",
             candidate_status="Profile Active", is_selection_or_offer_related=False,
@@ -1832,7 +1861,19 @@ text present in EMAIL_SUBJECT, EMAIL_BODY, ATTACHMENT, or THREAD_CONTEXT.
 Also return the canonical lowercase classification, user-facing candidate_status,
 and a concise evidence_summary/reason. Never include bank, PAN, Aadhaar, UAN, PF,
 or other financial/government identifiers. Return only JSON matching
-selection_offer_event_v1."""
+selection_offer_event_v1.
+
+EVIDENCE MUST BE COPIED, NOT WRITTEN. Every evidence `text` has to be an exact
+character-for-character substring of the source you were given. Copy one whole
+sentence and stop; do not join two sentences, do not tidy wording, do not
+shorten, do not summarise. A quote that is nearly right is treated as invented
+and the whole result is discarded, so a shorter exact quote always beats a
+longer approximate one.
+
+Quote the sentence that PROVES the transition, not one that merely mentions the
+topic. For an interview that means the sentence saying it is scheduled,
+confirmed, or coming up -- not one describing the format, duration, platform or
+agenda."""
 
 VALIDATOR_PROMPT = CLASSIFIER_PROMPT + """
 

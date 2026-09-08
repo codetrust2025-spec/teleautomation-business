@@ -169,12 +169,16 @@ class TestTheGateStillGates:
         preceding = source[:gate]
         assert "if supported and not entailing:" in preceding
 
-    def test_invented_evidence_is_still_rejected_end_to_end(self):
+    def test_invented_evidence_is_never_recovered_or_validated(self):
         """The case the existing pipeline test protects, restated here.
 
         The source genuinely says "You have been selected." The model claims
         SELECTED but quotes something that is not in the mail. Recovery must
-        not rescue it.
+        not rescue it, and nothing may be validated or booked from it.
+
+        It does now reach a human rather than vanishing -- the classification
+        may be right and only the quoting was wrong -- but that is visibility,
+        not trust.
         """
         from tests.test_recruitment_pipeline import message, structured
 
@@ -182,9 +186,11 @@ class TestTheGateStillGates:
         agent.validate_result(
             unsupported, message("Congratulations", "You have been selected."), [],
         )
-        assert unsupported["status"] == "IGNORED_NOT_OFFER_RELATED"
-        assert unsupported["ignore_reason"] == "EVIDENCE_DOES_NOT_ENTAIL_TRANSITION"
         assert unsupported.get("backend_evidence_recovered") is not True
+        assert unsupported["backend_transition_validated"] is False
+        assert unsupported["is_job_outcome"] is False
+        assert unsupported["lifecycle_event"] == "NONE"
+        assert unsupported["ignore_reason"] == "EVIDENCE_NOT_VERBATIM"
 
     def test_a_mail_with_no_proof_is_still_rejected(self):
         """The whole point of the gate survives: recovery returns nothing, so
