@@ -49,3 +49,48 @@ async def read_ocr_policy_audit(request: Request, limit: int = 20):
     if (operator_profile(request).get("role") or "").strip().lower() != "admin":
         raise HTTPException(status_code=403, detail="Only an admin can read the OCR policy audit")
     return {"status": "ok", "entries": ocr_policy.audit_log(limit)}
+
+
+@router.get("/ai/pure-ollama-policy")
+async def read_pure_ollama_policy(request: Request):
+    from core import pure_ollama_policy
+    from core.dashboard_access import operator_profile
+
+    operator_profile(request)
+    return {"status": "ok", **pure_ollama_policy.status()}
+
+
+@router.put("/ai/pure-ollama-policy")
+async def update_pure_ollama_policy(request: Request, body: dict):
+    from core import pure_ollama_policy
+    from core.dashboard_access import operator_profile
+
+    profile = operator_profile(request)
+    if (profile.get("role") or "").strip().lower() != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Only an admin can change Pure Ollama AI Mail Detection",
+        )
+    raw = (body or {}).get("enabled")
+    if not isinstance(raw, bool):
+        raise HTTPException(status_code=400, detail="'enabled' must be true or false")
+    client = getattr(request, "client", None)
+    result = pure_ollama_policy.set_pure_ollama_enabled(
+        raw,
+        actor=str(profile.get("username") or profile.get("name") or "admin"),
+        source_ip=getattr(client, "host", "") or "",
+    )
+    return {"status": "ok", **result}
+
+
+@router.get("/ai/pure-ollama-policy/audit")
+async def read_pure_ollama_policy_audit(request: Request, limit: int = 20):
+    from core import pure_ollama_policy
+    from core.dashboard_access import operator_profile
+
+    if (operator_profile(request).get("role") or "").strip().lower() != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Only an admin can read the Pure Ollama detection audit",
+        )
+    return {"status": "ok", "entries": pure_ollama_policy.audit_log(limit)}
