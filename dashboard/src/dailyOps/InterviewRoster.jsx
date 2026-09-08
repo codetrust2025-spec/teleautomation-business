@@ -6,7 +6,7 @@ import { useConfirm } from '../context/ConfirmContext.jsx'
 import { formatClockTime } from '../utils/istTime.js'
 import { bookingSourceMeta as sharedBookingSourceMeta } from '../utils/bookingSource.js'
 import { addDaysIso, todayIso } from './calendarDates.js'
-import { STATUS_OPTIONS, matchesStatusFilter, statusLabel, statusTone } from './interviewStatuses.js'
+import { STATUS_OPTIONS, emptyStatusCounts, matchesStatusFilter, readStatusCounts, statusLabel, statusTone } from './interviewStatuses.js'
 
 const ATTENDEES = ['Nikhila', 'Bhavana', 'Tool']
 
@@ -210,13 +210,11 @@ export function InterviewRoster({
   const setDay = isDashboard ? (onDashboardDayChange ?? setLocalDay) : setLocalDay
 
   const [rows, setRows] = useState([])
-  const [counts, setCounts] = useState({
-    count: 0,
-    attended_count: 0,
-    not_attended_count: 0,
-    pending_count: 0,
-    scheduled_count: 0,
-  })
+  // A counter per status, from the same list the tabs read. Naming three of
+  // them here left the dashboard showing 0 for Cancelled, Rescheduled and
+  // Re-Service in the window before the global summary arrives -- and for good
+  // if that request fails.
+  const [counts, setCounts] = useState(() => emptyStatusCounts())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [busyId, setBusyId] = useState(null)
@@ -265,13 +263,7 @@ export function InterviewRoster({
         throw new Error(data.message || data.detail || `Failed to load roster (${res.status})`)
       }
       setRows(data.interviews || [])
-      const nextCounts = {
-        count: data.count || 0,
-        attended_count: data.attended_count || 0,
-        not_attended_count: data.not_attended_count || 0,
-        pending_count: data.pending_count || 0,
-        scheduled_count: data.scheduled_count || 0,
-      }
+      const nextCounts = readStatusCounts(data)
       setCounts(nextCounts)
       rosterCountsRef.current?.(nextCounts, { isUpcomingView: upcomingOnly })
       setError('')

@@ -288,6 +288,46 @@ describe('the row dropdown', () => {
   })
 })
 
+describe('the roster fallback carries every counter', () => {
+  it('zeroes a slot for each status rather than only three', async () => {
+    const { emptyStatusCounts, readStatusCounts } = await import('./interviewStatuses.js')
+    const zeroed = emptyStatusCounts()
+    for (const status of INTERVIEW_STATUSES) {
+      expect(zeroed).toHaveProperty(status.countKey, 0)
+    }
+    expect(zeroed).toHaveProperty('count', 0)
+  })
+
+  it('reads every counter out of a roster payload', async () => {
+    const { readStatusCounts } = await import('./interviewStatuses.js')
+    const counts = readStatusCounts(oneOfEach())
+    expect(counts.cancelled_count).toBe(1)
+    expect(counts.rescheduled_count).toBe(1)
+    expect(counts.re_service_count).toBe(1)
+    expect(counts.count).toBe(6)
+  })
+
+  it('shows the roster counts when the global summary is unavailable', async () => {
+    // globalStats null -> the panel falls back to the roster's own counts.
+    // Those omitted three statuses, so three tabs read 0 with rows on screen.
+    calls = []
+    vi.stubGlobal('fetch', vi.fn(async (input) => {
+      const url = new URL(String(input), 'http://localhost')
+      calls.push(url)
+      if (url.pathname.endsWith('/interviews/global')) {
+        return { ok: false, status: 500, headers: { get: () => 'application/json' }, json: async () => ({ status: 'error' }) }
+      }
+      if (/\/interviews\/(daily|monitor)$/.test(url.pathname)) return jsonResponse(payload)
+      return jsonResponse({ status: 'ok' })
+    }))
+
+    await renderPanel()
+    await waitFor(() => expect(tab('Cancelled').textContent).toMatch(/Cancelled\s*1/))
+    expect(tab('Rescheduled').textContent).toMatch(/Rescheduled\s*1/)
+    expect(tab('Re-Service').textContent).toMatch(/Re-Service\s*1/)
+  })
+})
+
 describe('changing a row refreshes the counters', () => {
   it('sets a row to Cancelled and re-reads the counts', async () => {
     await renderPanel()

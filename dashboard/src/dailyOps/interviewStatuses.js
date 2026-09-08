@@ -75,3 +75,23 @@ export function matchesStatusFilter(status, filterValue) {
   if (!filterValue) return true
   return statusEntry(status).filterValue === filterValue
 }
+
+/** Every counter the KPI tabs index into, zeroed.
+ *
+ *  The roster used to seed and rebuild its counts from three keys spelled out
+ *  by hand. Those counts are what the dashboard falls back to until the global
+ *  summary arrives, so the tabs for the statuses it omitted read 0 in that
+ *  window — and permanently if that request failed. */
+export function emptyStatusCounts() {
+  const zeroed = { count: 0, scheduled_count: 0 }
+  for (const status of INTERVIEW_STATUSES) zeroed[status.countKey] = 0
+  return zeroed
+}
+
+/** Pull those same counters out of an API payload. */
+export function readStatusCounts(payload) {
+  const source = payload || {}
+  const counts = emptyStatusCounts()
+  for (const key of Object.keys(counts)) counts[key] = source[key] || 0
+  return counts
+}
