@@ -67,6 +67,17 @@ function usePendingWorksQuery({ month = 'all', enabled = true } = {}) {
   return { works, count, candidateCount, byKind, loading, error, reload }
 }
 
+/**
+ * Marking attendance changes the pending count immediately, but this provider
+ * polls on a two-minute timer, so the sidebar badge sat on a stale number
+ * until the next tick. The roster announces the change instead.
+ */
+const PENDING_CHANGED = 'teleautomation:pending-work-changed'
+
+export function publishPendingWorkChanged() {
+  window.dispatchEvent(new CustomEvent(PENDING_CHANGED))
+}
+
 function usePendingInterviewsQuery({ enabled = true, deferMs = 5000, days = 7 } = {}) {
   const [pendingCount, setPendingCount] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -106,6 +117,15 @@ function usePendingInterviewsQuery({ enabled = true, deferMs = 5000, days = 7 } 
     if (!enabled) return undefined
     const t = setInterval(() => reload({ silent: true }), 120000)
     return () => clearInterval(t)
+  }, [enabled, reload])
+
+  // Silent: this is a background correction to a badge, not something the
+  // reader asked for, so it must not flash a loading state over the sidebar.
+  useEffect(() => {
+    if (!enabled) return undefined
+    const onChanged = () => reload({ silent: true })
+    window.addEventListener(PENDING_CHANGED, onChanged)
+    return () => window.removeEventListener(PENDING_CHANGED, onChanged)
   }, [enabled, reload])
 
   return { pendingCount, loading, error, reload }

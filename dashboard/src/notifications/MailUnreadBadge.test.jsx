@@ -155,7 +155,10 @@ describe('the real sidebar is wired to this', () => {
   })
 
   it('hides the bell when nothing is unread', () => {
-    expect(app).toContain("const showIcon = item.badge === 'mail' ? badgeValue > 0 : true")
+    // Daily Ops now wants the same behaviour, so the rule moved onto the item
+    // as `alertIcon` rather than naming this one badge.
+    expect(app).toMatch(/id: 'mail-notifications'[^}]*alertIcon: true/)
+    expect(app).toContain('const showIcon = item.alertIcon ? badgeValue > 0 : true')
     expect(app).toMatch(/\{showIcon \? item\.icon : ''\}/)
   })
 

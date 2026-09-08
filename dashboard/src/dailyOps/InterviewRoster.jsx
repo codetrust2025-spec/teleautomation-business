@@ -6,6 +6,7 @@ import { useConfirm } from '../context/ConfirmContext.jsx'
 import { formatClockTime } from '../utils/istTime.js'
 import { bookingSourceMeta as sharedBookingSourceMeta } from '../utils/bookingSource.js'
 import { addDaysIso, todayIso } from './calendarDates.js'
+import { publishPendingWorkChanged } from './PendingWorksProvider.jsx'
 import { STATUS_OPTIONS, emptyStatusCounts, matchesStatusFilter, readStatusCounts, statusLabel, statusTone } from './interviewStatuses.js'
 
 const ATTENDEES = ['Nikhila', 'Bhavana', 'Tool']
@@ -323,6 +324,14 @@ export function InterviewRoster({
     }
   }, [focusDay, onFocusDayApplied, setDay])
 
+  // The roster's own reload plus the signal the sidebar badge listens for:
+  // marking attendance changes the pending count, and the provider behind that
+  // badge otherwise polls on a two-minute timer.
+  function notifyRosterChanged() {
+    onRosterMutate?.()
+    publishPendingWorkChanged()
+  }
+
   async function saveAttendance(row, status, attendee, remark, feedback) {
     setBusyId(row.id)
     setError('')
@@ -342,7 +351,7 @@ export function InterviewRoster({
       if (!res.ok || data.status !== 'ok') throw new Error(data.message || 'Update failed')
       setEditing(null)
       await load({ silent: true })
-      onRosterMutate?.()
+      notifyRosterChanged()
     } catch (err) {
       setError(err.message || 'Update failed')
     } finally {
@@ -360,7 +369,7 @@ export function InterviewRoster({
       if (!res.ok || data.status !== 'ok') throw new Error(data.message || 'Update failed')
       setEditing(null)
       await load({ silent: true })
-      onRosterMutate?.()
+      notifyRosterChanged()
     } finally { setBusyId(null) }
   }
 
@@ -374,7 +383,7 @@ export function InterviewRoster({
       if (!res.ok || data.status !== 'ok') throw new Error(data.message || 'Update failed')
       setEditing(null)
       await load({ silent: true })
-      onRosterMutate?.()
+      notifyRosterChanged()
     } finally { setBusyId(null) }
   }
 
@@ -393,7 +402,7 @@ export function InterviewRoster({
       const data = await res.json()
       if (!res.ok || data.status !== 'ok') throw new Error(data.message || 'Remove failed')
       await load({ silent: true })
-      onRosterMutate?.()
+      notifyRosterChanged()
     } catch (err) { setError(err.message || 'Remove failed') } finally { setBusyId(null) }
   }
 

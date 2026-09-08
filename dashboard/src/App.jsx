@@ -21,11 +21,11 @@ import { useAuth } from './context/AuthContext.jsx'
 // Ordered the way the day runs: what needs doing now, then what has come in,
 // then the records behind it.
 const VIEWS = [
-  { id: 'daily-ops', label: 'Daily Ops', icon: '▤', badge: 'interviews' },
+  // alertIcon: the glyph is a signal, not a section label, so it appears
+  // with the count and goes when the count does.
+  { id: 'daily-ops', label: 'Daily Ops', icon: '▤', badge: 'interviews', alertIcon: true },
   { id: 'attendance', label: 'Attendance', icon: '▩' },
-  // The bell is conditional: it appears with the unread badge and is gone
-  // when the inbox is clear, so a quiet sidebar says nothing is waiting.
-  { id: 'mail-notifications', label: 'Mail Alerts', icon: '🔔', badge: 'mail' },
+  { id: 'mail-notifications', label: 'Mail Alerts', icon: '🔔', badge: 'mail', alertIcon: true },
   { id: 'ai-recruitment', label: 'AI Mail Review', icon: '▧' },
   { id: 'candidates', label: 'Candidates', icon: '▣', badge: 'works' },
   { id: 'slot-booking', label: 'Slot Booking', icon: '▦', external: '/submit-slot' },
@@ -115,10 +115,10 @@ function OperationsShell({ view, onNavigate }) {
                 : item.badge === 'mail'
                   ? mailUnread
                   : 0
-            // Mail Alerts is plain text when nothing is unread. Every other
-            // item keeps its icon either way -- theirs label the section, this
-            // one signals a count.
-            const showIcon = item.badge === 'mail' ? badgeValue > 0 : true
+            // An item flagged alertIcon is plain text when its count is zero.
+            // The rest keep their icon either way: theirs name the section,
+            // these two report something waiting.
+            const showIcon = item.alertIcon ? badgeValue > 0 : true
             return (
               <button
                 key={item.id}
