@@ -24,6 +24,7 @@ from services.recruitment_semantics import (
     validate_interview_event,
     validate_lifecycle_event,
 )
+from core.pure_ollama_policy import pure_ollama_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -2521,6 +2522,25 @@ def process_message(mailbox: dict[str, Any], decoded: dict[str, Any], attachment
         return None
     from services.calendar_invite_parser import trusted_interview_result
     calendar_result = trusted_interview_result(decoded, safe)
+    # Pure Ollama AI Mail Detection, ON by default.
+    #
+    # The duplicate and direction checks above have already run; those are
+    # cheap, deterministic and about the message rather than its meaning, so
+    # they stay in front either way. From here the keyword and routing rules
+    # are what decide relevance, and they are exactly what dropped a real
+    # interview reminder as NO_RECRUITMENT_ROUTING_SIGNAL. With the switch ON
+    # the model reads every inbound mail and decides for itself.
+    #
+    # This changes who classifies, not what is trusted afterwards: evidence
+    # validation, the deterministic booking checks and the persistence re-read
+    # are all downstream of this line and untouched.
+    if not route["send_to_ai"] and pure_ollama_enabled():
+        route = {
+            "send_to_ai": True,
+            "score": max(0.25, float(route.get("score") or 0)),
+            "reason": "PURE_OLLAMA_DETECTION",
+            "context": route.get("context") or {},
+        }
     if not route["send_to_ai"] and not calendar_result:
         if reprocess:
             store.archive_event_for_message(row["id"], status="IGNORED_NOT_OFFER_RELATED", reason=route["reason"])

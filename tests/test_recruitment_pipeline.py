@@ -5,6 +5,22 @@ import pytest
 from services import recruitment_mail_agent as agent
 
 
+@pytest.fixture(autouse=True)
+def rules_first_flow(monkeypatch):
+    """This file describes the OFF flow: keyword and routing rules decide first.
+
+    Pure Ollama AI Mail Detection is ON by default, and ON deliberately sends
+    every inbound mail to the model rather than letting those rules drop it --
+    so the assertions here about what never reaches AI only hold with the
+    switch off. That flow is unchanged and still supported, which is what these
+    tests exist to prove. The ON flow has its own file.
+    """
+    monkeypatch.setenv("PURE_OLLAMA_MAIL_DETECTION", "false")
+    from core import pure_ollama_policy
+
+    monkeypatch.setattr(pure_ollama_policy, "_read_state", dict)
+
+
 def structured(status="OFFER_LETTER_RECEIVED", confidence=.95, evidence_text="offer letter"):
     return {
         "schema_version": "selection_offer_event_v1",

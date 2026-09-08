@@ -4,6 +4,7 @@ import { useConfirm } from "../context/ConfirmContext.jsx";
 import { mailboxUiStatus } from "../utils/mailboxStatus.js";
 import { ButtonContent, InlineLoader, OverlayLoader } from "../Loader.jsx";
 import { OcrToggle } from "./OcrToggle.jsx";
+import { PureOllamaToggle } from "./PureOllamaToggle.jsx";
 
 const request = async (path, options = {}) => {
   const isGet = !options.method || options.method === "GET";
@@ -2535,6 +2536,7 @@ export default function RecruitmentMailPanelRedesign() {
               ))}
             </select>
           </label>
+          <PureOllamaToggle />
           <OcrToggle />
           <span>
             Last updated: {updatedAt
