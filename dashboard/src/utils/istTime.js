@@ -272,6 +272,51 @@ export function istDayKey(value = new Date()) {
   })
 }
 
+/**
+ * The calendar day an instant falls on in IST, as YYYY-MM-DD.
+ *
+ * `new Date().toISOString().slice(0, 10)` reads the UTC day, so between
+ * midnight and 05:30 IST it answers "yesterday" — the off-by-one that makes a
+ * date filter select the wrong day first thing in the morning. Every day an
+ * operator picks or filters by is an IST day, so it is read out of the zone
+ * rather than sliced off a UTC instant.
+ */
+export function istDayIso(value = new Date()) {
+  const d = parseInstant(value) ?? new Date()
+  const field = {}
+  for (const part of new Intl.DateTimeFormat('en-US', {
+    timeZone: IST_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(d)) {
+    field[part.type] = part.value
+  }
+  return `${field.year}-${field.month}-${field.day}`
+}
+
+/**
+ * A bare calendar day (YYYY-MM-DD) rendered for reading — "7 Sep 2026".
+ *
+ * The value is a calendar date, not an instant, so it is built at noon UTC and
+ * read back in UTC: no zone conversion can shift it onto the neighbouring day.
+ * Same approach as formatScheduleDateTime above, and the reason a picker set
+ * to the 7th never displays the 6th.
+ */
+export function formatIstCalendarDay(value, options = {}) {
+  const match = String(value || '').trim().match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!match) return ''
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12))
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleDateString(IST_LOCALE, {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    ...options,
+    timeZone: 'UTC',
+  })
+}
+
 export function formatIstAge(value) {
   const d = parseInstant(value)
   if (!d) return null
