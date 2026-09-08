@@ -1,3 +1,5 @@
+import { addDaysIso, todayIso } from './calendarDates.js'
+
 const PRESETS = [
   { id: 'today', label: 'Today' },
   { id: 'upcoming', label: 'Upcoming' },
@@ -5,38 +7,19 @@ const PRESETS = [
   { id: 'last7', label: 'Last 7 days' },
 ]
 
-function todayIso() {
-  return new Date().toISOString().slice(0, 10)
-}
-
-function addDaysIso(iso, days) {
-  const d = new Date(`${iso.slice(0, 10)}T12:00:00`)
-  d.setDate(d.getDate() + days)
-  return d.toISOString().slice(0, 10)
-}
+// Day arithmetic moved to calendarDates.js so the presets and the calendar
+// picker cannot drift apart on what "today" is. The versions that lived here
+// mixed local-time construction with `toISOString()`, which reads back the UTC
+// day: run east of Greenwich in the evening and the two disagreed by a day.
 
 function startOfWeekIso(iso) {
-  const d = new Date(`${iso.slice(0, 10)}T12:00:00`)
-  const day = d.getDay()
-  const diff = day === 0 ? -6 : 1 - day
-  d.setDate(d.getDate() + diff)
-  return d.toISOString().slice(0, 10)
+  const date = new Date(`${iso.slice(0, 10)}T12:00:00Z`)
+  const day = date.getUTCDay()
+  return addDaysIso(iso, day === 0 ? -6 : 1 - day)
 }
 
 function endOfWeekIso(iso) {
-  const d = new Date(`${startOfWeekIso(iso)}T12:00:00`)
-  d.setDate(d.getDate() + 6)
-  return d.toISOString().slice(0, 10)
-}
-
-function currentMonthRangeIso(iso) {
-  const d = new Date(`${iso.slice(0, 10)}T12:00:00`)
-  const from = new Date(d.getFullYear(), d.getMonth(), 1, 12)
-  const to = new Date(d.getFullYear(), d.getMonth() + 1, 0, 12)
-  return {
-    from: from.toISOString().slice(0, 10),
-    to: to.toISOString().slice(0, 10),
-  }
+  return addDaysIso(startOfWeekIso(iso), 6)
 }
 
 export function resolvePresetRange(presetId) {

@@ -4,6 +4,8 @@ import { useAuth } from '../context/AuthContext.jsx'
 import { InterviewRoster } from './InterviewRoster.jsx'
 import { PendingWorksStrip } from './PendingWorksStrip.jsx'
 import { PRESETS, detectPresetFromRange, resolvePresetRange } from './dateRangePresets.js'
+import { DateCalendarPicker } from './DateCalendarPicker.jsx'
+import { isValidIsoDay, monthRangeIso, parseMonthKey } from './calendarDates.js'
 
 const ATTENDEES = ['Nikhila', 'Bhavana', 'Tool']
 const ROUNDS = ['L1', 'L2', 'HR', 'Final', 'Screening']
@@ -129,12 +131,30 @@ export function DailyOpsPanel({
       setRangePreset('allTime')
       return
     }
-    const [year, month] = monthValue.split('-').map(Number)
-    const from = new Date(year, month - 1, 1, 12)
-    const to = new Date(year, month, 0, 12)
-    setFromDate(from.toISOString().slice(0, 10))
-    setToDate(to.toISOString().slice(0, 10))
+    const parsed = parseMonthKey(monthValue)
+    if (!parsed) return
+    // Built from UTC noon rather than `new Date(y, m, d).toISOString()`, which
+    // hands back the previous day for anyone east of Greenwich — the whole of
+    // IST included, so the old first-of-the-month landed on the last of the
+    // month before.
+    const { from, to } = monthRangeIso(parsed.year, parsed.monthIndex)
+    setFromDate(from)
+    setToDate(to)
     setRangePreset(`month:${monthValue}`)
+  }
+
+  /**
+   * One calendar day becomes the filter. `from === to` is the shape the roster
+   * already reads as a single day, so the table switches to that date's
+   * records without any new plumbing behind it.
+   */
+  function applyExactDate(iso) {
+    if (!isValidIsoDay(iso)) return
+    setFromDate(iso)
+    setToDate(iso)
+    // A picked day that happens to be today is the Today preset — say so, so
+    // the period row and the date control never disagree about what is shown.
+    setRangePreset(detectPresetFromRange(iso, iso))
   }
 
   const upcomingOnly = rangePreset === 'upcoming'
@@ -190,12 +210,12 @@ export function DailyOpsPanel({
   const interviews = globalStats?.interviews || rosterCounts || {}
   const technologyOptions = (interviews.by_technology || []).map(item => item.name).sort()
   const candidateOptions = interviews.by_candidate || []
-  const monthOptions = React.useMemo(() => {
-    const options = [{ value: 'all', label: 'All time' }, ...(globalStats?.available_months || [])]
-    const selected = rangePreset.startsWith('month:') ? rangePreset.slice(6) : ''
-    if (selected && !options.some(option => option.value === selected)) options.push({ value: selected, label: selected })
-    return options
-  }, [globalStats?.available_months, rangePreset])
+  const monthOptions = globalStats?.available_months || []
+  const selectedMonth = rangePreset.startsWith('month:') ? rangePreset.slice(6) : ''
+  // The date control reads the range rather than keeping a second copy of it,
+  // so the chosen day survives a reload of the table and every preset that
+  // resolves to a single day shows that day here.
+  const exactDate = fromDate && fromDate === toDate ? fromDate : ''
   const activeFilterCount = [attendeeFilter, roundFilter, technologyFilter, candidateSearch.trim(), candidateFilter].filter(Boolean).length
 
   function clearFilters() {
@@ -250,7 +270,18 @@ export function DailyOpsPanel({
         </div>
         </div>
 
-        <label className="ops-roster-control ops-roster-control--month"><span>Month</span><select className="cand-input ops-ctrl-select" value={rangePreset === 'allTime' ? 'all' : rangePreset.startsWith('month:') ? rangePreset.slice(6) : ''} onChange={e => applyMonth(e.target.value)} aria-label="Filter interviews by month"><option value="" disabled>Select month</option>{monthOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+        <div className="ops-roster-control ops-roster-control--date">
+          <span>Date</span>
+          <DateCalendarPicker
+            value={exactDate}
+            monthValue={selectedMonth}
+            allTime={rangePreset === 'allTime'}
+            availableMonths={monthOptions}
+            onSelectDate={applyExactDate}
+            onSelectMonth={applyMonth}
+            onClear={() => applyPreset('upcoming')}
+          />
+        </div>
 
         <div className="ops-date-range__inputs ops-date-range__inputs--redesigned ops-date-range__inputs--removed" aria-hidden="true">
           <span className="ops-date-range__label">Range</span>

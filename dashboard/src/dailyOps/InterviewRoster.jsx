@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext.jsx'
 import { useConfirm } from '../context/ConfirmContext.jsx'
 import { formatClockTime } from '../utils/istTime.js'
 import { bookingSourceMeta as sharedBookingSourceMeta } from '../utils/bookingSource.js'
+import { addDaysIso, todayIso } from './calendarDates.js'
 
 const ATTENDEES = ['Nikhila', 'Bhavana', 'Tool']
 
@@ -28,14 +29,11 @@ const STATUS_OPTIONS = [
   { value: 're_service', label: 'Re-Service', tone: 'reservice' },
 ]
 
-function todayIso() {
-  return new Date().toISOString().slice(0, 10)
-}
-
+// `todayIso` comes from calendarDates.js: the roster, the period presets and
+// the date picker all have to name the same day, and a UTC slice does not
+// between midnight and 05:30 IST.
 function tomorrowIso() {
-  const d = new Date()
-  d.setDate(d.getDate() + 1)
-  return d.toISOString().slice(0, 10)
+  return addDaysIso(todayIso(), 1)
 }
 
 function formatDayLabel(iso) {
@@ -430,6 +428,21 @@ export function InterviewRoster({
       : formatDayLabel(dashboardFromDate || day))
     : "Today's interview roster"
 
+  // An empty table has to name the day it is empty for, or a date picked in
+  // the calendar and a date the roster is actually showing look the same.
+  const activeFilterLabels = [
+    effectiveAttendee && `attendee ${effectiveAttendee}`,
+    effectiveRound && `level ${effectiveRound}`,
+    effectiveTechnology && `profile ${effectiveTechnology}`,
+    effectiveSearch.trim() && `search "${effectiveSearch.trim()}"`,
+  ].filter(Boolean)
+  const emptyHeadline = hasRange && dashboardFromDate !== dashboardToDate
+    ? `No interviews between ${formatDayLabel(dashboardFromDate)} and ${formatDayLabel(dashboardToDate)}`
+    : `No interviews on ${formatDayLabel(dashboardFromDate || day)}`
+  const emptyHint = activeFilterLabels.length
+    ? `Nothing matches ${activeFilterLabels.join(' · ')} — clear the filters, or pick another date.`
+    : 'Pick another date in the calendar, or switch the period above.'
+
   const scopeHint = handlerView
     ? `${reference} — your interview roster`
     : effectiveAttendee
@@ -494,7 +507,10 @@ export function InterviewRoster({
       {loading && rows.length === 0 ? (
         <p className="ops-checklist-empty">Loading interview roster…</p>
       ) : rows.length === 0 ? (
-        <p className="ops-checklist-empty">No interview slots for this day.</p>
+        <div className="ops-checklist-empty ops-roster-empty" role="status">
+          <strong>{emptyHeadline}</strong>
+          <span>{emptyHint}</span>
+        </div>
       ) : (
         <div className={`ops-interview-table-wrap ta-table-responsive ta-table-responsive--cards${isDashboard ? ' ops-dash-table-wrap' : ' ops-interview-table-wrap--bounded'}`}>
           <div className="ta-table-responsive__scroll">
