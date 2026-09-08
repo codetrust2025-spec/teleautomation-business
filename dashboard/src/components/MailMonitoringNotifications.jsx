@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API } from "../config.js";
 import { subscribeMailEvents, subscribeMailStatus, traceMailAlert } from "../notifications/mailEventStream.js";
+import { publishMailUnread } from "../notifications/mailUnread.js";
 import { useDialogA11y } from "../hooks/useDialogA11y.js";
 import { formatIstDateTime, formatScheduleDateTime, formatScheduleIstDateTime } from "../utils/istTime.js";
 import { useConfirm } from "../context/ConfirmContext.jsx";
@@ -148,6 +149,7 @@ export function MailNotificationBell({ compact = false }) {
       ]);
       if (version !== loadVersion.current) return;
       setSummary(summaryBody.summary || {}); setItems(listBody.notifications || []);
+      publishMailUnread(summaryBody.summary?.unread);
     } catch { /* API fallback will retry */ }
   }, []);
   const live = useMailLive((event) => {
@@ -303,6 +305,7 @@ export function MailMonitoringNotifications() {
       const [list, counts] = await Promise.all([request(`/api/mail-monitoring/notifications?${query}`),request("/api/mail-monitoring/summary")]);
       if (version !== loadVersion.current) return;
       setItems(list.notifications || []);setTotal(list.total || 0);setSummary(counts.summary || {});
+      publishMailUnread(counts.summary?.unread);
     } catch { /* retain last good state */ }
     finally { if (!silent && version === loadVersion.current) setLoading(false); }
   }, [query]);
@@ -363,7 +366,11 @@ export function MailMonitoringNotifications() {
     setSelected({ ...item, is_read: true, detail_loading: true, detail_error: "" });
     if (!item.is_read) {
       setItems((rows) => rows.map((row) => row.id === item.id ? { ...row, is_read: true } : row));
-      setSummary((value) => ({ ...value, unread: Math.max(0, Number(value.unread || 0) - 1) }));
+      setSummary((value) => {
+        const next = { ...value, unread: Math.max(0, Number(value.unread || 0) - 1) };
+        publishMailUnread(next.unread);
+        return next;
+      });
     }
     const detailRequest = item.ai_recruitment_event_id
       ? request(`/api/ai-recruitment/events/${item.ai_recruitment_event_id}`)

@@ -135,6 +135,9 @@
   font-weight: 800;
   text-align: center;
 }
+.desktop-sidebar__badge--unread {
+  background: #ef4444;
+}
 
 .desktop-sidebar__footer {
   flex: 0 0 auto;
