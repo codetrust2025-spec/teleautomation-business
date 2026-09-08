@@ -138,6 +138,72 @@ class TestTheBreakdownBucketsAgree:
         assert "count" in interviews
 
 
+class TestEveryStoredStatusCountsAsResolved:
+    """The Upcoming tab shows slots nothing has happened to yet."""
+
+    def test_a_re_service_row_is_not_upcoming(self):
+        upcoming = cs._filter_upcoming_only_rows([
+            {"id": "a", "interview_attendance_status": "re_service"},
+            {"id": "b", "interview_attendance_status": ""},
+        ])
+        assert [row["id"] for row in upcoming] == ["b"]
+
+    @pytest.mark.parametrize("status", sorted(cs.INTERVIEW_ATTENDANCE_STATUSES))
+    def test_no_stored_status_survives_into_upcoming(self, status):
+        assert cs._filter_upcoming_only_rows(
+            [{"id": "x", "interview_attendance_status": status}]
+        ) == []
+
+    def test_a_row_with_no_status_is_upcoming(self):
+        rows_in = [{"id": "x", "interview_attendance_status": ""}]
+        assert cs._filter_upcoming_only_rows(rows_in) == rows_in
+
+    def test_the_schema_note_lists_every_status(self):
+        """The docstring is what a reader trusts before reading the set."""
+        note = cs.__doc__ or ""
+        for status in cs.INTERVIEW_ATTENDANCE_STATUSES:
+            assert status in note, f"{status} missing from the schema note"
+
+
+class TestTheNoteIsKeptForEveryStatusThatDemandsOne:
+    """The edit form requires a note on every status change, so no status may
+    silently discard it."""
+
+    @pytest.fixture
+    def store(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(cs, "_FILE", str(tmp_path / "candidates.json"))
+        monkeypatch.setattr(cs, "PROOFS_DIR", str(tmp_path / "proofs"))
+        monkeypatch.setattr(cs, "_load_cache", None)
+        monkeypatch.setattr(cs, "_load_cache_at", 0.0)
+        monkeypatch.setattr("core.db.connection.use_postgres", lambda: False)
+
+    @pytest.mark.parametrize("status", ["cancelled", "rescheduled", "re_service"])
+    def test_the_remark_survives(self, store, status):
+        row = cs.create_candidate({"name": f"Note {status}", "phone": "9000000001"})
+        saved = cs.set_interview_attendance(
+            str(row["id"]), status=status, remark=f"note for {status}", by="admin",
+        )
+        assert saved["interview_attendance_status"] == status
+        assert saved["interview_attendance_remark"] == f"note for {status}"
+
+    def test_re_service_still_grants_the_entitlement(self, store):
+        """Keeping the note must not disturb what Re-Service is for."""
+        row = cs.create_candidate({"name": "Grant Ravi", "phone": "9000000002"})
+        saved = cs.set_interview_attendance(
+            str(row["id"]), status="re_service", remark="one free repeat", by="admin",
+        )
+        assert saved["re_service_eligible"] is True
+        assert saved["re_service_consumed"] is False
+
+    def test_re_service_records_no_attendee(self, store):
+        """Nobody sat it, so it must not claim one."""
+        row = cs.create_candidate({"name": "NoOne Sat", "phone": "9000000003"})
+        saved = cs.set_interview_attendance(
+            str(row["id"]), status="re_service", remark="granted", by="admin",
+        )
+        assert saved["interview_attended"] is False
+
+
 class TestTheRosterPayloadCarriesThem:
     def test_daily_roster_exposes_a_counter_per_status(self, monkeypatch, tmp_path):
         monkeypatch.setattr(cs, "_FILE", str(tmp_path / "candidates.json"))
