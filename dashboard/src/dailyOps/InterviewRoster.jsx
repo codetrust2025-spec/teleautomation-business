@@ -6,6 +6,7 @@ import { useConfirm } from '../context/ConfirmContext.jsx'
 import { formatClockTime } from '../utils/istTime.js'
 import { bookingSourceMeta as sharedBookingSourceMeta } from '../utils/bookingSource.js'
 import { addDaysIso, todayIso } from './calendarDates.js'
+import { STATUS_OPTIONS, matchesStatusFilter, statusLabel, statusTone } from './interviewStatuses.js'
 
 const ATTENDEES = ['Nikhila', 'Bhavana', 'Tool']
 
@@ -19,15 +20,6 @@ const TECHNOLOGIES = [
   'SQL', 'Testing',
 ].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
 
-const STATUS_OPTIONS = [
-  { value: '', label: 'Pending', tone: 'pending' },
-  { value: 'attended', label: 'Attended', tone: 'done' },
-  { value: 'not_attended', label: 'Not attended', tone: 'missed' },
-  { value: 'cancelled', label: 'Cancelled', tone: 'cancelled' },
-  { value: 'rescheduled', label: 'Rescheduled', tone: 'rescheduled' },
-  // Admin-only: grants one free repeat interview. Never shown to candidates.
-  { value: 're_service', label: 'Re-Service', tone: 'reservice' },
-]
 
 // `todayIso` comes from calendarDates.js: the roster, the period presets and
 // the date picker all have to name the same day, and a UTC slice does not
@@ -54,15 +46,6 @@ function resolvedStatus(row) {
   return (row?.interview_attendance_status_resolved || row?.interview_attendance_status || '').trim().toLowerCase()
 }
 
-function statusTone(status) {
-  const key = status === 'canceled' ? 'cancelled' : status
-  return STATUS_OPTIONS.find(o => o.value === key)?.tone || 'pending'
-}
-
-function statusLabel(status) {
-  const key = status === 'canceled' ? 'cancelled' : status
-  return STATUS_OPTIONS.find(o => o.value === key)?.label || 'Pending'
-}
 
 function AttendanceSelect({ value, disabled, onChange, ariaLabel }) {
   return (
@@ -530,12 +513,7 @@ export function InterviewRoster({
                 </tr>
               </thead>
               <tbody>
-                {rows.filter(row => {
-                  if (!dashboardStatusFilter) return true
-                  const s = resolvedStatus(row)
-                  if (dashboardStatusFilter === 'pending') return !s || s === 'pending'
-                  return s === dashboardStatusFilter
-                }).map(row => {
+                {rows.filter(row => matchesStatusFilter(resolvedStatus(row), dashboardStatusFilter)).map(row => {
                   const status = resolvedStatus(row)
                   const bookingSource = bookingSourceMeta(row)
                   return (
@@ -569,7 +547,7 @@ export function InterviewRoster({
                             ariaLabel={`Attendance for ${row.name}`}
                             onChange={async (val) => {
                               if (!val) { saveAttendance(row, val, row.interview_attendee_resolved || row.interview_attendee || 'Bhavana'); return }
-                              const label = STATUS_OPTIONS.find(o => o.value === val)?.label || val
+                              const label = statusLabel(val)
                               // Show attendee selection before confirming
                               setEditing({ row, mode: 'attendee-with-status', targetStatus: val, targetLabel: label })
                             }}

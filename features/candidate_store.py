@@ -795,27 +795,25 @@ def row_interview_attendance_status(row: dict) -> str:
 
 
 def _interview_attendance_counts(rows: list[dict]) -> dict[str, int]:
-    attended = 0
-    not_attended = 0
-    cancelled = 0
-    rescheduled = 0
+    """One counter per stored status, plus Pending for the rows carrying none.
+
+    Counted by iterating INTERVIEW_ATTENDANCE_STATUSES rather than naming four
+    of them in an if/elif chain. The chain left `re_service` out, and Pending
+    was derived by subtracting the four it did name -- so every Re-Service row
+    was reported as Pending, on all five surfaces that call this. A status
+    added to the set now gets its own counter instead of quietly landing in
+    Pending.
+    """
+    counted = {status: 0 for status in INTERVIEW_ATTENDANCE_STATUSES}
     for row in rows:
         status = row_interview_attendance_status(row)
-        if status == "attended":
-            attended += 1
-        elif status == "not_attended":
-            not_attended += 1
-        elif status == "cancelled":
-            cancelled += 1
-        elif status == "rescheduled":
-            rescheduled += 1
-    pending = max(0, len(rows) - attended - not_attended - cancelled - rescheduled)
+        if status in counted:
+            counted[status] += 1
     return {
-        "attended_count": attended,
-        "not_attended_count": not_attended,
-        "cancelled_count": cancelled,
-        "rescheduled_count": rescheduled,
-        "pending_count": pending,
+        f"{status}_count": total for status, total in counted.items()
+    } | {
+        # Pending is the absence of a stored status, never a stored value.
+        "pending_count": max(0, len(rows) - sum(counted.values())),
     }
 
 
@@ -3771,13 +3769,13 @@ def interview_global_summary(
         })
 
     def _empty_bucket() -> dict[str, int]:
+        # "scheduled" is the booking state -- every row in the bucket -- and
+        # the rest are the attendance statuses, taken from the same set the
+        # counters use so a new one cannot silently land in "pending".
         return {
             "scheduled": 0,
-            "attended": 0,
-            "not_attended": 0,
-            "cancelled": 0,
-            "rescheduled": 0,
             "pending": 0,
+            **{status: 0 for status in sorted(INTERVIEW_ATTENDANCE_STATUSES)},
         }
 
     by_attendee: dict[str, dict[str, int]] = {}
@@ -3789,16 +3787,10 @@ def interview_global_summary(
         label = (key or "").strip() or "Unknown"
         entry = bucket.setdefault(label, _empty_bucket())
         entry["scheduled"] += 1
-        if status == "attended":
-            entry["attended"] += 1
-        elif status == "not_attended":
-            entry["not_attended"] += 1
-        elif status == "cancelled":
-            entry["cancelled"] += 1
-        elif status == "rescheduled":
-            entry["rescheduled"] += 1
-        else:
-            entry["pending"] += 1
+        # Pending is the absence of a stored status. Naming four statuses here
+        # and sweeping the rest into "pending" counted every Re-Service row as
+        # pending in each of these four breakdowns.
+        entry[status if status in INTERVIEW_ATTENDANCE_STATUSES else "pending"] += 1
 
     for row in rows:
         status = row_interview_attendance_status(row)
