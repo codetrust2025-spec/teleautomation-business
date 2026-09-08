@@ -161,6 +161,7 @@
 .ops-dash-kpi--amber .ops-dash-kpi__value{color:#fbbf24}
 .ops-dash-kpi--red .ops-dash-kpi__value{color:#f87171}
 .ops-dash-kpi--purple .ops-dash-kpi__value{color:#a78bfa}
+.ops-dash-kpi--slate .ops-dash-kpi__value{color:#94a3b8}
 .ops-dash-kpi--yellow .ops-dash-kpi__value{color:#fde047}
 .ops-dash-grid{display:none}
 .ops-dash-col--primary .ops-dash-roster{background:#ffffff08;border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:8px 10px;min-width:0}

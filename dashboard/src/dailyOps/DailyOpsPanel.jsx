@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { API } from '../config.js'
+import { STATUS_TABS } from './interviewStatuses.js'
 import { useAuth } from '../context/AuthContext.jsx'
 import { InterviewRoster } from './InterviewRoster.jsx'
 import { PendingWorksStrip } from './PendingWorksStrip.jsx'
@@ -236,11 +237,29 @@ export function DailyOpsPanel({
           <span className="ops-dash-sub ops-topbar__sub">Interview roster</span>
         </div>
 
+        {/* One tab per status the backend stores, built from the same list the
+            row dropdown uses so the two cannot disagree. Cancelled,
+            Rescheduled and Re-Service had no tab at all, which made them
+            settable but not filterable. Scheduled stays first and separate:
+            it is the booking state every row in this roster already has, so
+            it counts them all and clears the attendance filter. */}
         <div className="ops-topbar__kpis">
-          <KpiCard label="Scheduled"    value={interviews.count             ?? 0} tone="blue"  loading={loading} active={statusFilter === ''} onClick={() => setStatusFilter('')} />
-          <KpiCard label="Attended"     value={interviews.attended_count    ?? 0} tone="green" loading={loading} active={statusFilter === 'attended'} onClick={() => setStatusFilter(statusFilter === 'attended' ? '' : 'attended')} />
-          <KpiCard label="Pending"      value={interviews.pending_count     ?? 0} tone="amber" loading={loading} active={statusFilter === 'pending'} onClick={() => setStatusFilter(statusFilter === 'pending' ? '' : 'pending')} />
-          <KpiCard label="Not attended" value={interviews.not_attended_count ?? 0} tone="red"   loading={loading} active={statusFilter === 'not_attended'} onClick={() => setStatusFilter(statusFilter === 'not_attended' ? '' : 'not_attended')} />
+          {STATUS_TABS.map(tab => {
+            const token = tab.filterValue
+            const isScheduled = tab.id === 'scheduled'
+            const active = isScheduled ? statusFilter === '' : statusFilter === token
+            return (
+              <KpiCard
+                key={tab.id || tab.value || 'pending'}
+                label={tab.label}
+                value={interviews[tab.countKey] ?? 0}
+                tone={tab.kpiTone}
+                loading={loading}
+                active={active}
+                onClick={() => setStatusFilter(active && !isScheduled ? '' : token)}
+              />
+            )
+          })}
         </div>
 
         <div className="ops-topbar__right">
