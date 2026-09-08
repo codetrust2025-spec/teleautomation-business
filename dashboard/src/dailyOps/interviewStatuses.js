@@ -88,6 +88,23 @@ export function emptyStatusCounts() {
   return zeroed
 }
 
+/** Tally the rows themselves.
+ *
+ *  The authoritative Pending number, because it is the one the reader can
+ *  count on screen. The payload's totals are computed server-side over the
+ *  same query, but only the rows survive the client-side status filter, and a
+ *  payload that disagrees with its own rows is the payload being wrong. */
+export function countStatusRows(rows, statusOf) {
+  const counts = emptyStatusCounts()
+  const list = Array.isArray(rows) ? rows : []
+  counts.count = list.length
+  counts.scheduled_count = list.length
+  for (const row of list) {
+    counts[statusEntry(statusOf(row)).countKey] += 1
+  }
+  return counts
+}
+
 /** Pull those same counters out of an API payload. */
 export function readStatusCounts(payload) {
   const source = payload || {}

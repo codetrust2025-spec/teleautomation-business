@@ -124,6 +124,7 @@ export function DailyOpsPanel({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [rosterCounts, setRosterCounts] = useState(null)
+  const [refreshNonce, setRefreshNonce] = useState(0)
 
   function applyMonth(monthValue) {
     if (monthValue === 'all') {
@@ -206,11 +207,27 @@ export function DailyOpsPanel({
     }
   }, [fromDate, toDate, attendeeFilter, roundFilter, technologyFilter, candidateSearch, candidateFilter, effectiveUpcomingOnly])
 
+  // Refresh has to move the counters, and they come from the roster's rows,
+  // so it reloads the roster as well as the range summary. Declared after
+  // loadGlobal: naming it in a dependency array before it exists is a
+  // temporal-dead-zone error at render.
+  const refreshAll = useCallback(() => {
+    setRefreshNonce(value => value + 1)
+    loadGlobal()
+  }, [loadGlobal])
+
   useEffect(() => { loadGlobal() }, [loadGlobal])
 
-  const interviews = globalStats?.interviews || rosterCounts || {}
-  const technologyOptions = (interviews.by_technology || []).map(item => item.name).sort()
-  const candidateOptions = interviews.by_candidate || []
+  // The status tabs describe the rows on screen, so they read the roster's own
+  // tally. globalStats is a summary over a whole date range and ignores the
+  // status filter, which is why the Pending tab could say 8 above a table of
+  // 6. Everything else here still comes from the range summary.
+  const interviews = rosterCounts || globalStats?.interviews || {}
+  // These two lists are the whole range's vocabulary, not the day's tally, so
+  // they stay on the range summary. Only the counters moved.
+  const rangeInterviews = globalStats?.interviews || {}
+  const technologyOptions = (rangeInterviews.by_technology || []).map(item => item.name).sort()
+  const candidateOptions = rangeInterviews.by_candidate || []
   const monthOptions = globalStats?.available_months || []
   const selectedMonth = rangePreset.startsWith('month:') ? rangePreset.slice(6) : ''
   // The date control reads the range rather than keeping a second copy of it,
@@ -346,7 +363,7 @@ export function DailyOpsPanel({
         </select></label>
         <div className="ops-roster-controls__actions">
           {activeFilterCount > 0 && <button type="button" className="ops-roster-clear" onClick={clearFilters}>Clear <span>{activeFilterCount}</span></button>}
-          <button type="button" className="ops-roster-refresh" onClick={loadGlobal} disabled={loading}><span aria-hidden="true">&#8635;</span>{loading ? 'Updating' : 'Refresh'}</button>
+          <button type="button" className="ops-roster-refresh" onClick={refreshAll} disabled={loading}><span aria-hidden="true">&#8635;</span>{loading ? 'Updating' : 'Refresh'}</button>
         </div>
         </div>
       </div>
@@ -356,6 +373,7 @@ export function DailyOpsPanel({
       {/* ── Table fills the rest ─────────────────────────────────────── */}
       <div className="ops-dashboard ops-dashboard--v3 ops-table-area">
         <InterviewRoster
+          refreshNonce={refreshNonce}
           key={`${fromDate}|${toDate}|${upcomingOnly}`}
           variant="dashboard"
           dashboardFromDate={fromDate}
