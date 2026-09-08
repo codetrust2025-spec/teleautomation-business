@@ -219,15 +219,6 @@ function NotificationDetail({ item, onClose, onChanged }) {
   return <div className="mail-detail-backdrop" role="presentation" onClick={(event) => event.target === event.currentTarget && onClose()}>
     <section ref={dialogRef} className="mail-detail" role="dialog" aria-modal="true" aria-label="Mail monitoring notification">
       <header><div><h3>{item.candidate_status || human(item.classification)}</h3><p>{item.candidate_name || "Candidate"} · {item.company_name || "Company unavailable"}</p></div><button type="button" onClick={onClose} aria-label="Close">×</button></header>
-      <dl><div><dt>Email</dt><dd>{item.email_subject || "No subject"}</dd></div><div><dt>From</dt><dd>{item.sender_name || item.sender_email || "Unknown"}</dd></div><div><dt>Mail received</dt><dd>{when(item.email_received_at)}</dd></div><div><dt>Tool detected</dt><dd>{when(item.created_at)}</dd></div><div><dt>AI confidence</dt><dd>{confidence(item.ai_confidence)}</dd></div>{item.booking_status && <div><dt>Booking</dt><dd>{item.booking_status}</dd></div>}{item.interview_date && <div><dt>Interview</dt><dd>{formatScheduleDateTime(item.interview_date, item.interview_time, item.interview_timezone)}</dd></div>}{istInterviewTime && <div><dt>IST Time</dt><dd>{istInterviewTime}</dd></div>}{item.interview_round && <div><dt>Round</dt><dd>{item.interview_round}</dd></div>}{(() => {
-        const reason = blockingReason(item);
-        if (!reason) return null;
-        return <>
-          <div><dt>Blocking reason</dt><dd>{reason.text}</dd></div>
-          <div><dt>Reason code</dt><dd><code>{reason.code}</code>{reason.internal && reason.internal !== reason.code ? <> · <code>{reason.internal}</code></> : null}</dd></div>
-          <div><dt>Attempted booking</dt><dd>{item.booking_status || "Not attempted"} — no slot was created</dd></div>
-        </>;
-      })()}</dl>
       <section className="mail-detail__original" aria-label="Original email">
         <strong>Original email</strong>
         {item.detail_loading
@@ -240,11 +231,31 @@ function NotificationDetail({ item, onClose, onChanged }) {
                   <span><b>Received:</b> {when(originalEmail.sent_at || item.email_received_at)}</span>
                   <span><b>Subject:</b> {originalEmail.subject || item.email_subject || "(no subject)"}</span>
                 </div>
-                <pre>{plainEmailBody(originalEmail.body) || "This email has no text body."}</pre>
+                <pre className="mail-detail__email-body">{plainEmailBody(originalEmail.body) || "This email has no text body."}</pre>
               </>
             : <p>{item.detail_error || "The original email body is unavailable."}</p>}
       </section>
-      <div className="mail-detail__copy"><strong>Summary</strong><p>{item.ai_summary || "No summary available."}</p><strong>Detection reason</strong><p>{item.ai_reason || "Contextual classification"}</p><strong>Recommended action</strong><p>{item.recommended_action || "Review the candidate and email before taking action."}</p></div>
+      <dl><div><dt>Email</dt><dd>{item.email_subject || "No subject"}</dd></div><div><dt>From</dt><dd>{item.sender_name || item.sender_email || "Unknown"}</dd></div><div><dt>Mail received</dt><dd>{when(item.email_received_at)}</dd></div><div><dt>Tool detected</dt><dd>{when(item.created_at)}</dd></div><div><dt>AI confidence</dt><dd>{confidence(item.ai_confidence)}</dd></div>{item.booking_status && <div><dt>Booking</dt><dd>{item.booking_status}</dd></div>}{item.interview_date && <div><dt>Interview</dt><dd>{formatScheduleDateTime(item.interview_date, item.interview_time, item.interview_timezone)}</dd></div>}{istInterviewTime && <div><dt>IST Time</dt><dd>{istInterviewTime}</dd></div>}{item.interview_round && <div><dt>Round</dt><dd>{item.interview_round}</dd></div>}{(() => {
+        const reason = blockingReason(item);
+        if (!reason) return null;
+        return <>
+          <div><dt>Blocking reason</dt><dd>{reason.text}</dd></div>
+          <div><dt>Reason code</dt><dd><code>{reason.code}</code>{reason.internal && reason.internal !== reason.code ? <> · <code>{reason.internal}</code></> : null}</dd></div>
+          <div><dt>Attempted booking</dt><dd>{item.booking_status || "Not attempted"} — no slot was created</dd></div>
+        </>;
+      })()}</dl>
+      <div className="mail-detail__copy">
+        <strong>Summary</strong>
+        <p>{item.ai_summary || "No summary available."}</p>
+        <details className="mail-detail__aside" open>
+          <summary>Detection reason</summary>
+          <p>{item.ai_reason || "Contextual classification"}</p>
+        </details>
+        <details className="mail-detail__aside" open>
+          <summary>Recommended action</summary>
+          <p>{item.recommended_action || "Review the candidate and email before taking action."}</p>
+        </details>
+      </div>
       <label>Review note<textarea value={note} onChange={(event) => setNote(event.target.value)} maxLength={2000} /></label>
       <div className="mail-detail__correction"><select value={classification} onChange={(event) => setClassification(event.target.value)}>{TRACKED_CLASSIFICATIONS.map((value) => <option value={value} key={value}>{human(value)}</option>)}</select><input value={candidateStatus} onChange={(event) => setCandidateStatus(event.target.value)} maxLength={80} /></div>
       <footer>
