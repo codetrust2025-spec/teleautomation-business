@@ -11,6 +11,7 @@ import {
   PendingWorksProvider,
   usePendingWorksContextOptional,
 } from './dailyOps/PendingWorksProvider.jsx'
+import { useMailUnreadCount } from './notifications/mailUnread.js'
 import { useAuth } from './context/AuthContext.jsx'
 
 // The Operations features currently shipped. Daily Briefing, Mail Audit, Payment
@@ -22,7 +23,9 @@ import { useAuth } from './context/AuthContext.jsx'
 const VIEWS = [
   { id: 'daily-ops', label: 'Daily Ops', icon: '▤', badge: 'interviews' },
   { id: 'attendance', label: 'Attendance', icon: '▩' },
-  { id: 'mail-notifications', label: 'Mail Alerts', icon: '🔔' },
+  // The bell is conditional: it appears with the unread badge and is gone
+  // when the inbox is clear, so a quiet sidebar says nothing is waiting.
+  { id: 'mail-notifications', label: 'Mail Alerts', icon: '🔔', badge: 'mail' },
   { id: 'ai-recruitment', label: 'AI Mail Review', icon: '▧' },
   { id: 'candidates', label: 'Candidates', icon: '▣', badge: 'works' },
   { id: 'slot-booking', label: 'Slot Booking', icon: '▦', external: '/submit-slot' },
@@ -41,6 +44,7 @@ function countLabel(value) {
 function OperationsShell({ view, onNavigate }) {
   const auth = useAuth()
   const pending = usePendingWorksContextOptional()
+  const mailUnread = useMailUnreadCount()
   const [sidebarUserMenuOpen, setSidebarUserMenuOpen] = useState(false)
   const [headerUserMenuOpen, setHeaderUserMenuOpen] = useState(false)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
@@ -108,7 +112,13 @@ function OperationsShell({ view, onNavigate }) {
               ? pending?.count || 0
               : item.badge === 'interviews'
                 ? pending?.pendingInterviewCount || 0
-                : 0
+                : item.badge === 'mail'
+                  ? mailUnread
+                  : 0
+            // Mail Alerts is plain text when nothing is unread. Every other
+            // item keeps its icon either way -- theirs label the section, this
+            // one signals a count.
+            const showIcon = item.badge === 'mail' ? badgeValue > 0 : true
             return (
               <button
                 key={item.id}
@@ -120,12 +130,12 @@ function OperationsShell({ view, onNavigate }) {
                 aria-current={view === item.id ? 'page' : undefined}
                 onClick={() => navigate(item.id)}
               >
-                <span className="desktop-sidebar__link-icon" aria-hidden>{item.icon}</span>
+                <span className="desktop-sidebar__link-icon" aria-hidden>{showIcon ? item.icon : ''}</span>
                 <span>{item.label}</span>
                 {/* The badge is a bare number, which reads as "Candidates 3"
                     with nothing saying what the 3 counts. */}
                 {badgeValue > 0 && (
-                  <span className="desktop-sidebar__badge" aria-label={`${badgeValue} pending`}>
+                  <span className={`desktop-sidebar__badge${item.badge === 'mail' ? ' desktop-sidebar__badge--unread' : ''}`} aria-label={item.badge === 'mail' ? `${badgeValue} unread` : `${badgeValue} pending`}>
                     {countLabel(badgeValue)}
                   </span>
                 )}

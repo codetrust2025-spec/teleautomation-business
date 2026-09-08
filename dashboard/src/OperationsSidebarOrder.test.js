@@ -119,6 +119,10 @@ describe('operations sidebar order', () => {
   it('says what the sidebar badge is counting', () => {
     // countLabel renders a bare number, which reads as "Candidates 3" with
     // nothing saying what 3 is.
-    expect(app).toMatch(/desktop-sidebar__badge" aria-label=/)
+    //
+    // Matched across the class attribute rather than immediately after it:
+    // the Mail Alerts badge takes a --unread modifier, so the class is a
+    // template literal now. What has to hold is the label, not its position.
+    expect(app).toMatch(/desktop-sidebar__badge[^>]*aria-label=/)
   })
 })
