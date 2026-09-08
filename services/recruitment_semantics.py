@@ -156,6 +156,21 @@ _TRANSITION_ASSERTIONS: dict[str, tuple[str, ...]] = {
         r"\b(?:scheduled|confirmed|arranged|booked).{0,120}\byour (?:l[1-5] )?(?:technical |managerial |hr |virtual )?interview\b",
         r"\binvitation.{0,100}\bl[1-5]\s+(?:discussion|round)\b",
         r"\bl[1-5]\s+(?:discussion|round)\b.{0,100}\b(?:candidate|interview for|discussion with)\b",
+        # A reminder asserts the interview exists as firmly as the mail that
+        # arranged it. Interview platforms send "Your ... Interview ... Is
+        # Coming Up!" carrying the date and time and never write "scheduled",
+        # so the vocabulary above matched nothing and every proposed status
+        # failed as PROPOSED_EVENT_NOT_SUPPORTED_BY_ASSERTIVE_CONTEXT.
+        #
+        # Still an assertion about *this* candidate's own interview: each of
+        # these needs "your interview" or an explicit reminder framing, never
+        # the bare word, so a job advert or a rejection cannot match.
+        # The lookahead keeps this about the interview itself. Without it,
+        # "your interview preparation guide is coming up" asserted a booking:
+        # the subject of "is coming up" was the guide, not the interview.
+        r"\byour (?:[\w.-]+ )?(?:l[1-5] )?(?:technical |managerial |hr |virtual )?interview\b(?!\s+(?:preparation|prep|guide|tips|advice|newsletter|checklist|process|questions?)\b).{0,160}\bis coming up\b",
+        r"\breminder\b.{0,160}\byour (?:[\w.-]+ )?(?:l[1-5] )?(?:technical |managerial |hr |virtual )?interview\b(?!\s+(?:preparation|prep|guide|tips|advice|newsletter|checklist|process|questions?)\b)",
+        r"\byour upcoming (?:[\w.-]+ )?(?:l[1-5] )?(?:technical |managerial |hr |virtual )?interview\b(?!\s+(?:preparation|prep|guide|tips|advice|newsletter|checklist|process|questions?)\b)",
     ),
     "INTERVIEW_RESCHEDULED": (
         r"\b(?:your |the )?interview.{0,100}\b(?:rescheduled|moved|postponed)\b",
@@ -628,7 +643,16 @@ def classify_context(
         r"(?:\b(?:interview|technical round|managerial round|hr round)\b.{0,120}\b(?:confirmed|scheduled)\b|"
         r"\b(?:confirmed|scheduled)\b.{0,120}\b(?:interview|technical round|managerial round|hr round)\b)",
         lowered,
-    )) or _is_assertive_interview_invitation(subject, body)
+    )) or _is_assertive_interview_invitation(subject, body) or (
+        # One vocabulary, not two. This clause and _TRANSITION_ASSERTIONS both
+        # decide "is this a confirmed interview", and they had drifted: the
+        # assertion set learned reminder phrasing while this kept requiring
+        # "confirmed" or "scheduled". validate_interview_event needs *both* to
+        # agree, so a reminder asserted the transition and then failed for want
+        # of the matching interview_event. Deferring to the assertions keeps
+        # them from disagreeing again.
+        "INTERVIEW_CONFIRMED" in assertions
+    )
 
     # Preserve the stronger structured calendar interpretation. It already
     # requires interview/round language plus an invitation and schedule; the
