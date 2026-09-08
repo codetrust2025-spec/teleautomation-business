@@ -4822,7 +4822,14 @@ def mark_session_complete_by_name(
 
 
 def cancel_interview_slot(*, candidate_id: str) -> dict:
-    """Remove a confirmed slot from the roster without deleting the candidate."""
+    """Remove a confirmed slot from the roster without deleting the candidate.
+
+    Every route that takes a slot off the roster comes through here -- the
+    candidates screen, the low-priority conflict bump, and the auto-booking
+    cancel classification -- so this is where a mail alert still claiming that
+    booking has to be told. Without it the alert went on reporting "Auto
+    Booked" for a slot Confirmed Slots and Daily Ops no longer showed.
+    """
     cid = _clean_str(candidate_id)
     if not cid:
         raise ValueError("Candidate is required")
@@ -4846,6 +4853,17 @@ def cancel_interview_slot(*, candidate_id: str) -> dict:
         rows[i] = r
         data["candidates"] = rows
         _save(data)
+        # After the write, never before: a mail claim is only wrong once the
+        # slot is actually gone. A failure here must not undo the cancellation,
+        # so it is logged and the read path catches what it missed.
+        try:
+            from core import recruitment_mail_store
+
+            recruitment_mail_store.release_booking_claims(cid, reason="slot_cancelled")
+        except Exception:
+            logging.getLogger(__name__).exception(
+                "Could not release mail booking claims for %s", cid
+            )
         return _with_computed(r)
     raise ValueError("Candidate not found")
 
