@@ -874,6 +874,59 @@ def recruiting_invite_signal(
     return bool(has_invite_structure and has_role_title and is_about_a_person)
 
 
+_MONTH_NAMES = (
+    "january", "february", "march", "april", "may", "june", "july",
+    "august", "september", "october", "november", "december",
+)
+_MONTH_PATTERN = "|".join(_MONTH_NAMES) + "|" + "|".join(m[:3] for m in _MONTH_NAMES)
+# "September 11, 2026", "11 September 2026", "2026-09-11".
+_SCHEDULED_DATE_RE = re.compile(
+    rf"\b(?:(?:{_MONTH_PATTERN})\w*\s+\d{{1,2}},?\s+\d{{4}}"
+    rf"|\d{{1,2}}\s+(?:{_MONTH_PATTERN})\w*\s+\d{{4}}"
+    rf"|\d{{4}}-\d{{2}}-\d{{2}})\b",
+    re.IGNORECASE,
+)
+# "8:30am", "2:00 PM", "08:30".
+_SCHEDULED_TIME_RE = re.compile(r"\b\d{1,2}:\d{2}\s*(?:am|pm)?\b", re.IGNORECASE)
+_INTERVIEW_WORD_RE = re.compile(r"\binterviews?\b", re.IGNORECASE)
+
+
+def scheduled_interview_signal(
+    subject: str, body: str, sender_email: str = "",
+    attachments: list[dict[str, Any]] | None = None,
+) -> bool:
+    """Does this name an interview and say when it is?
+
+    A reminder from an interview platform — "Your Altimetrik Interview for the
+    Citi Scaled Hiring FPC - NAM Project Is Coming Up!", carrying the date and
+    the UTC start and end times — was dropped as NO_RECRUITMENT_ROUTING_SIGNAL.
+    It qualified nowhere: the prefilter wants a selection or offer signal and
+    this is neither, "interview" is not one of the ambiguous cues, and
+    recruiting_invite_signal needs a job title in the subject, which a project
+    codename is not.
+
+    Two signals together, so it fails closed. Saying "interview" is not enough
+    on its own — a rejection says it too, and so does a job advert — and a date
+    and time alone are most of the mail anyone receives. Both, and only both.
+
+    Routing is not booking: this decides that a message deserves semantic
+    analysis, and every validation, persistence and confirmation check downstream
+    still has to pass before anything is booked.
+    """
+    subject_text = str(subject or "")
+    body_text = str(body or "")
+    attachment_text = " ".join(
+        str(item.get("text") or "") + " " + str(item.get("filename") or "")
+        for item in (attachments or [])
+    )
+    everything = " ".join((subject_text, body_text, attachment_text))
+    if not _INTERVIEW_WORD_RE.search(everything):
+        return False
+    return bool(
+        _SCHEDULED_DATE_RE.search(everything) and _SCHEDULED_TIME_RE.search(everything)
+    )
+
+
 def relevance_score(subject: str, body: str, filenames: list[str] | None = None, thread_context: list[dict[str, Any]] | None = None) -> float:
     # Filenames alone are intentionally excluded from qualification.
     return float(prefilter_decision(subject, body, thread_context=thread_context)["score"])
@@ -936,6 +989,9 @@ def routing_decision(
         return {"send_to_ai": True, "score": max(0.25, float(context.get("score") or 0)), "reason": "AMBIGUOUS_RECRUITMENT", "context": context}
     if recruiting_invite_signal(subject, body, sender_email, attachments):
         return {"send_to_ai": True, "score": max(0.3, float(context.get("score") or 0)), "reason": "RECRUITING_CALENDAR_INVITE", "context": context}
+    # Last, and after every deterministic noise verdict above has had its say.
+    if scheduled_interview_signal(subject, body, sender_email, attachments):
+        return {"send_to_ai": True, "score": max(0.3, float(context.get("score") or 0)), "reason": "SCHEDULED_INTERVIEW", "context": context}
     return {"send_to_ai": False, "score": 0.0, "reason": "NO_RECRUITMENT_ROUTING_SIGNAL", "context": context}
 
 
