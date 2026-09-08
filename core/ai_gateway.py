@@ -167,16 +167,21 @@ _MODEL_OUTPUT_CODES = {
 
 
 def configured_models() -> dict[str, str]:
-    from core.ai_model_routing import configured_model_routes
+    from core.ai_model_routing import configured_model_routes, guard_text_decision_model
 
     routes = configured_model_routes()
+    # The fallback is what serves mail classification when the primary runner
+    # cannot, so it is a mail decision too and takes the same floor. Guarding it
+    # here rather than trusting the variable keeps a weak value from arriving
+    # through the one path that does not go via model_for().
+    fallback = (os.getenv("OLLAMA_FALLBACK_MODEL") or os.getenv("AI_RECRUITMENT_FALLBACK_MODEL") or os.getenv("OLLAMA_REASONING_MODEL") or "qwen2.5:7b").strip()
     return {
         "text": routes["recruitment_email_primary"],
         "primary": routes["recruitment_email_primary"],
         "validator": routes["recruitment_email_validator"],
         "vision": routes["recruitment_document_vision"],
         # Kept for callers that still use the old generic gateway vocabulary.
-        "fallback": (os.getenv("OLLAMA_FALLBACK_MODEL") or os.getenv("AI_RECRUITMENT_FALLBACK_MODEL") or os.getenv("OLLAMA_REASONING_MODEL") or "qwen2.5:7b").strip(),
+        "fallback": guard_text_decision_model(fallback, route="gateway_fallback"),
     }
 
 
