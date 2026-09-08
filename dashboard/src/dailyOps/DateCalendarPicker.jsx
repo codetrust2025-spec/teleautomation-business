@@ -185,6 +185,12 @@ export function DateCalendarPicker({
       ? 'All time'
       : monthLabelOf(monthValue) || 'Select date'
 
+  // Yesterday/Today/Tomorrow rides on the tooltip rather than on a pill in the
+  // trigger. The controls row is already wider than its container at 1440px,
+  // and a pill costs ~58px of it to repeat what the quick picks inside the
+  // calendar say anyway — and squeezed the date itself into an ellipsis.
+  const triggerTitle = relative ? `${triggerText} · ${relative}` : triggerText
+
   const quickPicks = [
     { id: 'yesterday', label: 'Yesterday', iso: addDaysIso(today, -1) },
     { id: 'today', label: 'Today', iso: today },
@@ -292,10 +298,9 @@ export function DateCalendarPicker({
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-label={label}
+        title={triggerTitle}
       >
-        <span className="ops-datepicker__icon" aria-hidden="true">&#128197;</span>
         <span className="ops-datepicker__value">{triggerText}</span>
-        {relative && <span className="ops-datepicker__relative">{relative}</span>}
         <span className="ops-datepicker__caret" aria-hidden="true" />
       </button>
       {popover}
