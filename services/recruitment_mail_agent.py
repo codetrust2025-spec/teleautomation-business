@@ -1031,6 +1031,37 @@ def _canonicalise_evidence_source(
     return value
 
 
+_EVIDENCE_SENTENCE_RE = re.compile(r"[^.!?\n]{20,400}(?:[.!?]|\n|$)")
+
+
+def _entailing_evidence_from_source(
+    sources: dict[str, list[str]], status: str,
+) -> list[dict[str, Any]]:
+    """Quote the sentence in the source that proves this transition, if any.
+
+    Used only when the model cited evidence that does not entail. It reads the
+    same verified sources the verbatim check reads, so nothing here can invent
+    a quote, and it returns nothing at all when the source genuinely does not
+    say it -- which keeps a rejection or a job advert rejected.
+
+    One sentence, from the first source that carries one, in the same shape the
+    model's own evidence uses.
+    """
+    for source_name in ("EMAIL_SUBJECT", "EMAIL_BODY", "ATTACHMENT", "THREAD_CONTEXT"):
+        for raw in sources.get(source_name) or []:
+            normalized = clean_email(raw)
+            for match in _EVIDENCE_SENTENCE_RE.finditer(normalized):
+                sentence = match.group(0).strip()
+                if not sentence or not evidence_entails_transition(status, sentence):
+                    continue
+                return [{
+                    "source": source_name,
+                    "text": redact_sensitive_text(sentence),
+                    "recovered_by_backend": True,
+                }]
+    return []
+
+
 def _evidence_entails_source_transition(
     item: dict[str, Any], sources: dict[str, list[str]], status: str,
 ) -> bool:
@@ -1416,6 +1447,34 @@ def validate_result(
         item for item in supported
         if _evidence_entails_source_transition(item, sources, safe_status)
     ]
+    if supported and not entailing:
+        # Only when the model quoted the mail and picked the wrong sentence --
+        # never when it invented one.
+        #
+        # `supported` holds the excerpts that are verbatim in the source. If it
+        # is empty the model fabricated its evidence, and that is exactly what
+        # the verbatim test exists to catch: the conclusion is discarded even
+        # if the source would have supported it, because a model inventing
+        # quotes cannot be trusted on this message at all.
+        #
+        # This branch is the other case.
+        #
+        # Karat's reminder was classified INTERVIEW_CONFIRMED correctly and then
+        # thrown away, because the excerpt cited described the interview's
+        # *format* -- "Your interview will be a live video call lasting
+        # approximately 60 minutes" -- while the sentence that proves the
+        # interview exists sat elsewhere in the same body: "This is a quick
+        # reminder that your Altimetrik interview ... is coming up soon!"
+        #
+        # So look for an entailing sentence in the verified source. This does
+        # not weaken the rule: an entailing verbatim excerpt is still required,
+        # it is quoted from the source rather than invented, and a mail that
+        # contains no such sentence is still rejected exactly as before. It
+        # only stops the outcome depending on which sentence the model picked.
+        entailing = _entailing_evidence_from_source(sources, safe_status)
+        if entailing:
+            supported = supported + entailing
+            value["backend_evidence_recovered"] = True
     if not entailing:
         value.update(
             status="IGNORED_NOT_OFFER_RELATED", classification="not_relevant",
