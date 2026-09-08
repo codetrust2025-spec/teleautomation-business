@@ -47,9 +47,21 @@ will find links to join your video call and access Karat Studio."""
 
 class TestItIsRoutedForAnalysis:
     def test_the_exact_email_reaches_the_model(self):
+        """Which route carries it is not the point; that it arrives is.
+
+        It first reached the model through SCHEDULED_INTERVIEW, the last-resort
+        signal added for exactly this mail. Teaching the deterministic
+        classifier that a reminder asserts an interview promoted it to
+        POTENTIAL_OUTCOME, which is the stronger, earlier route -- so this
+        accepts either rather than pinning the weaker one.
+        """
         decision = agent.routing_decision(SUBJECT, BODY, "", SENDER)
         assert decision["send_to_ai"] is True
-        assert decision["reason"] == "SCHEDULED_INTERVIEW"
+        assert decision["reason"] in {"POTENTIAL_OUTCOME", "SCHEDULED_INTERVIEW"}
+
+    def test_the_deterministic_classifier_now_qualifies_it_outright(self):
+        decision = agent.routing_decision(SUBJECT, BODY, "", SENDER)
+        assert (decision.get("context") or {}).get("qualified") is True
 
     def test_the_signal_fires_on_its_own(self):
         assert agent.scheduled_interview_signal(SUBJECT, BODY, SENDER) is True
