@@ -1717,15 +1717,19 @@
    positioned in fixed coordinates, which is what keeps it out of the
    `overflow:hidden` the controls row falls back to below 1101px.
    ───────────────────────────────────────────────────────────────────────── */
-.ops-roster-control--date{min-width:178px}
-.ops-datepicker__trigger{display:flex;align-items:center;gap:7px;width:100%;padding:0 9px;text-align:left;cursor:pointer}
+/* Sized to its own label rather than to a fixed width. The controls row is
+   already wider than its container at 1440px before this control exists, so
+   every pixel it takes beyond the text it shows comes off the Refresh button
+   at the far end of the row. (0,2,0) to beat `.ops-roster-control .cand-input`,
+   which sets width:100%. */
+.ops-roster-control--date{min-width:0;flex:0 0 auto}
+.ops-roster-control .ops-datepicker__trigger{width:max-content;min-width:0}
+.ops-datepicker__trigger{display:flex;align-items:center;gap:6px;padding:0 8px;text-align:left;cursor:pointer}
 .ops-datepicker__trigger:hover{border-color:rgba(96,165,250,.42);background:#0e1520}
 .ops-datepicker__trigger:focus-visible{border-color:#3b82f6;box-shadow:0 0 0 2px rgba(59,130,246,.18)}
 .ops-datepicker__trigger--set{border-color:rgba(59,130,246,.42)}
-.ops-datepicker__icon{font-size:11px;line-height:1;opacity:.72}
 .ops-datepicker__value{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e2e8f0;font-weight:600}
 .ops-datepicker__trigger:not(.ops-datepicker__trigger--set) .ops-datepicker__value{color:#8494a8;font-weight:500}
-.ops-datepicker__relative{flex-shrink:0;padding:1px 5px;border-radius:99px;background:rgba(37,99,235,.18);color:#93c5fd;font-size:8px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap}
 /* The same two-gradient chevron `select.cand-input` draws, at the same size,
    so the date control's indicator is pixel-identical to the selects it sits
    between rather than merely similar. */
@@ -1771,7 +1775,7 @@
 .ops-roster-empty span{color:#64748b;font-size:11px}
 
 @media(min-width:1101px){
-  .ops-roster-control--date{min-width:176px;max-width:210px}
+  .ops-roster-control--date{min-width:0;max-width:none}
 }
 @media(max-width:600px){
   .ops-datepicker__popover{width:min(280px,calc(100vw - 16px))}
