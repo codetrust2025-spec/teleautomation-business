@@ -137,24 +137,61 @@ def exchange_code(code: str, redirect_uri: str) -> dict[str,Any]:
     data=urllib.parse.urlencode({"code":code,"client_id":os.environ["GOOGLE_OAUTH_CLIENT_ID"],"client_secret":os.environ["GOOGLE_OAUTH_CLIENT_SECRET"],"redirect_uri":redirect_uri,"grant_type":"authorization_code"}).encode()
     with urllib.request.urlopen(urllib.request.Request("https://oauth2.googleapis.com/token",data=data,method="POST"),timeout=20) as r:return json.loads(r.read())
 
+class GmailAuthorizationExpired(RuntimeError):
+    """Google will not issue a new access token, so a human must reconnect.
+
+    Raised only for the two cases re-authorisation actually fixes: Google
+    answering ``invalid_grant`` (the grant is revoked or dead), and no refresh
+    token being stored at all.
+
+    Every other failure -- an HTTP 5xx, a timeout, a rate limit, a bug of ours
+    -- is a different kind of problem and must not be reported as an expiry.
+    Production had 28 HTTPError and 2 AttributeError sync failures recorded
+    against 270 genuine expiries, and each one of those 30 put "Gmail
+    connection expired. Reconnect to continue monitoring." on a mailbox whose
+    credentials were entirely valid.
+    """
+
+
 class GmailMailboxProvider(MailboxProvider):
-    def __init__(self, credential_ciphertext: str):
+    def __init__(self, credential_ciphertext: str, on_credentials_refreshed=None):
         self.credentials=decrypt_credentials(credential_ciphertext); self._status="CONNECTED"; self._cursor=None
+        # Called with the full credential dict whenever Google issues a new
+        # access token, so the caller can store it. Without this the refreshed
+        # token lives only in this instance and is thrown away with it: every
+        # later sync starts from the stale stored token, spends a 401 and a
+        # refresh round trip to get going, and each of those extra calls is
+        # another chance to fail transiently.
+        self._on_credentials_refreshed=on_credentials_refreshed
     def connect(self)->None:self.verify_connection()
     def disconnect(self)->None:self.credentials={};self._status="DISCONNECTED"
     def get_sync_cursor(self)->str|None:return self._cursor
     def save_sync_cursor(self,cursor:str|None)->None:self._cursor=cursor
     def refresh_connection(self)->None:
         refresh=self.credentials.get("refresh_token")
-        if not refresh: raise RuntimeError("Gmail authorization has expired; reconnect the mailbox")
+        if not refresh: raise GmailAuthorizationExpired("Gmail authorization has expired; reconnect the mailbox")
         data=urllib.parse.urlencode({"client_id":os.environ["GOOGLE_OAUTH_CLIENT_ID"],"client_secret":os.environ["GOOGLE_OAUTH_CLIENT_SECRET"],"refresh_token":refresh,"grant_type":"refresh_token"}).encode()
         try:
-            with urllib.request.urlopen(urllib.request.Request("https://oauth2.googleapis.com/token",data=data,method="POST"),timeout=20) as r:self.credentials.update(json.loads(r.read()))
+            with urllib.request.urlopen(urllib.request.Request("https://oauth2.googleapis.com/token",data=data,method="POST"),timeout=20) as r:refreshed=json.loads(r.read())
         except urllib.error.HTTPError as exc:
             detail=exc.read().decode("utf-8","replace")
             if exc.code==400 and "invalid_grant" in detail:
-                raise RuntimeError("Gmail authorization expired or was revoked. Reconnect Gmail to resume automatic monitoring and historical rescans.") from exc
+                raise GmailAuthorizationExpired("Gmail authorization expired or was revoked. Reconnect Gmail to resume automatic monitoring and historical rescans.") from exc
+            # Anything else -- 429, 500, 503 -- is Google being briefly
+            # unavailable, not the grant being dead. Let it propagate as the
+            # transient failure it is.
             raise
+        # Google omits refresh_token when reissuing, so update rather than
+        # replace: overwriting here would drop the only credential that can
+        # ever recover this mailbox without a human.
+        self.credentials.update(refreshed)
+        if self._on_credentials_refreshed:
+            try:
+                self._on_credentials_refreshed(dict(self.credentials))
+            except Exception:
+                # Persisting is an optimisation; failing to store a token that
+                # already works must not fail the sync that just got one.
+                pass
     def _request(self,path:str,*,method:str="GET",payload:dict[str,Any]|None=None)->dict[str,Any]:
         if not self.credentials.get("access_token"):self.refresh_connection()
         url="https://gmail.googleapis.com/gmail/v1/users/me/"+path
