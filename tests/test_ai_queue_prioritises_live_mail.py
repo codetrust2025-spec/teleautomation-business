@@ -65,9 +65,11 @@ class TestTheClaimOrder:
 
 
 class TestTheLiveWindow:
-    def test_defaults_to_two_days(self, monkeypatch):
+    def test_defaults_to_half_a_day(self, monkeypatch):
+        """Chosen from the queue: at ~206 messages/hour a 48-hour window left
+        520 ahead of today's mail, 12 hours leaves 188."""
         monkeypatch.delenv("AI_MAIL_LIVE_WINDOW_HOURS", raising=False)
-        assert store._live_mail_window_hours() == 48
+        assert store._live_mail_window_hours() == 12
 
     def test_a_host_can_change_it(self, monkeypatch):
         monkeypatch.setenv("AI_MAIL_LIVE_WINDOW_HOURS", "6")
@@ -76,7 +78,7 @@ class TestTheLiveWindow:
     @pytest.mark.parametrize("raw,expected", [
         ("0", 1), ("-5", 1),        # never a window that excludes everything
         ("100000", 720),            # never so wide that the tier means nothing
-        ("nonsense", 48), ("", 48),  # unreadable falls back to the default
+        ("nonsense", 12), ("", 12),  # unreadable falls back to the default
     ])
     def test_it_stays_within_sane_bounds(self, monkeypatch, raw, expected):
         monkeypatch.setenv("AI_MAIL_LIVE_WINDOW_HOURS", raw)
