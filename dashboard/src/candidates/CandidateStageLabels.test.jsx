@@ -32,6 +32,22 @@ function stageOptions() {
     .map(([, value, label]) => ({ value, label }))
 }
 
+/**
+ * Every label the module gives a stage, wherever it declares one.
+ *
+ * There are three places, and the first pass only found one: the editor's
+ * dropdown, the stage filter, and the badge the table renders. Relabelling one
+ * and shipping leaves the table still saying "Failed", so this collects them
+ * all rather than trusting a single list.
+ */
+function everyStageLabel(value) {
+  const pattern = new RegExp(
+    `(?:value:\\s*"${value}",|\\b${value}:\\s*\\{)\\s*(?:\\/\\/[^\\n]*\\n\\s*)*label:\\s*"([^"]+)"`,
+    'g',
+  )
+  return [...module_.matchAll(pattern)].map(([, label]) => label)
+}
+
 describe('the four stages', () => {
   it('are exactly the ones the backend accepts', () => {
     // VALID_STAGES = {"in_progress", "completed", "fail", "dropped"}
@@ -64,6 +80,34 @@ describe('what they are called', () => {
 
   it('no longer says Failed anywhere in the stage list', () => {
     expect(stageOptions().map(o => o.label)).not.toContain('Failed')
+  })
+})
+
+describe('every place a stage is named agrees', () => {
+  // The editor dropdown, the stage filter, and the badge on each row. The
+  // first attempt relabelled only the dropdown and shipped a table still
+  // reading "Failed", which is why this checks all of them.
+  it('names fail in three places, all of them Rejected', () => {
+    const labels = everyStageLabel('fail')
+    expect(labels.length).toBe(3)
+    expect(new Set(labels)).toEqual(new Set(['Rejected']))
+  })
+
+  it('names completed in three places, all of them Closed / Completed', () => {
+    const labels = everyStageLabel('completed')
+    expect(labels.length).toBe(3)
+    expect(new Set(labels)).toEqual(new Set(['Closed / Completed']))
+  })
+
+  it('leaves in_progress and dropped consistent too', () => {
+    expect(new Set(everyStageLabel('in_progress'))).toEqual(new Set(['In progress']))
+    expect(new Set(everyStageLabel('dropped'))).toEqual(new Set(['Dropped']))
+  })
+
+  it('has no stage anywhere still labelled Failed', () => {
+    for (const value of ['in_progress', 'completed', 'fail', 'dropped']) {
+      expect(everyStageLabel(value)).not.toContain('Failed')
+    }
   })
 })
 
