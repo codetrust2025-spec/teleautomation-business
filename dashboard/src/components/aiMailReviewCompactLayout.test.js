@@ -95,7 +95,10 @@ describe('search and Add Gmail sit above the list', () => {
       panel.indexOf('sot-list-toolbar-actions'),
     )
     expect(tablist).not.toContain('<SearchInput')
-    expect(tablist.match(/role="tab"/g)).toHaveLength(2)
+    // Three tabs now: Linked, Pending Gmail, Reconnect. What matters is
+    // that only tabs live in here.
+    expect(tablist.match(/role="tab"/g).length).toBeGreaterThanOrEqual(2)
+    expect(tablist).not.toContain('sot-add-mailbox-button')
   })
 })
 

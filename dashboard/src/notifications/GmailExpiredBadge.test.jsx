@@ -212,6 +212,10 @@ describe('the mailbox summary card', () => {
   })
 
   it('reuses the shared status rather than re-deriving it', () => {
-    expect(panel).toContain('import { mailboxUiStatus } from "../utils/mailboxStatus.js"')
+    // The import now also pulls in reconnectWorklist for the Reconnect tab,
+    // which is the same module and the same point: one derivation, not two.
+    expect(panel).toMatch(
+      /import \{ mailboxUiStatus[^}]*\} from "\.\.\/utils\/mailboxStatus\.js"/,
+    )
   })
 })
