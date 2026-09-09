@@ -1,6 +1,9 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API } from "../config.js";
-import { stashPendingWorkOpenIntent } from "../dailyOps/PendingWorksProvider.jsx";
+import {
+  publishPendingWorkChanged,
+  stashPendingWorkOpenIntent,
+} from "../dailyOps/PendingWorksProvider.jsx";
 import "./PendingWorksTab.css";
 
 /**
@@ -43,6 +46,9 @@ export function PendingWorksTab({ onOpenCandidate }) {
   const [totals, setTotals] = useState({ tasks: 0, candidates: 0 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  // The last count this tab told the rest of the shell about. null until the
+  // first read, so arriving at a number is not itself announced as a change.
+  const announced = useRef(null);
 
   const load = useCallback(async ({ silent = false } = {}) => {
     if (!silent) setLoading(true);
@@ -58,10 +64,17 @@ export function PendingWorksTab({ onOpenCandidate }) {
       setWorks(data.works || []);
       // Straight from the payload: the badge and this header must not each
       // arrive at a total of their own.
-      setTotals({
-        tasks: Number(data.count) || 0,
-        candidates: Number(data.candidate_count) || 0,
-      });
+      const candidates = Number(data.candidate_count) || 0;
+      setTotals({ tasks: Number(data.count) || 0, candidates });
+      // Finishing a task happens in the candidate editor, which announces
+      // nothing, so this tab is what notices. Announced only on a real change,
+      // and without a number: the count carried by this event is an interview
+      // count belonging to another badge, so listeners must re-read rather than
+      // take a figure that does not mean what theirs does.
+      if (announced.current !== null && announced.current !== candidates) {
+        publishPendingWorkChanged();
+      }
+      announced.current = candidates;
       setError("");
     } catch (err) {
       if (!silent) setError(err.message || "Could not load pending works");
