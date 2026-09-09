@@ -1001,6 +1001,17 @@ def content_hash(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8", "replace")).hexdigest()
 
 
+#: A risk flag that says there are no risks. Ollama writes the answer "none" as
+#: prose inside the list rather than returning an empty list, and every reader
+#: of `risk_flags` tests the list's truthiness. Matching requires a leading
+#: negation *and* a risk word, so "No specific interview schedule provided"
+#: -- which names something genuinely missing -- is not caught.
+_RISK_FLAG_MEANS_NONE = re.compile(
+    r"^\s*(?:no|none|nil)\b.{0,60}?\b(?:risk|flag|concern|issue|warning)s?\b",
+    re.IGNORECASE,
+)
+
+
 def _evidence_supported(item: dict[str, Any], sources: dict[str, list[str]]) -> bool:
     needle = clean_email(str(item.get("text") or "")).casefold()
     return bool(needle) and any(needle in value.casefold() for value in sources.get(str(item.get("source") or ""), []))
@@ -1259,6 +1270,18 @@ def validate_result(
         value["requires_manual_review"] = False
         value["ignore_reason"] = "JOB_RECOMMENDATION"
         value["reason"] = "Job advertisement listing; no outcome for this candidate."
+    # "No risk flags detected." is the model answering "none" in prose, and an
+    # empty answer written into a list is not an empty list: every consumer
+    # reads `bool(risk_flags)` and sees a risk. That alone forced a Karat
+    # interview reminder to manual review at confidence 1.0.
+    #
+    # Only a self-negating entry is dropped. Real prose risks the model writes
+    # -- "No specific interview schedule provided", "No Offer Detected" -- name
+    # a thing that is missing and are kept, as is every code-shaped flag.
+    value["risk_flags"] = [
+        flag for flag in (value.get("risk_flags") or [])
+        if not _RISK_FLAG_MEANS_NONE.match(str(flag))
+    ]
     confidence = float(value["confidence"])
     interview_statuses = {"INTERVIEW_CONFIRMED", "INTERVIEW_RESCHEDULED", "INTERVIEW_CANCELLED"}
     proposed_status = str(value.get("status") or "").upper()
@@ -1325,6 +1348,27 @@ def validate_result(
                 lifecycle_event="NONE",
                 ignore_reason=None,
             )
+            if safe_interview_status != proposed_status:
+                # The model's status has just been replaced, so its request for
+                # review described a verdict that no longer exists. Karat sent
+                # "Your Altimetrik Interview ... Is Coming Up!" with the date,
+                # the hour and the joining link; both models read it as
+                # SELECTION_NEEDS_REVIEW / interview_shortlisted and set
+                # requires_manual_review. The source text assertively entails
+                # INTERVIEW_CONFIRMED, so the status was corrected here -- and
+                # the stale boolean rode along into
+                # validate_ai_for_booking, which refused the booking as
+                # AI_REQUIRES_REVIEW at confidence 1.0.
+                #
+                # This clears only that boolean, and only where the source
+                # itself carried the assertion: validate_interview_event has
+                # already refused anything the deterministic context does not
+                # support. A model that agrees on the status keeps its veto,
+                # MODEL_DISAGREEMENT still forces review immediately below, and
+                # every later gate -- confidence, evidence, payment, duplicate,
+                # conflict, slot -- is untouched.
+                value["requires_manual_review"] = False
+                value["manual_review_cleared_from"] = proposed_status
     if "MODEL_DISAGREEMENT" in {str(flag).upper() for flag in value.get("risk_flags") or []}:
         value.update(
             status="MANUAL_REVIEW_REQUIRED", classification="needs_review",
