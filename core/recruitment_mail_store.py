@@ -752,13 +752,20 @@ def stored_message(mailbox_id: str, provider_message_id: str) -> dict[str, Any] 
 def _live_mail_window_hours() -> int:
     """How recent a mail must be to be claimed ahead of the backlog.
 
-    Two days by default: long enough that a weekend of mail still counts as
-    live, short enough that the historical backlog is not permanently starved.
+    Twelve hours by default, chosen from the queue rather than by feel. The
+    window sets how long new mail waits while a backlog is being caught up, and
+    throughput is ~206 messages/hour: a 48-hour window left 520 messages ahead
+    of today's mail (~2.5 hours), 12 hours leaves 188 (~55 minutes). It still
+    spans a full working day, so a morning thread is processed in order with
+    its afternoon reply.
+
+    Once caught up the tier is nearly empty and new mail is claimed almost at
+    once, whatever the window; this only governs the catch-up.
     """
     try:
-        return max(1, min(720, int(os.getenv("AI_MAIL_LIVE_WINDOW_HOURS", "48"))))
+        return max(1, min(720, int(os.getenv("AI_MAIL_LIVE_WINDOW_HOURS", "12"))))
     except (TypeError, ValueError):
-        return 48
+        return 12
 
 
 def _max_ai_attempts() -> int:
