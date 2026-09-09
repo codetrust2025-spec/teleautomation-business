@@ -9,7 +9,7 @@ function currentMonthKey() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
 }
 
-function usePendingWorksQuery({ month = 'all', enabled = true } = {}) {
+function usePendingWorksQuery({ month = 'all', enabled = true, deferMs = 0 } = {}) {
   const [works, setWorks] = useState([])
   const [count, setCount] = useState(0)
   const [candidateCount, setCandidateCount] = useState(0)
@@ -55,13 +55,38 @@ function usePendingWorksQuery({ month = 'all', enabled = true } = {}) {
   useEffect(() => {
     // Clear stale chips when disabled and refresh immediately when returning
     // from candidate editing to the dashboard.
-    reload()
-  }, [reload])
+    //
+    // deferMs holds the first read back rather than skipping it. The Candidates
+    // page used to switch this query off entirely, which zeroed the count and
+    // took the sidebar badge with it: the badge vanished on the one page whose
+    // name it carries. Waiting keeps that page's own loading uncontested
+    // without ever reporting a number that is not true.
+    if (!deferMs) {
+      reload()
+      return undefined
+    }
+    const timer = setTimeout(() => reload(), deferMs)
+    return () => clearTimeout(timer)
+  }, [reload, deferMs])
 
   useEffect(() => {
     if (!enabled) return undefined
     const t = setInterval(() => reload({ silent: true }), 120000)
     return () => clearInterval(t)
+  }, [enabled, reload])
+
+  // Silent: a background correction to a badge, not something the reader asked
+  // for, so it must not flash a loading state over the sidebar.
+  //
+  // The interview count next to this one has always listened; this one only
+  // polled, so finishing a task left the badge two minutes stale. The published
+  // number is an interview count and means nothing here, so this always
+  // re-reads rather than trusting the detail.
+  useEffect(() => {
+    if (!enabled) return undefined
+    const onChanged = () => reload({ silent: true })
+    window.addEventListener(PENDING_CHANGED, onChanged)
+    return () => window.removeEventListener(PENDING_CHANGED, onChanged)
   }, [enabled, reload])
 
   return { works, count, candidateCount, byKind, loading, error, reload }
@@ -155,9 +180,15 @@ export function PendingWorksProvider({ children, mainView = 'dashboard' }) {
   // Interview reminders moved to GlobalNotificationSounds, alongside every
   // other notification sound, so this provider is only about pending work.
 
+  // Enabled everywhere, including the Candidates page. Switching it off there
+  // cleared the count, so the badge disappeared on the page it is named after
+  // and on the page whose new Pending Works tab itemises it. The Candidates
+  // page still gets its head start -- the first read is deferred rather than
+  // cancelled.
   const pendingWorks = usePendingWorksQuery({
-    enabled: authReady && !deferCandidates,
+    enabled: authReady,
     month: 'all',
+    deferMs: deferCandidates ? 600 : 0,
   })
   const pendingInterviews = usePendingInterviewsQuery({
     enabled: authReady,
