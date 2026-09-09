@@ -1668,6 +1668,61 @@ _MONTH_DAY_YEAR = re.compile(
 )
 
 
+#: What the relevance gate must answer before a calendar invite may be booked
+#: as an interview. Every other kind -- MARKETING_OR_TRAINING, NEWSLETTER,
+#: PUBLIC_EVENT, JOB_ADVERTISEMENT, GENERAL, UNKNOWN -- describes an event that
+#: is not this recipient's interview, whatever its invite says.
+CANDIDATE_HIRING_MESSAGE_KIND = "RECIPIENT_HIRING_PROCESS"
+
+
+def calendar_invite_intent(
+    message: dict[str, Any], attachment_texts: list[dict[str, str]] | None = None,
+) -> dict[str, Any]:
+    """Ollama's own reading of what a mail carrying a calendar invite really is.
+
+    The .ics stays the authority on *when* -- it is exact, and 77 of 91 confirmed
+    interviews come from one. What it cannot say is *whether the event is this
+    candidate's interview*. A Zoom workshop registration carries a perfectly
+    valid invite, and one was auto-booked for a real candidate as an interview
+    for "ChatGPT & 10+ AI Tools - IND" before an operator cancelled it.
+
+    Until now this path skipped classification entirely: `process_message` took
+    the calendar result and never called `analyze()`, so no model ever judged
+    the mail. The relevance gate already knows how to make this call -- its
+    prompt names webinars, masterclasses, training and public events explicitly
+    -- it simply was not being asked.
+
+    The deterministic shortcut is deliberately not used here. It answered
+    ESTABLISHED / RECIPIENT_HIRING_PROCESS for three handwriting-therapy
+    webinars, which is precisely the judgement under test, so the model is
+    asked directly.
+
+    Raises AIGatewayError if the model cannot be reached: the caller sends those
+    to review rather than guessing in either direction.
+    """
+    payload = _analysis_payload(message, attachment_texts)
+    response = chat_structured(
+        messages=[
+            {"role": "system", "content": RELEVANCE_PROMPT},
+            {"role": "user", "content": _prompt_json(payload)},
+        ],
+        schema=RELEVANCE_SCHEMA,
+        model=configured_models()["primary"],
+        temperature=0,
+        max_retries=0,
+        workload="calendar_invite_intent",
+    )
+    return _validate_relevance_result(parse_model_json(response.content), payload)
+
+
+def calendar_invite_is_a_candidate_interview(relevance: dict[str, Any]) -> bool:
+    """Only a recipient's own hiring process may be booked from an invite."""
+    return (
+        str(relevance.get("decision") or "").upper() == "ESTABLISHED"
+        and str(relevance.get("message_kind") or "").upper() == CANDIDATE_HIRING_MESSAGE_KIND
+    )
+
+
 def _normalise_interview_timezone(raw) -> str:
     """Canonical name for the zone the sender wrote, or "" when unresolvable.
 
@@ -2670,6 +2725,43 @@ def process_message(mailbox: dict[str, Any], decoded: dict[str, Any], attachment
         store.mark_message_status(row["id"], "DUPLICATE_OFFER_ATTACHMENT", reason="DUPLICATE_OFFER_ATTACHMENT")
         return None
     if calendar_result:
+        # A valid invite proves when an event is, never that it is this
+        # candidate's interview. Ollama decides the intent of the whole mail
+        # before the invite is allowed to become a booking; a Zoom workshop
+        # registration carries an invite just as valid as a recruiter's, and one
+        # was auto-booked for a real candidate before an operator caught it.
+        try:
+            calendar_relevance = calendar_invite_intent(decoded, safe)
+        except AIGatewayError as exc:
+            # Neither guess is safe when the model is unreachable: booking risks
+            # another workshop, dropping loses a real interview. Park it.
+            logger.warning("Calendar invite intent unavailable code=%s; sending to review", exc.code)
+            store.mark_message_status(
+                row["id"], "AI_RETRY_PENDING", reason="CALENDAR_INTENT_UNAVAILABLE",
+                error_code=getattr(exc, "code", "OLLAMA_INTERNAL_ERROR"),
+            )
+            return None
+        if not calendar_invite_is_a_candidate_interview(calendar_relevance):
+            reason = "CALENDAR_INVITE_NOT_A_CANDIDATE_INTERVIEW"
+            logger.info(
+                "Calendar invite is not a candidate interview kind=%s decision=%s",
+                calendar_relevance.get("message_kind"), calendar_relevance.get("decision"),
+            )
+            if reprocess:
+                store.archive_event_for_message(
+                    row["id"], status="IGNORED_NOT_OFFER_RELATED", reason=reason,
+                )
+            store.mark_message_status(row["id"], "IGNORED_NOT_OFFER_RELATED", reason=reason)
+            _publish_ignored_interview(
+                mailbox, decoded, safe, "IGNORED_NOT_OFFER_RELATED", reason,
+            )
+            if reprocess:
+                store.mark_reprocessed(
+                    row["id"], previous_status, "IGNORED_NOT_OFFER_RELATED", reason,
+                )
+            return None
+        calendar_result = dict(calendar_result)
+        calendar_result["recruitment_relevance_result"] = deepcopy(calendar_relevance)
         result, model, duration = calendar_result, "rfc5545-authenticated", 0
     elif defer_ai:
         store.mark_message_status(row["id"], "AI_QUEUED", reason="DURABLE_AI_QUEUE")
