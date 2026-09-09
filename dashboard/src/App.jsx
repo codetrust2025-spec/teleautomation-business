@@ -13,6 +13,7 @@ import {
 } from './dailyOps/PendingWorksProvider.jsx'
 import { useMailUnreadCount } from './notifications/mailUnread.js'
 import { useGmailExpiredCount } from './notifications/gmailExpired.js'
+import { useConfirmedSlotCount } from './notifications/slotBooking.js'
 import { useAuth } from './context/AuthContext.jsx'
 
 // The Operations features currently shipped. Daily Briefing, Mail Audit, Payment
@@ -31,7 +32,9 @@ const VIEWS = [
   // section, so it stays whether or not anything is broken.
   { id: 'ai-recruitment', label: 'AI Mail Review', icon: '▧', badge: 'gmail-expired' },
   { id: 'candidates', label: 'Candidates', icon: '▣', badge: 'works' },
-  { id: 'slot-booking', label: 'Slot Booking', icon: '▦', external: '/submit-slot' },
+  // No alertIcon: the count is scheduled work, not a fault, and the icon
+  // names the section whether or not anything is booked.
+  { id: 'slot-booking', label: 'Slot Booking', icon: '▦', external: '/submit-slot', badge: 'slots' },
   { id: 'data-room', label: 'Data Room', icon: '▥' },
 ]
 
@@ -49,6 +52,7 @@ function OperationsShell({ view, onNavigate }) {
   const pending = usePendingWorksContextOptional()
   const mailUnread = useMailUnreadCount()
   const gmailExpired = useGmailExpiredCount()
+  const confirmedSlots = useConfirmedSlotCount()
   const [sidebarUserMenuOpen, setSidebarUserMenuOpen] = useState(false)
   const [headerUserMenuOpen, setHeaderUserMenuOpen] = useState(false)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
@@ -120,7 +124,9 @@ function OperationsShell({ view, onNavigate }) {
                   ? mailUnread
                   : item.badge === 'gmail-expired'
                     ? gmailExpired
-                    : 0
+                    : item.badge === 'slots'
+                      ? confirmedSlots
+                      : 0
             // An item flagged alertIcon is plain text when its count is zero.
             // The rest keep their icon either way: theirs name the section,
             // these two report something waiting.
@@ -150,7 +156,9 @@ function OperationsShell({ view, onNavigate }) {
                           // "2 pending" would read as work waiting rather than
                           // as accounts that have stopped collecting mail.
                           ? `${badgeValue} Gmail ${badgeValue === 1 ? 'account needs' : 'accounts need'} reconnecting`
-                          : `${badgeValue} pending`
+                          : item.badge === 'slots'
+                            ? `${badgeValue} confirmed upcoming slot${badgeValue === 1 ? '' : 's'}`
+                            : `${badgeValue} pending`
                     }
                   >
                     {countLabel(badgeValue)}
