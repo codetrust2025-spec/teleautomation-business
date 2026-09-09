@@ -2025,6 +2025,13 @@ function W8(e) {
     return "Set the interview date before confirming the slot.";
   }
 }
+// Display labels only. The stored values are the four in VALID_STAGES and are
+// deliberately untouched: "fail" is what every revenue and slot query already
+// excludes, so renaming the value would mean finding each of those or silently
+// letting a rejected candidate back into revenue.
+//
+// Only in_progress appears in Pending Gmail and Pending Works; the other three
+// are terminal and already filtered out by stage.
 const V8 = [
   {
     value: "in_progress",
@@ -2032,11 +2039,13 @@ const V8 = [
   },
   {
     value: "completed",
-    label: "Completed",
+    label: "Closed / Completed",
   },
   {
+    // Stored as "fail". Read as a rejection of the candidate, not a system
+    // failure, which is what "Failed" was being taken to mean.
     value: "fail",
-    label: "Failed",
+    label: "Rejected",
   },
   {
     value: "dropped",
