@@ -6,6 +6,10 @@
  * condition itself is unchanged.
  */
 export function needsReconnect(mailbox) {
+  // A closed, rejected or dropped candidate's Gmail is history. Reconnecting it
+  // achieves nothing, so it is not reconnect work and must not be counted as
+  // any. The backend derives this from candidate stage on every read.
+  if (mailbox?.monitoring_excluded) return false
   const error = String(mailbox?.last_error_message || '').toLowerCase()
   return (
     mailbox?.connection_status === 'ERROR'
@@ -34,6 +38,10 @@ export function needsReconnect(mailbox) {
  */
 export function mailboxUiStatus(mailbox, latestSyncStatus) {
   const sync = String(latestSyncStatus || '').toUpperCase()
+  // Decided before everything else: a terminal candidate's mailbox is neither
+  // monitoring nor broken, so it must not land in the active count or the
+  // reconnect count. It keeps its row, its history and its linkage.
+  if (mailbox?.monitoring_excluded) return 'MONITORING_ENDED'
   if (needsReconnect(mailbox)) return 'RECONNECT_REQUIRED'
   if (sync === 'RUNNING') return 'SYNCING'
   if (sync === 'QUEUED') return 'SYNC_QUEUED'
@@ -133,6 +141,7 @@ export function grantDaysRemaining(mailbox, now = Date.now()) {
  * list, and counting them twice would overstate the work.
  */
 export function expiringSoon(mailbox, { withinDays = 2, now = Date.now() } = {}) {
+  if (mailbox?.monitoring_excluded) return false
   if (needsReconnect(mailbox)) return false
   const remaining = grantDaysRemaining(mailbox, now)
   return remaining !== null && remaining <= withinDays
@@ -151,6 +160,8 @@ export function reconnectWorklist(mailboxes, { withinDays = 2, now = Date.now() 
     ...mailbox,
     grantDaysRemaining: grantDaysRemaining(mailbox, now),
   })
+  // needsReconnect and expiringSoon both already exclude terminal mailboxes,
+  // so the worklist inherits the rule rather than restating it.
   const expired = rows.filter(needsReconnect).map(decorate).sort(
     (a, b) => (a.grantDaysRemaining ?? 0) - (b.grantDaysRemaining ?? 0),
   )

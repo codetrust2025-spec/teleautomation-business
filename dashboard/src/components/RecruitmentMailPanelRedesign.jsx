@@ -320,6 +320,9 @@ export function StatusBadge({ status }) {
       SYNC_QUEUED: "Sync Queued",
       SYNCING: "Syncing Emails",
       CONNECTED: "Monitoring Active",
+      // A closed, rejected or dropped candidate. The row and its history
+      // stay; it simply is not active work and is not counted as any.
+      MONITORING_ENDED: "Candidate Closed",
     }[status] || human(status);
   return (
     <span className={`sot-status-badge is-${status.toLowerCase()}`}>

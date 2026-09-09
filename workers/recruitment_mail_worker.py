@@ -83,13 +83,35 @@ class RecruitmentMailWorker:
             except asyncio.CancelledError:raise
             except Exception:logger.exception('Mailbox worker loop failed')
             await asyncio.sleep(5)
+    @staticmethod
+    def _terminal_mailbox_ids(cur):
+        """Mailboxes whose candidate is closed, rejected or dropped.
+
+        Its own small query here rather than the overview's rows: this is the
+        scheduler, not the polled endpoint, and it needs every mailbox rather
+        than the ones a page happens to be showing.
+        """
+        cur.execute("""SELECT m.id,m.candidate_id,COALESCE(l.canonical_candidate_id,m.candidate_id)
+             FROM candidate_mailboxes m
+             LEFT JOIN candidate_identity_links l ON l.alias_candidate_id=m.candidate_id
+            WHERE m.connection_status <> 'SUPERSEDED'""")
+        rows=[{'id':r[0],'candidate_id':r[1],'canonical_candidate_id':r[2]} for r in cur.fetchall()]
+        return store.terminal_mailbox_ids(rows)
+
     def schedule_due(self):
         from core.db.connection import get_connection
         with get_connection() as conn,conn.cursor() as cur:
+            # A closed, rejected or dropped candidate's mailbox is history: it
+            # keeps its linkage and its rows, but nothing new is fetched for it.
+            # Derived from stage on every pass, so reopening a candidate puts
+            # their mailbox straight back in the schedule.
+            terminal=self._terminal_mailbox_ids(cur)
             cur.execute("""INSERT INTO mailbox_sync_jobs(id,mailbox_id,status,scheduled_for,requested_by,created_at)
               SELECT gen_random_uuid()::text,m.id,'QUEUED',now(),'scheduler',now() FROM candidate_mailboxes m
               WHERE m.monitoring_enabled=true AND m.connection_status='CONNECTED' AND COALESCE(m.next_sync_at,now())<=now()
-              AND NOT EXISTS(SELECT 1 FROM mailbox_sync_jobs j WHERE j.mailbox_id=m.id AND j.status IN('QUEUED','RUNNING'))""")
+              AND NOT (m.id = ANY(%s))
+              AND NOT EXISTS(SELECT 1 FROM mailbox_sync_jobs j WHERE j.mailbox_id=m.id AND j.status IN('QUEUED','RUNNING'))""",
+              (list(terminal),))
             mins=max(1,int(os.getenv('AI_MAIL_SYNC_INTERVAL_MINUTES','15')))
             cur.execute("UPDATE candidate_mailboxes SET next_sync_at=now()+(%s||' minutes')::interval WHERE monitoring_enabled=true AND COALESCE(next_sync_at,now())<=now()",(mins,))
     def renew_due_watches(self):
@@ -97,11 +119,15 @@ class RecruitmentMailWorker:
         if not topic:return
         from core.db.connection import get_connection
         with get_connection() as conn,conn.cursor() as cur:
+            # Same rule for push delivery: a terminal candidate's watch is not
+            # renewed, so Gmail stops pushing for a mailbox nobody is working.
+            terminal=self._terminal_mailbox_ids(cur)
             cur.execute("""SELECT id,credential_ciphertext,provider_history_id FROM candidate_mailboxes
               WHERE monitoring_enabled=true AND connection_status='CONNECTED'
               AND credential_ciphertext IS NOT NULL
+              AND NOT (id = ANY(%s))
               AND (gmail_watch_expiration IS NULL OR gmail_watch_expiration<now()+interval '24 hours')
-              ORDER BY gmail_watch_expiration NULLS FIRST LIMIT 20""")
+              ORDER BY gmail_watch_expiration NULLS FIRST LIMIT 20""",(list(terminal),))
             rows=cur.fetchall()
         for mailbox_id,cipher,history_id in rows:
             try:

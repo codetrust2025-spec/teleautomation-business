@@ -257,6 +257,58 @@ def mailboxes_for_candidates(candidate_ids: list[str]) -> list[dict[str, Any]]:
     return unique
 
 
+#: A candidate at one of these stages has left the pipeline, so their Gmail is
+#: history rather than something to monitor, chase or reconnect.
+TERMINAL_CANDIDATE_STAGES = frozenset({"completed", "fail", "dropped"})
+
+
+def terminal_mailbox_ids(rows) -> set[str]:
+    """Which of these mailboxes belong to a candidate who has left the pipeline.
+
+    Takes rows that have already been fetched rather than querying: the mailbox
+    overview is polled while syncs run and once starved the API worker, so this
+    must not add a round trip to it. `rows` need only expose `id`,
+    `candidate_id` and `canonical_candidate_id`.
+
+    Stage lives in the candidate store, not in this schema, and a mailbox's
+    candidate_id is frequently an alias -- 11 of 21 production mailboxes did not
+    resolve through the identity-link column alone and needed
+    `canonical_candidate_identity_id`. Every one of those was in_progress.
+
+    So an unresolved mailbox is treated as ACTIVE, never terminal. Guessing the
+    other way would silently stop monitoring a live candidate's mail, which is
+    far worse than leaving a closed one listed.
+    """
+    from features import candidate_store
+
+    stages = {
+        str(row.get("id")): str(row.get("stage") or "").strip().lower()
+        for row in candidate_store.list_candidates(stage="all", month="all")
+    }
+    terminal: set[str] = set()
+    for row in rows:
+        mailbox_id = str(row.get("id") or "")
+        candidate_id = str(row.get("candidate_id") or "")
+        canonical_id = str(row.get("canonical_candidate_id") or "")
+        stage = None
+        for key in (canonical_id, candidate_id):
+            if key and key in stages:
+                stage = stages[key]
+                break
+        if stage is None and candidate_id:
+            # The alias column is not enough on its own; this is the resolver
+            # the candidates page itself uses.
+            try:
+                resolved = candidate_store.canonical_candidate_identity_id(candidate_id)
+            except Exception:
+                resolved = None
+            if resolved:
+                stage = stages.get(str(resolved))
+        if stage in TERMINAL_CANDIDATE_STAGES:
+            terminal.add(mailbox_id)
+    return terminal
+
+
 def _mailbox_health_rows(cur) -> list[dict[str, Any]]:
     cur.execute(
         """SELECT m.id,m.candidate_id,
@@ -283,7 +335,16 @@ def _mailbox_health_rows(cur) -> list[dict[str, Any]]:
              AND m.connection_status <> 'SUPERSEDED'
            ORDER BY m.updated_at DESC""",
     )
-    return _rows(cur)
+    rows = _rows(cur)
+    # Annotated, not filtered: the mailbox stays listed so its history and
+    # Gmail linkage remain visible and reconnectable, but everything that
+    # counts active work skips it. Derived from stage on every read, so
+    # returning a candidate to in_progress restores monitoring with no
+    # migration and no flag to remember to unset.
+    terminal = terminal_mailbox_ids(rows)
+    for row in rows:
+        row["monitoring_excluded"] = str(row.get("id")) in terminal
+    return rows
 
 
 def mailbox_health_rows() -> list[dict[str, Any]]:

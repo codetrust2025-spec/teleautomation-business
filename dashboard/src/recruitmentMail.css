@@ -2599,3 +2599,11 @@
     font-size: 15px;
   }
 }
+
+/* A terminal candidate's mailbox: present and reconnectable, but not active
+   work. Muted rather than green or red, because it is neither monitoring nor
+   broken. */
+.sot-status-badge.is-monitoring_ended {
+  color: var(--sot-muted, #8da0bd);
+  background: rgba(148, 163, 184, 0.12);
+}
