@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from core import recruitment_mail_store as mail_store
 from features import candidate_store
-from services import booking_block_reasons
+from services import booking_block_reasons, interview_timezones
 
 logger = logging.getLogger("teleautomation.interview_auto_booking")
 
@@ -68,34 +68,24 @@ def parse_interview_time(value: str) -> str:
     return f"{hour:02d}:{minute:02d}"
 
 
-# Abbreviations the model uses that map to exactly one zone we serve. Kept
-# deliberately small: an ambiguous abbreviation must never be guessed.
-_TIMEZONE_ALIASES = {
-    "IST": "Asia/Kolkata",
-    "ASIA/CALCUTTA": "Asia/Kolkata",   # older IANA name for the same zone
-}
+def validate_timezone(value: str):
+    """The zone the sender wrote, so the schedule can be converted to IST.
 
-
-def validate_timezone(value: str) -> ZoneInfo:
+    Resolution lives in `services.interview_timezones`, shared with the mail
+    agent so both ends of the pipeline agree on what a zone name means. It
+    accepts IANA names, the abbreviations recruiters actually write (UTC, GMT,
+    IST, and the US set), and numeric offsets like +05:30. Anything it cannot
+    resolve still raises, because a guessed zone books the wrong hour.
+    """
     name = str(value or "").strip()
     if not name:
         raise BookingValidationError("MISSING_TIMEZONE", "Interview timezone is required for automatic booking.")
-    # The model annotates the abbreviation with the zone — "IST (Asia/Kolkata)".
-    # The parenthetical is the IANA name, so prefer it. Booking was blocked as
-    # INVALID_TIMEZONE purely because of that decoration.
-    bracketed = re.search(r"\(\s*([A-Za-z]+/[A-Za-z0-9_+\-/]+)\s*\)", name)
-    if bracketed:
-        name = bracketed.group(1)
-    else:
-        # The annotation may be the abbreviation instead — "Asia/Kolkata (IST)".
-        # Drop it and keep the remainder; if that is not a real zone it still
-        # fails below, so nothing is guessed.
-        name = re.sub(r"\s*\([^)]*\)\s*", " ", name).strip()
-    name = _TIMEZONE_ALIASES.get(name.upper(), name)
-    try:
-        return ZoneInfo(name)
-    except ZoneInfoNotFoundError as exc:
-        raise BookingValidationError("INVALID_TIMEZONE", "Interview timezone is not a valid IANA timezone.") from exc
+    zone = interview_timezones.resolve(name)
+    if zone is None:
+        raise BookingValidationError(
+            "INVALID_TIMEZONE", "Interview timezone is not a recognisable timezone.",
+        )
+    return zone
 
 
 def normalized_schedule(result: dict[str, Any], *, now: datetime | None = None) -> dict[str, str]:
@@ -155,7 +145,11 @@ def normalized_schedule(result: dict[str, Any], *, now: datetime | None = None) 
         )
     return {
         "date": local.date().isoformat(), "time": local.strftime("%H:%M"),
-        "time_end": end.strftime("%H:%M"), "source_timezone": source_zone.key,
+        "time_end": end.strftime("%H:%M"),
+        # Booking values are canonical IST; the zone the sender wrote is kept
+        # beside them so an audit can still see what was converted from.
+        "timezone": interview_timezones.OPERATIONS_TIMEZONE,
+        "source_timezone": interview_timezones.label(source_zone),
     }
 
 
@@ -198,7 +192,7 @@ def historical_booking_disposition(
         }
     timezone_name = str(interview.get("timezone") or "").strip()
     try:
-        zone = validate_timezone(timezone_name) if timezone_name else ZoneInfo("Asia/Kolkata")
+        zone = validate_timezone(timezone_name) if timezone_name else interview_timezones.operations_zone()
     except BookingValidationError:
         zone = ZoneInfo("Asia/Kolkata")
     current = now or datetime.now(zone)

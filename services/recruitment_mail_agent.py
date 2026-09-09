@@ -9,7 +9,8 @@ import os
 import re
 import time
 from copy import deepcopy
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import Any
 
 from core import recruitment_mail_store as store
@@ -1576,7 +1577,8 @@ def validate_result(
         date_valid = True
         time_valid = True
         tz_valid = True
-        normalised_date = _normalise_interview_date(interview.get("date"))
+        received = (message or {}).get("sent_at") or (message or {}).get("email_date")
+        normalised_date = _normalise_interview_date(interview.get("date"), received)
         if normalised_date:
             interview["date"] = normalised_date
             value["interview"] = interview
@@ -1615,7 +1617,11 @@ def validate_result(
             value["interview"] = interview
         else:
             time_valid = False
-        if not str(interview.get("timezone") or "").strip():
+        normalised_zone = _normalise_interview_timezone(interview.get("timezone"))
+        if normalised_zone:
+            interview["timezone"] = normalised_zone
+            value["interview"] = interview
+        else:
             tz_valid = False
         if not (date_valid and time_valid and tz_valid):
             missing = []
@@ -1662,7 +1668,96 @@ _MONTH_DAY_YEAR = re.compile(
 )
 
 
-def _normalise_interview_date(raw):
+def _normalise_interview_timezone(raw) -> str:
+    """Canonical name for the zone the sender wrote, or "" when unresolvable.
+
+    The check this replaces only asked whether the field was non-empty, so
+    "IST" was stored verbatim and every consumer downstream had to guess again
+    what it meant.
+
+    What is stored here is the *source* zone, not Asia/Kolkata. Operations are
+    on India time and every booking is converted to it, but the conversion needs
+    something to convert from: an interview written as 9:00 AM EST is 6:30 PM
+    IST, and that arithmetic is only possible while the sender's own zone is
+    still known. `normalized_schedule` does the conversion and records
+    Asia/Kolkata as the booking zone alongside this one.
+
+    Resolution is shared with booking so both ends agree on what a name means.
+    """
+    from services import interview_timezones
+
+    return interview_timezones.label(interview_timezones.resolve(raw))
+
+
+_RELATIVE_OFFSETS = {
+    "day after tomorrow": 2,
+    "tomorrow": 1,
+    "today": 0,
+    "tonight": 0,
+    "this afternoon": 0,
+    "this morning": 0,
+    "this evening": 0,
+}
+
+_WEEKDAY_NAMES = {
+    "monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
+    "friday": 4, "saturday": 5, "sunday": 6,
+}
+
+_WEEKDAY_PHRASE = re.compile(
+    r"\b(this|next|coming|upcoming)?\s*(" + "|".join(_WEEKDAY_NAMES) + r")\b",
+    re.IGNORECASE,
+)
+
+
+def _received_date(email_date) -> date | None:
+    """The day the mail arrived, which anchors every relative phrase."""
+    text = str(email_date or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).date()
+    except ValueError:
+        pass
+    try:
+        return date.fromisoformat(text[:10])
+    except ValueError:
+        return None
+
+
+def _resolve_relative_date(raw, email_date) -> str:
+    """Turn "tomorrow" or "this Thursday" into a real date, using the arrival day.
+
+    Only the model's own date field is read, never the body: the model has
+    already decided this phrase is the interview date, so this canonicalises its
+    wording rather than mining the mail for one. With no arrival date to anchor
+    against, nothing is resolved -- a relative phrase with no anchor is exactly
+    the case that must go to review instead of being guessed at.
+    """
+    anchor = _received_date(email_date)
+    if anchor is None:
+        return ""
+    text = " ".join(str(raw or "").lower().split())
+    if not text:
+        return ""
+    for phrase, offset in _RELATIVE_OFFSETS.items():
+        if re.search(r"\b" + re.escape(phrase) + r"\b", text):
+            return (anchor + timedelta(days=offset)).isoformat()
+    hit = _WEEKDAY_PHRASE.search(text)
+    if not hit:
+        return ""
+    qualifier = (hit.group(1) or "").lower()
+    target = _WEEKDAY_NAMES[hit.group(2).lower()]
+    # Always the coming occurrence: a scheduling mail never means a day that
+    # has already passed. Same weekday as the mail means the next one, a week
+    # out, rather than the day the mail arrived.
+    ahead = (target - anchor.weekday()) % 7 or 7
+    if qualifier == "next":
+        ahead += 7
+    return (anchor + timedelta(days=ahead)).isoformat()
+
+
+def _normalise_interview_date(raw, email_date=None):
     """Canonicalise an interview date to ISO, or "" if it is not a real date.
 
     `date.fromisoformat` alone rejected values that are unambiguous dates in
@@ -1700,7 +1795,12 @@ def _normalise_interview_date(raw):
             return date(int(year), month, int(day_part)).isoformat()
         except ValueError:
             return ""
-    return ""
+    # Last, and only once every explicit spelling has failed, so a real date
+    # always wins: "tomorrow" and "this Thursday" resolved against the day the
+    # mail arrived. A benchmark on real production mail put every date the
+    # model got wrong in this shape, one of them a day early -- and a booking
+    # on the wrong day is the worst outcome this pipeline has.
+    return _resolve_relative_date(text, email_date)
 
 
 # A 24-hour clock reading of 13:00 or later, or 00:xx, has exactly one meaning.
@@ -1848,7 +1948,24 @@ interview.end_time or interview.duration_minutes. Never replace a visible durati
 with a default value.
 For a reschedule or cancellation, preserve any stated prior schedule in
 interview.original_date, interview.original_time, and interview.original_timezone.
-Return IST as Asia/Kolkata. Never invent schedule, round, company, or meeting link.
+Never invent schedule, round, company, or meeting link.
+SCHEDULE FORMAT. interview.date is YYYY-MM-DD. interview.time and
+interview.end_time are 24-hour HH:MM. interview.timezone is a full IANA zone
+name such as Asia/Kolkata, UTC, America/New_York -- never a bare abbreviation
+like IST, EST or CST, because those name more than one zone. Write IST as
+Asia/Kolkata.
+Report the time exactly as the sender wrote it, paired with the zone they wrote
+it in. Do not convert between zones; a UTC time stays UTC with timezone UTC.
+For a range such as 8:30 AM - 9:30 AM, put the start in time and the end in
+end_time.
+Relative wording is resolved against email_date, which is the day the message
+arrived: "tomorrow" is the day after email_date, "this Thursday" and "coming
+Thursday" are the next Thursday on or after it. Never resolve a relative phrase
+against today's date.
+If the date, the time or the zone is not stated, or you are not sure which one
+the sender meant, return null for that field. A null sends the mail to a human,
+which is the correct outcome. A guessed schedule books a real candidate into the
+wrong slot, so never guess one.
 First classify email_intent, document_type, business_domain, lifecycle_event, and
 interview_event. Questions, requested fields,
 questionnaires, job advertisements, payslips, and historical employment documents

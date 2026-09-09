@@ -200,6 +200,7 @@ def test_timezone_conversion_still_produces_the_same_slot():
     )
     assert schedule == {
         "date": "2026-07-21", "time": "00:30", "time_end": "01:00",
+        "timezone": "Asia/Kolkata",
         "source_timezone": "America/New_York",
     }
 
