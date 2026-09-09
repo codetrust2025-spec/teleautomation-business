@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API } from "../config.js";
 import { useConfirm } from "../context/ConfirmContext.jsx";
-import { mailboxUiStatus } from "../utils/mailboxStatus.js";
+import { mailboxUiStatus, reconnectWorklist } from "../utils/mailboxStatus.js";
 import { publishGmailExpired } from "../notifications/gmailExpired.js";
 import { ButtonContent, InlineLoader, OverlayLoader } from "../Loader.jsx";
 import { OcrToggle } from "./OcrToggle.jsx";
 import { PureOllamaToggle } from "./PureOllamaToggle.jsx";
+import { ReconnectWorklist } from "./ReconnectWorklist.jsx";
 
 const request = async (path, options = {}) => {
   const isGet = !options.method || options.method === "GET";
@@ -2394,6 +2395,14 @@ export default function RecruitmentMailPanelRedesign() {
   const globalReconnectRequired = allRows.filter(
     (row) => row.uiStatus === "RECONNECT_REQUIRED",
   ).length;
+  // The tab count is the worklist's own total -- already broken plus about to
+  // break -- so the number on the tab is the number of rows behind it.
+  const reconnectWorklistTotal = useMemo(
+    () => reconnectWorklist(
+      allRows.map((row) => ({ ...(row.mailbox || {}) })),
+    ).total,
+    [allRows],
+  );
   useEffect(() => {
     publishGmailExpired(globalReconnectRequired);
   }, [globalReconnectRequired]);
@@ -2784,6 +2793,15 @@ export default function RecruitmentMailPanelRedesign() {
                 >
                   Pending Gmail <span>{pendingMailboxCandidates.length}</span>
                 </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={mailboxListMode === "reconnect"}
+                  className={mailboxListMode === "reconnect" ? "active" : ""}
+                  onClick={() => setMailboxListMode("reconnect")}
+                >
+                  Reconnect <span>{reconnectWorklistTotal}</span>
+                </button>
               </div>
               <div className="sot-list-toolbar-actions">
                 <SearchInput value={search} onChange={setSearch} />
@@ -2843,7 +2861,13 @@ export default function RecruitmentMailPanelRedesign() {
                 </button>
               </form>
             )}
-            {mailboxListMode === "pending" ? (
+            {mailboxListMode === "reconnect" ? (
+              <ReconnectWorklist
+                rows={allRows}
+                busy={busy}
+                onAction={mailboxAction}
+              />
+            ) : mailboxListMode === "pending" ? (
               <PendingMailboxTable
                 candidates={visiblePendingMailboxCandidates}
                 busy={busy}

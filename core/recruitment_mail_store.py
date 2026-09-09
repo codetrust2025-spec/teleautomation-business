@@ -263,10 +263,21 @@ def _mailbox_health_rows(cur) -> list[dict[str, Any]]:
                     AS canonical_candidate_id,
                   m.email_address,m.connection_status,
                   m.monitoring_enabled,m.last_error_code,m.last_error_message,
-                  m.last_successful_sync_at,m.updated_at
+                  m.last_successful_sync_at,m.updated_at,
+                  a.authorized_at
            FROM candidate_mailboxes m
            LEFT JOIN candidate_identity_links l
              ON l.alias_candidate_id=m.candidate_id
+           -- When this mailbox was last authorised, which is the only thing
+           -- that predicts when its grant dies. The OAuth app is in Testing
+           -- mode, so Google expires refresh tokens seven days after consent:
+           -- measured across 54 reconnects the median gap is 7.0 days. There
+           -- is no authorised-at column, and the audit log already records it.
+           LEFT JOIN LATERAL (
+             SELECT max(created_at) AS authorized_at
+               FROM recruitment_audit_log
+              WHERE source_id=m.id AND action='MAILBOX_CONNECTED'
+           ) a ON true
            WHERE m.credential_ciphertext IS NOT NULL
              AND m.connection_status <> 'SUPERSEDED'
            ORDER BY m.updated_at DESC""",

@@ -1,0 +1,113 @@
+/* Reconnect worklist.
+   Reuses the mailbox table and the page's own variables; only the grouping,
+   the urgency pill and the empty state are new. */
+
+.sot-reconnect-worklist {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.sot-reconnect-group > header {
+  margin: 0 0 8px;
+}
+.sot-reconnect-group h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 14px;
+}
+.sot-reconnect-group p {
+  margin: 2px 0 0;
+  color: var(--sot-muted, #8da0bd);
+  font-size: 12px;
+}
+.sot-reconnect-count {
+  min-width: 20px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+}
+.sot-reconnect-group.is-expired .sot-reconnect-count {
+  background: rgba(255, 91, 97, 0.16);
+  color: #ff8a8f;
+}
+.sot-reconnect-group.is-soon .sot-reconnect-count {
+  background: rgba(255, 166, 43, 0.16);
+  color: #ffbe6a;
+}
+
+.sot-reconnect-when {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.sot-reconnect-when.is-expired {
+  background: rgba(255, 91, 97, 0.14);
+  color: #ff8a8f;
+}
+.sot-reconnect-when.is-soon {
+  background: rgba(255, 166, 43, 0.14);
+  color: #ffbe6a;
+}
+
+.sot-reconnect-table td button {
+  padding: 5px 12px;
+  border: 1px solid rgba(50, 132, 255, 0.45);
+  border-radius: 7px;
+  background: rgba(50, 132, 255, 0.12);
+  color: #8ab8ff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.sot-reconnect-table td button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.sot-reconnect-empty__hint {
+  margin-top: 6px;
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+@media (max-width: 720px) {
+  /* Stacked cards, matching how the mailbox table already behaves here. */
+  .sot-reconnect-table thead {
+    display: none;
+  }
+  .sot-reconnect-table,
+  .sot-reconnect-table tbody,
+  .sot-reconnect-table tr,
+  .sot-reconnect-table td {
+    display: block;
+    width: 100%;
+  }
+  .sot-reconnect-table tr {
+    margin-bottom: 10px;
+    padding: 6px 10px;
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    border-radius: 10px;
+  }
+  .sot-reconnect-table td {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 5px 0;
+    border: 0;
+  }
+  .sot-reconnect-table td::before {
+    content: attr(data-label);
+    color: var(--sot-muted, #8da0bd);
+    font-size: 11px;
+    font-weight: 700;
+  }
+}
