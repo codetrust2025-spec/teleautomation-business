@@ -106,7 +106,9 @@ class TestUnsupportedModelInterviewFailsClosed:
 
     def test_the_model_output_remains_available_in_the_decision_trace_layer(self):
         import inspect
-        assert '"primary_model_result"' in inspect.getsource(agent.analyze)
+        # The trace is written by the analysis body, which analyze() now
+        # wraps in a decision session.
+        assert '"primary_model_result"' in inspect.getsource(agent._analyze_on_one_node)
 
 
 class TestBookingRemainsGated:
