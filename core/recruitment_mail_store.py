@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import json
 import logging
 import os
@@ -749,23 +750,50 @@ def stored_message(mailbox_id: str, provider_message_id: str) -> dict[str, Any] 
     return rows[0] if rows else None
 
 
+#: Operations time. "Today" means the operator's day, not UTC's.
+_QUEUE_TIMEZONE = "Asia/Kolkata"
+
+#: Tier 1 just arrived, tier 2 is the rest of today, tier 3 is history.
+_TIER_SQL = """CASE
+      WHEN COALESCE(sent_at,created_at) >= now()-(%s||' hours')::interval THEN 1
+      WHEN COALESCE(sent_at,created_at) >= (date_trunc('day', now() AT TIME ZONE %s) AT TIME ZONE %s) THEN 2
+      ELSE 3 END"""
+
+#: Rotates across claims so one in every `_backlog_share()` goes to history.
+#: Process-local, which is enough: the worker is one process, and several
+#: workers would each keep their own rotation and still average the same split.
+_claim_rotation = itertools.count()
+
+
 def _live_mail_window_hours() -> int:
-    """How recent a mail must be to be claimed ahead of the backlog.
+    """How recent a mail must be to count as just-arrived (tier 1).
 
-    Twelve hours by default, chosen from the queue rather than by feel. The
-    window sets how long new mail waits while a backlog is being caught up, and
-    throughput is ~206 messages/hour: a 48-hour window left 520 messages ahead
-    of today's mail (~2.5 hours), 12 hours leaves 188 (~55 minutes). It still
-    spans a full working day, so a morning thread is processed in order with
-    its afternoon reply.
-
-    Once caught up the tier is nearly empty and new mail is claimed almost at
-    once, whatever the window; this only governs the catch-up.
+    Two hours. A mail that lands now must reach the model in minutes, and the
+    only way to promise that is a tier small enough to be nearly empty: at ~50
+    messages/hour of throughput, two hours of arrivals is a handful of rows.
     """
     try:
-        return max(1, min(720, int(os.getenv("AI_MAIL_LIVE_WINDOW_HOURS", "12"))))
+        return max(1, min(720, int(os.getenv("AI_MAIL_LIVE_WINDOW_HOURS", "2"))))
     except (TypeError, ValueError):
-        return 12
+        return 2
+
+
+def _backlog_share() -> int:
+    """One claim in N is spent on history, so it can never starve.
+
+    Five by default -- 80% of capacity to live and today's mail, 20% to the
+    backlog. The backlog is never excluded from a claim either: when no live
+    mail is waiting the ordinary turns fall through to it as well, so the split
+    is a floor on history's share, not a ceiling.
+    """
+    try:
+        return max(2, min(50, int(os.getenv("AI_MAIL_BACKLOG_SHARE", "5"))))
+    except (TypeError, ValueError):
+        return 5
+
+
+def _claim_prefers_backlog() -> bool:
+    return (next(_claim_rotation) % _backlog_share()) == _backlog_share() - 1
 
 
 def _max_ai_attempts() -> int:
@@ -815,14 +843,34 @@ def claim_ai_messages(limit: int = 1, *, lease_seconds: int = 150) -> list[dict[
         # because it is claimed whenever no live mail is waiting, and inbound
         # (~300/day) sits well under capacity. COALESCE guards a null sent_at,
         # which would otherwise make the tier NULL and sort to the very front.
+        # Three tiers, and one claim in five reserved for history.
+        #
+        # Ordering by tier alone would let a large backlog wait forever behind
+        # steady arrivals; ordering by age alone is what stalled Mail Alerts for
+        # six hours on 2026-09-09. So most turns take the newest tier available
+        # and every fifth turn takes history first. Neither side can starve: the
+        # backlog has a guaranteed share, and a history turn still falls through
+        # to live mail when nothing old is waiting, because no tier is filtered
+        # out of the claim.
+        #
+        # FIFO is preserved inside each tier -- `sent_at ASC` after the tier --
+        # so a thread is still processed in the order it arrived.
         live_hours=_live_mail_window_hours()
-        cur.execute("""SELECT id FROM mailbox_messages
+        tier=_TIER_SQL
+        tier_params=(live_hours,_QUEUE_TIMEZONE,_QUEUE_TIMEZONE)
+        if _claim_prefers_backlog():
+            order=f"({tier} = 3) DESC,{tier} ASC"
+            order_params=tier_params+tier_params
+        else:
+            order=f"{tier} ASC"
+            order_params=tier_params
+        cur.execute(f"""SELECT id FROM mailbox_messages
           WHERE processing_status IN ('AI_QUEUED','AI_RETRY_PENDING')
             AND COALESCE(ai_retry_after,now())<=now()
             AND COALESCE(ai_retry_count,0)<%s
-          ORDER BY (COALESCE(sent_at,created_at) >= now()-(%s||' hours')::interval) DESC,
-                   sent_at ASC,id
-          FOR UPDATE SKIP LOCKED LIMIT %s""",(max_attempts,live_hours,max(1,min(limit,20))))
+          ORDER BY {order},sent_at ASC,id
+          FOR UPDATE SKIP LOCKED LIMIT %s""",
+          (max_attempts,)+order_params+(max(1,min(limit,20)),))
         ids=[row[0] for row in cur.fetchall()]
         if not ids:return []
         cur.execute("""UPDATE mailbox_messages m SET processing_status='AI_RUNNING',
