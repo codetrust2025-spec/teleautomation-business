@@ -41,6 +41,23 @@ def structured(status="OFFER_LETTER_RECEIVED", confidence=.95, evidence_text="of
     }
 
 
+def relevance(quote, decision="ESTABLISHED", kind="RECIPIENT_HIRING_PROCESS"):
+    """The relevance gate's answer, which every analyze() run now needs.
+
+    Mails like these used to skip the gate: when the deterministic layer
+    asserted a lifecycle event, `_deterministic_relevance_result` answered
+    ESTABLISHED itself and no model was called. It answered the same way for a
+    handwriting-therapy webinar, so it was removed and Ollama decides intent for
+    every mail. The quote has to appear in the body or the anti-hallucination
+    guard downgrades the answer.
+    """
+    return {
+        "decision": decision, "message_kind": kind, "confidence": 96,
+        "evidence": [{"source": "EMAIL_BODY", "text": quote}],
+        "reason": "The mail concerns this recipient's own hiring process.",
+    }
+
+
 def message(subject="Offer letter", body="We are pleased to offer you the Test Role."):
     return {"provider_message_id": "message-1", "provider_thread_id": "thread-1", "sender_email": "jobs" + "@" + "test.invalid", "recipient_email": "candidate" + "@" + "test.invalid", "subject": subject, "sent_at": "2026-07-13T10:00:00Z", "body": body}
 
@@ -359,17 +376,19 @@ def test_high_impact_joining_result_uses_independent_validator(monkeypatch):
     outcome["evidence"]=[{"source":"EMAIL_BODY","meaning":"JOINING_CONFIRMED","text":"Your date of joining will be 15th July 2026"}]
     outcome["offer"]["joining_date"]="2026-07-15"
     calls=[]
+    outputs=iter([relevance("Your date of joining will be 15th July 2026"),outcome,outcome])
     class Response:
-        def __init__(self,model):
-            self.content=__import__("json").dumps(outcome);self.model=model;self.duration_ms=7
+        def __init__(self,value,model):
+            self.content=__import__("json").dumps(value);self.model=model;self.duration_ms=7
     monkeypatch.setattr(agent,"configured_models",lambda:{"primary":"qwen3.6","validator":"gemma4"})
-    monkeypatch.setattr(agent,"chat_structured",lambda **kwargs:calls.append(kwargs["model"]) or Response(kwargs["model"]))
+    monkeypatch.setattr(agent,"chat_structured",lambda **kwargs:calls.append(kwargs["model"]) or Response(next(outputs),kwargs["model"]))
     result,model,duration=agent.analyze(source,[])
-    assert calls == ["qwen3.6","gemma4"]
+    # Relevance, then the primary, then the independent validator.
+    assert calls == ["qwen3.6","qwen3.6","gemma4"]
     assert result["primary_status"] == "JOINING_CONFIRMED"
     assert result["model_validation"]["agreed"] is True
     assert model == "qwen3.6|validator:gemma4"
-    assert duration == 14
+    assert duration == 21
 
 
 def test_critical_validator_never_falls_back_to_lightweight_model(monkeypatch):
@@ -377,18 +396,23 @@ def test_critical_validator_never_falls_back_to_lightweight_model(monkeypatch):
     outcome=structured("SELECTED",.96,"You have been selected")
     outcome["evidence"]=[{"source":"EMAIL_BODY","meaning":"SELECTED","text":"You have been selected"}]
     calls=[]
+    outputs=iter([relevance("You have been selected"),outcome])
     class Response:
-        content=__import__("json").dumps(outcome);model="qwen2.5:7b";duration_ms=7
+        def __init__(self,value):
+            self.content=__import__("json").dumps(value);self.model="qwen2.5:7b";self.duration_ms=7
     monkeypatch.setattr(agent,"configured_models",lambda:{"primary":"qwen2.5:7b","validator":"validator-model","fallback":"gemma2:2b"})
     def fake_chat(**kwargs):
         calls.append(kwargs["model"])
         if kwargs["model"] == "validator-model":
             raise agent.AIGatewayError("validator unavailable",code="OLLAMA_REQUEST_TIMEOUT")
-        return Response()
+        return Response(next(outputs))
     monkeypatch.setattr(agent,"chat_structured",fake_chat)
     with pytest.raises(agent.AIGatewayError):
         agent.analyze(source,[])
-    assert calls == ["qwen2.5:7b","validator-model"]
+    # The relevance gate uses the primary too; neither call may reach the
+    # lightweight fallback.
+    assert calls == ["qwen2.5:7b","qwen2.5:7b","validator-model"]
+    assert "gemma2:2b" not in calls
 
 
 def test_validator_disagreement_never_overrides_primary_or_creates_lifecycle(monkeypatch):
@@ -402,7 +426,7 @@ def test_validator_disagreement_never_overrides_primary_or_creates_lifecycle(mon
     joining=structured("JOINING_CONFIRMED",.96,"Your date of joining will be 15th July 2026")
     joining["evidence"]=[{"source":"EMAIL_BODY","meaning":"JOINING_CONFIRMED","text":"Your date of joining will be 15th July 2026"}]
     joining["offer"]["joining_date"]="2026-07-15"
-    outputs=iter([ignored,joining])
+    outputs=iter([relevance("Your date of joining will be 15th July 2026"),ignored,joining])
     class Response:
         def __init__(self,value,model):
             self.content=__import__("json").dumps(value);self.model=model;self.duration_ms=3
