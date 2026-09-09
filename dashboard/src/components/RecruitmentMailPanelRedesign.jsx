@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { API } from "../config.js";
 import { useConfirm } from "../context/ConfirmContext.jsx";
 import { mailboxUiStatus } from "../utils/mailboxStatus.js";
+import { publishGmailExpired } from "../notifications/gmailExpired.js";
 import { ButtonContent, InlineLoader, OverlayLoader } from "../Loader.jsx";
 import { OcrToggle } from "./OcrToggle.jsx";
 import { PureOllamaToggle } from "./PureOllamaToggle.jsx";
@@ -2363,6 +2364,20 @@ export default function RecruitmentMailPanelRedesign() {
   const activeMailboxCount = rows.filter((row) =>
     ["CONNECTED", "SYNC_QUEUED", "SYNCING"].includes(row.uiStatus),
   ).length;
+  // Counted off the rows the table renders, so the card can never disagree
+  // with the badges beside the accounts it is counting.
+  const reconnectRequiredCount = rows.filter(
+    (row) => row.uiStatus === "RECONNECT_REQUIRED",
+  ).length;
+  // The sidebar is told about every mailbox, not just the candidate being
+  // viewed, and is told on each load so reconnecting an account clears the
+  // badge with the row rather than on the sidebar's own next poll.
+  const globalReconnectRequired = allRows.filter(
+    (row) => row.uiStatus === "RECONNECT_REQUIRED",
+  ).length;
+  useEffect(() => {
+    publishGmailExpired(globalReconnectRequired);
+  }, [globalReconnectRequired]);
   const pendingMailboxCandidates = useMemo(() => {
     const linkedCandidateIds = new Set(
       mailboxes.map((row) => String(row.candidate.id)),
@@ -2762,6 +2777,18 @@ export default function RecruitmentMailPanelRedesign() {
                 value={pendingMailboxCandidates.length}
                 tone="amber"
               />
+              {/* Only shown when something is actually broken: a permanent
+                  "Reconnect Required 0" is noise next to three live counts.
+                  Counted off the same uiStatus the rows below render, so the
+                  card and the rows cannot disagree. */}
+              {reconnectRequiredCount > 0 && (
+                <MailboxMetric
+                  icon="⚠"
+                  label="Reconnect Required"
+                  value={reconnectRequiredCount}
+                  tone="red"
+                />
+              )}
             </section>
             <div
               className="sot-mailbox-view-tabs"

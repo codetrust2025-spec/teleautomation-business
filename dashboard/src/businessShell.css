@@ -138,6 +138,12 @@
 .desktop-sidebar__badge--unread {
   background: #ef4444;
 }
+/* A broken Gmail connection is a fault, not a queue: it shares the unread
+   badge's red rather than the default indigo, because nothing is waiting to be
+   read — something has stopped working. */
+.desktop-sidebar__badge--fault {
+  background: #ef4444;
+}
 
 .desktop-sidebar__footer {
   flex: 0 0 auto;
