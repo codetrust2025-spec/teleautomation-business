@@ -226,6 +226,84 @@ class TestTheShortcutIsGone:
         )
 
 
+class TestAMislabelledQuoteIsNotAnInventedOne:
+    """Removing the shortcut exposed a second defect it had been masking.
+
+    Production check on a genuine "Rescheduling interview for Application
+    Security Engineer": the model answered ESTABLISHED /
+    RECIPIENT_HIRING_PROCESS and quoted the mail's opening line word for word
+    -- then labelled the quote ATTACHMENT, on a mail with no attachment.
+    `_evidence_supported` searches only the declared category, so the quote
+    failed, the evidence list emptied, and the answer was downgraded to
+    NOT_ESTABLISHED / UNKNOWN. A real interview would have been dropped.
+
+    The classifier has always corrected this with
+    `_canonicalise_evidence_source`. The relevance gate did not.
+    """
+
+    BODY = "Reschedule Interview Notification. Your interview has been re-scheduled to 28/08/2026 03:30 PM IST."
+    PAYLOAD = {"subject": "Rescheduling interview for Application Security Engineer", "body": BODY}
+
+    def _validated(self, evidence):
+        value = {
+            "decision": "ESTABLISHED", "message_kind": "RECIPIENT_HIRING_PROCESS",
+            "confidence": 96, "evidence": evidence,
+            "reason": "The mail reschedules this recipient's own interview.",
+        }
+        agent._validate_relevance_result(value, self.PAYLOAD)
+        return value
+
+    def test_a_verbatim_body_quote_labelled_attachment_is_kept(self):
+        value = self._validated([
+            {"source": "ATTACHMENT", "text": "Reschedule Interview Notification"},
+        ])
+        assert value["decision"] == "ESTABLISHED"
+        assert value["message_kind"] == "RECIPIENT_HIRING_PROCESS"
+
+    def test_and_the_label_is_corrected_to_where_it_was_found(self):
+        value = self._validated([
+            {"source": "ATTACHMENT", "text": "Reschedule Interview Notification"},
+        ])
+        assert value["evidence"][0]["source"] == "EMAIL_BODY"
+        assert value["evidence"][0]["evidence_source_corrected_from"] == "ATTACHMENT"
+
+    def test_the_quote_itself_is_never_corrected(self):
+        """Only the label moves. Invented text has nowhere to match."""
+        value = self._validated([
+            {"source": "ATTACHMENT", "text": "Your offer letter is attached"},
+        ])
+        assert value["decision"] == "NOT_ESTABLISHED"
+        assert value["message_kind"] == "UNKNOWN"
+        assert value["evidence"] == []
+
+    def test_a_quote_in_two_sources_still_fails_closed(self):
+        """Ambiguous provenance proves nothing, so it is not rescued."""
+        payload = {"subject": "Interview rescheduled", "body": "Interview rescheduled to 3:30 PM."}
+        value = {
+            "decision": "ESTABLISHED", "message_kind": "RECIPIENT_HIRING_PROCESS",
+            "confidence": 96,
+            "evidence": [{"source": "ATTACHMENT", "text": "Interview rescheduled"}],
+            "reason": "Ambiguous provenance.",
+        }
+        agent._validate_relevance_result(value, payload)
+        assert value["decision"] == "NOT_ESTABLISHED"
+
+    def test_a_correctly_labelled_quote_is_untouched(self):
+        value = self._validated([
+            {"source": "EMAIL_BODY", "text": "Reschedule Interview Notification"},
+        ])
+        assert value["decision"] == "ESTABLISHED"
+        assert value["evidence"][0]["source"] == "EMAIL_BODY"
+        assert "evidence_source_corrected_from" not in value["evidence"][0]
+
+    def test_the_gate_and_the_classifier_now_judge_evidence_the_same_way(self):
+        relevance_gate = inspect.getsource(agent._validate_relevance_result)
+        classifier = inspect.getsource(agent.validate_result)
+        for source in (relevance_gate, classifier):
+            assert "_canonicalise_evidence_source" in source
+            assert "_evidence_supported" in source
+
+
 class TestNothingDownstreamWasLoosened:
     """These guards contained the 128 mails while the shortcut was live."""
 

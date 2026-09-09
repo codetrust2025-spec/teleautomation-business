@@ -2087,10 +2087,23 @@ def _validate_relevance_result(value: dict[str, Any], payload: dict[str, Any]) -
         str(payload.get("subject") or ""), str(payload.get("body") or ""),
         payload.get("attachments") or [], payload.get("thread_context") or [],
     )
-    supported = [
-        item for item in value.get("evidence") or []
-        if _evidence_supported(item, sources)
+    # Correct a mislabelled source before judging the quote, exactly as the
+    # classifier does. `_evidence_supported` searches only the category the
+    # model declared, so a quote that is verbatim in the body but labelled
+    # ATTACHMENT was thrown away and the whole ESTABLISHED answer downgraded.
+    # That is what turned away a genuine "Rescheduling interview for
+    # Application Security Engineer": the model read it correctly, quoted the
+    # body word for word, and named the wrong source.
+    #
+    # This corrects the label, never the quote. `_canonicalise_evidence_source`
+    # keeps an item only when its text occurs verbatim in exactly one source,
+    # so invented evidence still has nowhere to match, and an ambiguous quote
+    # still fails closed.
+    canonical = [
+        corrected for item in value.get("evidence") or []
+        if (corrected := _canonicalise_evidence_source(item, sources)) is not None
     ]
+    supported = [item for item in canonical if _evidence_supported(item, sources)]
     value["confidence"] = float(value.get("confidence") or 0) / (
         100.0 if float(value.get("confidence") or 0) > 1 else 1.0
     )
