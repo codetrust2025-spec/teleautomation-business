@@ -231,7 +231,23 @@ _QUESTION_PHRASES = (
 )
 _JOB_AD_PATTERNS = (
     r"^\s*(?:\N{ENVELOPE}|job)\s*\|", r"\bjob description\b", r"\bapply now\b",
-    r"\bopen(?:ing|ings)\b", r"\bwe are hiring\b", r"\bjob requirement\b",
+    # A vacancy, not the act of opening something. `\bopen(?:ing|ings)\b`
+    # matched the gerund just as readily, and an AI-interview platform's own
+    # anti-cheating wording -- "do not switch devices/browsers after opening",
+    # "opening or switching to other applications is not permitted" -- read as
+    # a job advertisement. That marked eleven genuine Zealogics interview
+    # mails promotional, which makes validate_interview_event refuse the
+    # transition with JOB_ADVERTISEMENT, and each was silently ignored.
+    #
+    # The vacancy sense is a plural, a qualifier in front, or one of the
+    # separators an advert uses: "Opening for Automation Testing", "opening at
+    # Aon", "Automation Testing Opening -Tech Mahindra", "Openings: ServiceNow".
+    # Sentence punctuation is deliberately excluded, which is what keeps
+    # "after opening." and "opening or switching" out.
+    r"\bopenings\b",
+    r"\b(?:job|current|new|urgent|immediate|multiple|several|various|hiring)\s+opening\b",
+    r"\bopening\s*(?:[-–—:]|\b(?:for|at|in|with)\b)",
+    r"\bwe are hiring\b", r"\bjob requirement\b",
 )
 _PAYSLIP_PATTERNS = (
     r"\bpayslip\b", r"\bsalary slip\b", r"pay slip for the month",
