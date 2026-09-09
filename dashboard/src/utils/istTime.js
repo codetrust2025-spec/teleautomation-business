@@ -144,9 +144,33 @@ export function formatScheduleDateTime(dateValue, timeValue, timeZone = '') {
  * same zone, the former being the older IANA name — so both must read as IST
  * rather than being labelled like a foreign zone.
  */
+/**
+ * Minutes east of UTC for a written offset, or null when it is not one.
+ *
+ * The backend stores the zone the sender wrote, and for a fixed offset
+ * `interview_timezones.label()` returns a `tzname()` string like "UTC+00:00" or
+ * "UTC+05:30". Intl has no such zone, so every one of these used to throw
+ * inside `timeZoneOffsetMs` and take the IST line down with it.
+ *
+ * Mirrors the backend's own offset pattern, which accepts "UTC+05:30",
+ * "GMT-0800", "+0530" and "-8" alike.
+ */
+function fixedOffsetMinutes(timeZone) {
+  const match = String(timeZone || '')
+    .trim()
+    .match(/^(?:UTC|GMT)?\s*([+-])\s*(\d{1,2})(?::?([0-5]\d))?$/i)
+  if (!match) return null
+  const minutes = Number(match[2]) * 60 + Number(match[3] || 0)
+  if (minutes > 18 * 60) return null
+  return match[1] === '-' ? -minutes : minutes
+}
+
 export function isIstTimeZone(timeZone) {
   const zone = String(timeZone || '').trim().toLowerCase()
-  return zone === 'asia/kolkata' || zone === 'asia/calcutta' || zone === 'ist'
+  if (zone === 'asia/kolkata' || zone === 'asia/calcutta' || zone === 'ist') return true
+  // "UTC+05:30" is India time written as an offset. Converting it would print
+  // the same clock reading twice under two different labels.
+  return fixedOffsetMinutes(zone) === 330
 }
 
 /** The offset of `timeZone` at a given instant, in ms. */
@@ -202,6 +226,13 @@ function scheduleInstant(dateValue, timeValue, timeZone) {
     hour,
     minute,
   )
+  // A written offset is absolute: no tz database, and no DST to settle for.
+  const written = fixedOffsetMinutes(timeZone)
+  if (written !== null) {
+    const date = new Date(wallClock - written * 60_000)
+    return Number.isNaN(date.getTime()) ? null : date
+  }
+
   let offset
   try {
     offset = timeZoneOffsetMs(wallClock, timeZone)
