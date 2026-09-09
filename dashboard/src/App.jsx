@@ -117,7 +117,10 @@ function OperationsShell({ view, onNavigate }) {
         <nav className="desktop-sidebar__nav" aria-label="Operations navigation">
           {VIEWS.map(item => {
             const badgeValue = item.badge === 'works'
-              ? pending?.count || 0
+              // candidateCount, not count: the badge sits beside Candidates, so
+              // it counts candidates needing attention rather than the tasks
+              // between them. One candidate missing two things is one badge.
+              ? pending?.candidateCount || 0
               : item.badge === 'interviews'
                 ? pending?.pendingInterviewCount || 0
                 : item.badge === 'mail'
@@ -158,7 +161,9 @@ function OperationsShell({ view, onNavigate }) {
                           ? `${badgeValue} Gmail ${badgeValue === 1 ? 'account needs' : 'accounts need'} reconnecting`
                           : item.badge === 'slots'
                             ? `${badgeValue} confirmed upcoming slot${badgeValue === 1 ? '' : 's'}`
-                            : `${badgeValue} pending`
+                            : item.badge === 'works'
+                              ? `${badgeValue} candidate${badgeValue === 1 ? '' : 's'} need attention`
+                              : `${badgeValue} pending`
                     }
                   >
                     {countLabel(badgeValue)}
