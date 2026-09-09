@@ -1723,6 +1723,41 @@ def calendar_invite_is_a_candidate_interview(relevance: dict[str, Any]) -> bool:
     )
 
 
+def calendar_invite_verdict(relevance: dict[str, Any]) -> str:
+    """BOOK, REVIEW or IGNORE for a mail carrying a calendar invite.
+
+    `decision` is the question the relevance prompt actually asks -- ESTABLISHED
+    means the source ties this recipient to a real hiring process, and the same
+    prompt says marketing, training, webinars and public events are
+    NOT_ESTABLISHED. `message_kind` is a label describing what the mail is.
+
+    Requiring both agreed with each other silently dropped real interviews.
+    Three genuine cancellations for named candidates -- an eOne L1 interview, a
+    Skillmine round one, an Altisource discussion -- came back ESTABLISHED with
+    the kind given as MARKETING_OR_TRAINING or GENERAL, quoting the candidate's
+    own interview line as evidence. Their bodies are disclaimer and stylesheet
+    boilerplate, because a cancellation carries its meaning in the subject and
+    the .ics, so the model has little to label the mail from and gets the label
+    wrong while getting the decision right.
+
+    Nothing is loosened for webinars: every marketing sample checked in
+    production -- the Zoom workshop, the Naukri bootcamp, Yocket, Talent500,
+    Impacteers and the GraphoTherapy mailing list -- answered NOT_ESTABLISHED,
+    which still ignores them here. What changes is that a contradictory answer
+    is no longer read as a rejection. It is not read as a booking either.
+    """
+    decision = str(relevance.get("decision") or "").upper()
+    kind = str(relevance.get("message_kind") or "").upper()
+    if decision != "ESTABLISHED":
+        return "IGNORE"
+    return "BOOK" if kind == CANDIDATE_HIRING_MESSAGE_KIND else "REVIEW"
+
+
+def calendar_invite_needs_review(relevance: dict[str, Any]) -> bool:
+    """The model established the hiring process but named a conflicting kind."""
+    return calendar_invite_verdict(relevance) == "REVIEW"
+
+
 def _normalise_interview_timezone(raw) -> str:
     """Canonical name for the zone the sender wrote, or "" when unresolvable.
 
@@ -2740,7 +2775,31 @@ def process_message(mailbox: dict[str, Any], decoded: dict[str, Any], attachment
                 error_code=getattr(exc, "code", "OLLAMA_INTERNAL_ERROR"),
             )
             return None
-        if not calendar_invite_is_a_candidate_interview(calendar_relevance):
+        verdict = calendar_invite_verdict(calendar_relevance)
+        if verdict == "REVIEW":
+            # ESTABLISHED, but the model named a kind that contradicts it. That
+            # is not a rejection and it is not permission to book: an operator
+            # decides. Dropping these lost three real cancellations.
+            logger.warning(
+                "Calendar invite intent is self-contradictory kind=%s decision=%s subject=%r",
+                calendar_relevance.get("message_kind"), calendar_relevance.get("decision"),
+                str(decoded.get("subject") or "")[:120],
+            )
+            calendar_result = dict(calendar_result)
+            calendar_result["recruitment_relevance_result"] = deepcopy(calendar_relevance)
+            calendar_result.update(
+                status="MANUAL_REVIEW_REQUIRED", primary_status="MANUAL_REVIEW_REQUIRED",
+                classification="needs_review", candidate_status="Needs Review",
+                should_create_review_record=True, requires_manual_review=True,
+                validation_status="NEEDS_REVIEW", ignore_reason=None,
+                reason=(
+                    "The relevance model established this recipient's hiring process but "
+                    f"labelled the message {calendar_relevance.get('message_kind')}. "
+                    "An operator must confirm before this invite is booked."
+                ),
+            )
+            result, model, duration = calendar_result, "rfc5545-authenticated-needs-review", 0
+        elif verdict == "IGNORE":
             reason = "CALENDAR_INVITE_NOT_A_CANDIDATE_INTERVIEW"
             logger.info(
                 "Calendar invite is not a candidate interview kind=%s decision=%s",
@@ -2759,9 +2818,10 @@ def process_message(mailbox: dict[str, Any], decoded: dict[str, Any], attachment
                     row["id"], previous_status, "IGNORED_NOT_OFFER_RELATED", reason,
                 )
             return None
-        calendar_result = dict(calendar_result)
-        calendar_result["recruitment_relevance_result"] = deepcopy(calendar_relevance)
-        result, model, duration = calendar_result, "rfc5545-authenticated", 0
+        else:
+            calendar_result = dict(calendar_result)
+            calendar_result["recruitment_relevance_result"] = deepcopy(calendar_relevance)
+            result, model, duration = calendar_result, "rfc5545-authenticated", 0
     elif defer_ai:
         store.mark_message_status(row["id"], "AI_QUEUED", reason="DURABLE_AI_QUEUE")
         _publish("mail_ai_queued", candidate_id=mailbox.get("candidate_id"), gmail_message_id=decoded.get("provider_message_id"), processing_status="AI Queued")
