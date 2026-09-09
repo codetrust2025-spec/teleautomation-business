@@ -749,6 +749,18 @@ def stored_message(mailbox_id: str, provider_message_id: str) -> dict[str, Any] 
     return rows[0] if rows else None
 
 
+def _live_mail_window_hours() -> int:
+    """How recent a mail must be to be claimed ahead of the backlog.
+
+    Two days by default: long enough that a weekend of mail still counts as
+    live, short enough that the historical backlog is not permanently starved.
+    """
+    try:
+        return max(1, min(720, int(os.getenv("AI_MAIL_LIVE_WINDOW_HOURS", "48"))))
+    except (TypeError, ValueError):
+        return 48
+
+
 def _max_ai_attempts() -> int:
     """Attempts before a message is parked terminally rather than requeued."""
     try:
@@ -781,11 +793,29 @@ def claim_ai_messages(limit: int = 1, *, lease_seconds: int = 150) -> list[dict[
               ai_lease_expires_at=NULL,updated_at=now(),ai_last_error_code='MAX_ATTEMPTS_EXHAUSTED'
             WHERE processing_status IN ('AI_QUEUED','AI_RETRY_PENDING')
               AND COALESCE(ai_retry_count,0)>=%s""",(max_attempts,))
+        # Live mail first, then the backlog -- each oldest-first within itself.
+        #
+        # Strict `ORDER BY sent_at ASC` is FIFO over the whole table, so a large
+        # historical backlog blocks the head of the queue and today's mail waits
+        # behind all of it. On 2026-09-09 that stopped Mail Alerts dead: 3,403
+        # messages were queued, 2,871 of them older than two days, and the 117
+        # mails that arrived after 11:00 sat untouched behind them. Nothing was
+        # broken -- ingestion, classification, notifications and the API were all
+        # healthy -- there was simply nothing new to show, and at ~174/hour it
+        # would have been about twenty hours before live mail was even reached.
+        #
+        # Recent mail is therefore claimed first. The backlog still drains,
+        # because it is claimed whenever no live mail is waiting, and inbound
+        # (~300/day) sits well under capacity. COALESCE guards a null sent_at,
+        # which would otherwise make the tier NULL and sort to the very front.
+        live_hours=_live_mail_window_hours()
         cur.execute("""SELECT id FROM mailbox_messages
           WHERE processing_status IN ('AI_QUEUED','AI_RETRY_PENDING')
             AND COALESCE(ai_retry_after,now())<=now()
             AND COALESCE(ai_retry_count,0)<%s
-          ORDER BY sent_at ASC,id FOR UPDATE SKIP LOCKED LIMIT %s""",(max_attempts,max(1,min(limit,20))))
+          ORDER BY (COALESCE(sent_at,created_at) >= now()-(%s||' hours')::interval) DESC,
+                   sent_at ASC,id
+          FOR UPDATE SKIP LOCKED LIMIT %s""",(max_attempts,live_hours,max(1,min(limit,20))))
         ids=[row[0] for row in cur.fetchall()]
         if not ids:return []
         cur.execute("""UPDATE mailbox_messages m SET processing_status='AI_RUNNING',
