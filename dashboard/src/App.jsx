@@ -12,6 +12,7 @@ import {
   usePendingWorksContextOptional,
 } from './dailyOps/PendingWorksProvider.jsx'
 import { useMailUnreadCount } from './notifications/mailUnread.js'
+import { useGmailExpiredCount } from './notifications/gmailExpired.js'
 import { useAuth } from './context/AuthContext.jsx'
 
 // The Operations features currently shipped. Daily Briefing, Mail Audit, Payment
@@ -26,7 +27,9 @@ const VIEWS = [
   { id: 'daily-ops', label: 'Daily Ops', icon: '▤', badge: 'interviews', alertIcon: true },
   { id: 'attendance', label: 'Attendance', icon: '▩' },
   { id: 'mail-notifications', label: 'Mail Alerts', icon: '🔔', badge: 'mail', alertIcon: true },
-  { id: 'ai-recruitment', label: 'AI Mail Review', icon: '▧' },
+  // No alertIcon: this badge counts a fault, but the icon still names the
+  // section, so it stays whether or not anything is broken.
+  { id: 'ai-recruitment', label: 'AI Mail Review', icon: '▧', badge: 'gmail-expired' },
   { id: 'candidates', label: 'Candidates', icon: '▣', badge: 'works' },
   { id: 'slot-booking', label: 'Slot Booking', icon: '▦', external: '/submit-slot' },
   { id: 'data-room', label: 'Data Room', icon: '▥' },
@@ -45,6 +48,7 @@ function OperationsShell({ view, onNavigate }) {
   const auth = useAuth()
   const pending = usePendingWorksContextOptional()
   const mailUnread = useMailUnreadCount()
+  const gmailExpired = useGmailExpiredCount()
   const [sidebarUserMenuOpen, setSidebarUserMenuOpen] = useState(false)
   const [headerUserMenuOpen, setHeaderUserMenuOpen] = useState(false)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
@@ -114,7 +118,9 @@ function OperationsShell({ view, onNavigate }) {
                 ? pending?.pendingInterviewCount || 0
                 : item.badge === 'mail'
                   ? mailUnread
-                  : 0
+                  : item.badge === 'gmail-expired'
+                    ? gmailExpired
+                    : 0
             // An item flagged alertIcon is plain text when its count is zero.
             // The rest keep their icon either way: theirs name the section,
             // these two report something waiting.
@@ -135,7 +141,18 @@ function OperationsShell({ view, onNavigate }) {
                 {/* The badge is a bare number, which reads as "Candidates 3"
                     with nothing saying what the 3 counts. */}
                 {badgeValue > 0 && (
-                  <span className={`desktop-sidebar__badge${item.badge === 'mail' ? ' desktop-sidebar__badge--unread' : ''}`} aria-label={item.badge === 'mail' ? `${badgeValue} unread` : `${badgeValue} pending`}>
+                  <span
+                    className={`desktop-sidebar__badge${item.badge === 'mail' ? ' desktop-sidebar__badge--unread' : ''}${item.badge === 'gmail-expired' ? ' desktop-sidebar__badge--fault' : ''}`}
+                    aria-label={
+                      item.badge === 'mail'
+                        ? `${badgeValue} unread`
+                        : item.badge === 'gmail-expired'
+                          // "2 pending" would read as work waiting rather than
+                          // as accounts that have stopped collecting mail.
+                          ? `${badgeValue} Gmail ${badgeValue === 1 ? 'account needs' : 'accounts need'} reconnecting`
+                          : `${badgeValue} pending`
+                    }
+                  >
                     {countLabel(badgeValue)}
                   </span>
                 )}
