@@ -4,7 +4,7 @@ import threading
 import urllib.error
 
 class FakeProvider:
-    def __init__(self,_):pass
+    def __init__(self,_,on_credentials_refreshed=None):self.on_credentials_refreshed=on_credentials_refreshed
     def fetch_new_messages(self,cursor,*,batch_size):return ([{'id':'m1'}],'history-2')
     def fetch_message(self,message_id):return {'id':message_id,'threadId':'t1','payload':{'headers':[],'body':{}}}
     def fetch_attachments(self,message):return []

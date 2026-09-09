@@ -3,7 +3,12 @@ from __future__ import annotations
 import asyncio, logging, os, time, urllib.error
 from datetime import datetime, timedelta, timezone
 from core import recruitment_mail_store as store
-from services.gmail_mailbox_provider import GmailMailboxProvider, decode_gmail_message
+from services.gmail_mailbox_provider import (
+    GmailAuthorizationExpired,
+    GmailMailboxProvider,
+    decode_gmail_message,
+    encrypt_credentials,
+)
 from services.recruitment_mail_agent import process_message
 
 logger=logging.getLogger('teleautomation.recruitment_mail_worker')
@@ -160,7 +165,12 @@ class RecruitmentMailWorker:
         try:
             _publish('mail_processing_started',candidate_id=mailbox.get('candidate_id'),mailbox_id=mailbox.get('id'),processing_status='Processing')
             store.update_mailbox(mailbox['id'],{'last_sync_attempt_at':store.now()})
-            provider=GmailMailboxProvider(mailbox['credential_ciphertext']); batch=max(1,min(100,int(os.getenv('AI_MAIL_SYNC_BATCH_SIZE','50'))))
+            # Store each refreshed access token so the next sync starts with a
+            # live one instead of spending a 401 and a refresh to discover the
+            # stored one expired an hour ago. Survives restarts and deploys.
+            def _persist_credentials(creds,_mailbox_id=mailbox['id']):
+                store.update_mailbox(_mailbox_id,{'credential_ciphertext':encrypt_credentials(creds)})
+            provider=GmailMailboxProvider(mailbox['credential_ciphertext'],on_credentials_refreshed=_persist_credentials); batch=max(1,min(100,int(os.getenv('AI_MAIL_SYNC_BATCH_SIZE','50'))))
             historical=job.get('job_type')=='HISTORICAL_RESCAN'
             if historical:
                 refs=provider.fetch_messages_by_date(job['range_start'],job['range_end']);cursor=mailbox.get('provider_history_id') or mailbox.get('sync_cursor')
@@ -220,7 +230,16 @@ class RecruitmentMailWorker:
             if active_ingestion:
                 store.finish_gmail_ingestion(active_ingestion['id'],status='QUEUED',error=exc,max_attempts=max(1,int(os.getenv('AI_MAIL_SYNC_MAX_RETRIES','5'))))
             failures=int(mailbox.get('failed_sync_count') or 0)+1;delay=min(240,2**min(failures,8))
-            store.update_mailbox(mailbox['id'],{'connection_status':'ERROR','failed_sync_count':failures,'last_error_code':type(exc).__name__,'last_error_message':str(exc)[:400],'next_sync_at':store.now()+timedelta(minutes=delay)})
+            # ERROR is what the dashboard renders as "Gmail connection expired.
+            # Reconnect to continue monitoring.", so only a failure a reconnect
+            # would actually fix may set it. Everything else keeps the mailbox
+            # connected and simply retries: production recorded 28 HTTPError and
+            # 2 AttributeError sync failures, and each one told an operator to
+            # reconnect an account whose credentials were fine.
+            reauthorisation_required=isinstance(exc,GmailAuthorizationExpired)
+            values={'failed_sync_count':failures,'last_error_code':type(exc).__name__,'last_error_message':str(exc)[:400],'next_sync_at':store.now()+timedelta(minutes=delay)}
+            if reauthorisation_required:values['connection_status']='ERROR'
+            store.update_mailbox(mailbox['id'],values)
             store.finish_job(job['id'],status='FAILED',counts=counts,error=str(exc)[:400]);final=store.retry_job(job['id'],delay_minutes=delay,error=str(exc)[:400],max_attempts=max(1,int(os.getenv('AI_MAIL_SYNC_MAX_RETRIES','5'))));logger.warning('Mailbox sync failed mailbox=%s code=%s',mailbox['id'],type(exc).__name__)
             _publish('mail_processing_failed',candidate_id=mailbox.get('candidate_id'),mailbox_id=mailbox.get('id'),processing_status='Processing Failed',error_code=type(exc).__name__)
             if failures>=3 or final=='DEAD_LETTER':
