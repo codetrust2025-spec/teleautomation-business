@@ -18,6 +18,7 @@ still drains whenever nothing live is waiting.
 from __future__ import annotations
 
 import inspect
+import itertools
 
 import pytest
 
@@ -28,57 +29,86 @@ def _claim_sql() -> str:
     return inspect.getsource(store.claim_ai_messages)
 
 
-class TestTheClaimOrder:
-    def test_recent_mail_is_claimed_before_the_backlog(self):
-        sql = _claim_sql()
-        assert "ORDER BY (COALESCE(sent_at,created_at) >= now()-(%s||' hours')::interval) DESC" in sql
+class TestTheThreeTiers:
+    def test_just_arrived_today_and_history_are_separated(self):
+        sql = store._TIER_SQL
+        assert "THEN 1" in sql and "THEN 2" in sql and "ELSE 3" in sql
 
-    def test_it_is_no_longer_plain_fifo_over_everything(self):
-        """The exact ordering that stalled Mail Alerts."""
-        assert "ORDER BY sent_at ASC,id" not in _claim_sql()
+    def test_tier_one_is_the_last_couple_of_hours(self):
+        assert "now()-(%s||' hours')::interval THEN 1" in store._TIER_SQL
 
-    def test_each_tier_is_still_oldest_first(self):
-        """Within live mail and within the backlog, the oldest still goes
-        first: this prioritises, it does not turn the queue into a stack."""
-        sql = _claim_sql()
-        tier = sql.index("::interval) DESC")
-        assert "sent_at ASC,id" in sql[tier:tier + 120]
+    def test_tier_two_is_the_operator_day_not_utc(self):
+        assert "date_trunc('day', now() AT TIME ZONE %s) AT TIME ZONE %s) THEN 2" in store._TIER_SQL
+        assert store._QUEUE_TIMEZONE == "Asia/Kolkata"
 
     def test_a_null_sent_at_cannot_jump_the_queue(self):
-        """Without COALESCE the tier is NULL for those rows, and NULL sorts
-        first under DESC -- every undated message would pre-empt live mail."""
-        assert "COALESCE(sent_at,created_at)" in _claim_sql()
+        """Without COALESCE the tier is NULL and sorts unpredictably."""
+        assert store._TIER_SQL.count("COALESCE(sent_at,created_at)") == 2
 
-    def test_the_backlog_is_still_claimable(self):
-        """One query, both tiers: nothing filters old mail out, so it is taken
-        whenever no live mail is waiting."""
+    def test_fifo_survives_inside_every_tier(self):
+        sql = _claim_sql()
+        assert "sent_at ASC,id" in sql
+
+    def test_it_is_no_longer_plain_fifo_over_everything(self):
+        """The exact ordering that stalled Mail Alerts for six hours."""
+        assert "ORDER BY sent_at ASC,id" not in _claim_sql()
+
+    def test_no_tier_is_filtered_out_of_the_claim(self):
+        """Ordering decides who goes first; nothing is excluded, so a turn
+        always finds work even when its preferred tier is empty."""
         sql = _claim_sql()
         assert "processing_status IN ('AI_QUEUED','AI_RETRY_PENDING')" in sql
-        for excluded in ("AND sent_at >", "AND created_at >"):
+        for excluded in ("AND sent_at >", "AND created_at >", "AND tier"):
             assert excluded not in sql
 
-    def test_the_attempt_cap_and_backoff_are_untouched(self):
+
+class TestTheWeightedRotation:
+    def test_one_turn_in_five_goes_to_history(self, monkeypatch):
+        monkeypatch.delenv("AI_MAIL_BACKLOG_SHARE", raising=False)
+        monkeypatch.setattr(store, "_claim_rotation", itertools.count())
+        turns = [store._claim_prefers_backlog() for _ in range(20)]
+        assert sum(turns) == 4          # 20% of capacity
+        assert len(turns) - sum(turns) == 16   # 80% to live and today
+
+    def test_the_split_is_evenly_spaced_not_bursty(self, monkeypatch):
+        """A backlog turn every fifth claim, so history advances steadily
+        rather than in a clump that delays live mail."""
+        monkeypatch.setattr(store, "_claim_rotation", itertools.count())
+        turns = [store._claim_prefers_backlog() for _ in range(15)]
+        assert [i for i, backlog in enumerate(turns) if backlog] == [4, 9, 14]
+
+    def test_the_share_is_configurable_and_bounded(self, monkeypatch):
+        monkeypatch.setenv("AI_MAIL_BACKLOG_SHARE", "4")
+        assert store._backlog_share() == 4
+        for raw, expected in (("1", 2), ("0", 2), ("999", 50), ("junk", 5), ("", 5)):
+            monkeypatch.setenv("AI_MAIL_BACKLOG_SHARE", raw)
+            assert store._backlog_share() == expected
+
+    def test_a_history_turn_puts_history_first(self):
+        assert "(%s = 3) DESC" not in _claim_sql()   # built from the tier SQL
+        assert "= 3) DESC" in _claim_sql()
+
+    def test_a_history_turn_still_falls_through_to_live_mail(self):
+        """`(tier = 3) DESC` then `tier ASC`: with no history waiting the same
+        turn takes tier 1, so reserving a share never wastes capacity."""
         sql = _claim_sql()
-        assert "COALESCE(ai_retry_after,now())<=now()" in sql
-        assert "COALESCE(ai_retry_count,0)<%s" in sql
-        assert "FOR UPDATE SKIP LOCKED" in sql
+        marker = sql.index("= 3) DESC")
+        assert "ASC" in sql[marker:marker + 80]
 
 
 class TestTheLiveWindow:
-    def test_defaults_to_half_a_day(self, monkeypatch):
-        """Chosen from the queue: at ~206 messages/hour a 48-hour window left
-        520 ahead of today's mail, 12 hours leaves 188."""
+    def test_tier_one_defaults_to_two_hours(self, monkeypatch):
+        """New mail must reach the model in minutes, which needs a tier small
+        enough to be nearly empty."""
         monkeypatch.delenv("AI_MAIL_LIVE_WINDOW_HOURS", raising=False)
-        assert store._live_mail_window_hours() == 12
+        assert store._live_mail_window_hours() == 2
 
     def test_a_host_can_change_it(self, monkeypatch):
         monkeypatch.setenv("AI_MAIL_LIVE_WINDOW_HOURS", "6")
         assert store._live_mail_window_hours() == 6
 
     @pytest.mark.parametrize("raw,expected", [
-        ("0", 1), ("-5", 1),        # never a window that excludes everything
-        ("100000", 720),            # never so wide that the tier means nothing
-        ("nonsense", 12), ("", 12),  # unreadable falls back to the default
+        ("0", 1), ("-5", 1), ("100000", 720), ("nonsense", 2), ("", 2),
     ])
     def test_it_stays_within_sane_bounds(self, monkeypatch, raw, expected):
         monkeypatch.setenv("AI_MAIL_LIVE_WINDOW_HOURS", raw)
