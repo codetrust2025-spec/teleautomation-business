@@ -5449,11 +5449,11 @@ const dR = [
   },
   {
     value: "completed",
-    label: "Completed",
+    label: "Closed / Completed",
   },
   {
     value: "fail",
-    label: "Failed",
+    label: "Rejected",
   },
   {
     value: "dropped",
@@ -5464,7 +5464,7 @@ function fR(e) {
   return (
     {
       completed: {
-        label: "Completed",
+        label: "Closed / Completed",
         cls: "cand-badge--good",
       },
       in_progress: {
@@ -5472,7 +5472,7 @@ function fR(e) {
         cls: "cand-badge--info",
       },
       fail: {
-        label: "Failed",
+        label: "Rejected",
         cls: "cand-badge--bad",
       },
       dropped: {
