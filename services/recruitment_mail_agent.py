@@ -13,6 +13,7 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import Any
 
+from core import ollama_nodes
 from core import recruitment_mail_store as store
 from core.ai_gateway import AIGatewayError, chat_structured, configured_models
 from services.recruitment_semantics import (
@@ -2533,7 +2534,35 @@ def normalise_shortlist_status(value: dict[str, Any], message: dict[str, Any] | 
     return True
 
 
-def analyze(message: dict[str, Any], attachment_texts: list[dict[str, str]] | None = None) -> tuple[dict[str, Any], str, int]:
+def analyze(
+    message: dict[str, Any], attachment_texts: list[dict[str, str]] | None = None,
+) -> tuple[dict[str, Any], str, int]:
+    """Read one mail, on one machine.
+
+    The relevance gate, the classifier and the validator are only comparable if
+    they ran in the same place. The model is not random -- pinned to one warm
+    node it returned the identical answer 9 times out of 9 -- but it answers
+    differently on different hardware: on byte-identical input rtx4060 said
+    INTERVIEW_UPDATE and jagadeesh INTERVIEW_SHORTLISTED, each repeatably, and
+    reloading the model on one node moved it again, to SELECTED.
+
+    That matters because a call which exceeds OLLAMA_REQUEST_TIMEOUT fails over
+    to the next node. The validator could then answer from a different machine
+    than the classifier, so the disagreement check compared two machines rather
+    than two readings -- which is how a genuine Karat interview reminder was
+    refused as AI_REQUIRES_REVIEW at confidence 1.0.
+
+    Inside this session the first call chooses a node normally, honouring the
+    model pin, health and cooldown; the rest are held to it. If that node stops
+    being able to serve, selection raises instead of moving, the error reaches
+    `process_message`, and the mail is parked for retry. A decision is never
+    assembled from two machines.
+    """
+    with ollama_nodes.decision_session():
+        return _analyze_on_one_node(message, attachment_texts)
+
+
+def _analyze_on_one_node(message: dict[str, Any], attachment_texts: list[dict[str, str]] | None = None) -> tuple[dict[str, Any], str, int]:
     payload = _analysis_payload(message, attachment_texts)
     deterministic_context = classify_context(
         str(message.get("subject") or ""), str(message.get("body") or ""),

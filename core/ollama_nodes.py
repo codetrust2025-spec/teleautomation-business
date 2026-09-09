@@ -10,10 +10,20 @@ import tempfile
 import threading
 import time
 import urllib.parse
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 _LOCK = threading.RLock()
+
+#: One decision's node, for the thread making that decision.
+#:
+#: A mail's relevance, classification and validation are three calls that are
+#: only comparable if they ran in the same place. The model is not random --
+#: pinned to one warm node it repeated the identical answer 9 times out of 9 --
+#: but it answers differently on different hardware, so a mid-analysis failover
+#: silently turns the validator into a second opinion about the machine.
+_decision = threading.local()
 # Normal priority is the order of `configured_nodes()`: RTX 4060, then
 # Jagadeesh, then Praveen. This name is only the last resort for when every
 # node is cooling off and one still has to be quoted.
@@ -618,8 +628,59 @@ def verify_inference(
         }
 
 
+def decision_node() -> str | None:
+    """The node this thread's decision session has already committed to."""
+    return getattr(_decision, "node_id", None)
+
+
+def decision_session_active() -> bool:
+    return bool(getattr(_decision, "active", False))
+
+
+def _remember_decision_node(node_id: str) -> None:
+    """First node a session resolves becomes the session's node."""
+    if decision_session_active() and not decision_node():
+        _decision.node_id = node_id
+
+
+@contextmanager
+def decision_session():
+    """Hold every model call for one decision on a single node.
+
+    The first call resolves a node normally, honouring the model pin, health
+    and cooldown. Every later call in the same session is restricted to that
+    node. If it stops being able to serve, selection fails and the caller sees
+    the gateway error -- which parks the mail for retry -- rather than
+    quietly finishing the decision somewhere else.
+
+    Nested sessions restore the outer session's node on exit, so a helper that
+    opens one cannot strand its caller on the wrong node.
+    """
+    previous_active = getattr(_decision, "active", False)
+    previous_node = getattr(_decision, "node_id", None)
+    _decision.active = True
+    _decision.node_id = None
+    try:
+        yield
+    finally:
+        _decision.active = previous_active
+        _decision.node_id = previous_node
+
+
 def candidate_order(model: str | None = None) -> list[str]:
-    """Routing order: a node pinned to this model, then the primary, then rest."""
+    """Routing order: a node pinned to this model, then the primary, then rest.
+
+    Inside a decision session the order collapses to the one node that session
+    already used. Measured on the same mail, byte-identical input: rtx4060
+    answered INTERVIEW_UPDATE and jagadeesh INTERVIEW_SHORTLISTED, each of them
+    repeatably. Letting one analysis take its classifier from one node and its
+    validator from another therefore compares two machines rather than two
+    readings, and that is what produced MODEL_DISAGREEMENT on a genuine Karat
+    interview reminder at confidence 1.0.
+    """
+    pinned = decision_node()
+    if pinned:
+        return [pinned]
     ordered = [item["id"] for item in configured_nodes()]
     head: list[str] = []
     pinned = model_node_preference().get(str(model or "")) if model else None
@@ -687,6 +748,7 @@ def select_available_node(
                 continue
         else:
             record_success(node_id)
+        _remember_decision_node(node_id)
         return {
             "node_id": node_id,
             "base_url": base_url_for(node_id),

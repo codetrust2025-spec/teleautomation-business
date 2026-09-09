@@ -208,7 +208,9 @@ class TestTheShortcutIsGone:
         assert not hasattr(agent, "_deterministic_relevance_result")
 
     def test_analyze_has_no_branch_that_skips_the_relevance_call(self):
-        source = inspect.getsource(agent.analyze)
+        # analyze() is now a thin wrapper opening a decision session; the
+        # decision itself lives in _analyze_on_one_node.
+        source = inspect.getsource(agent._analyze_on_one_node)
         head = source[:source.index("classifier_input")]
         assert "RELEVANCE_PROMPT" in head
         assert "if relevance is None" not in head
