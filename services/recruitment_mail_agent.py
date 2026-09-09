@@ -1210,6 +1210,7 @@ def validate_result(
     value: dict[str, Any], message: dict[str, Any] | None = None,
     attachments: list[dict[str, Any]] | None = None,
     *, deterministic_context: dict[str, Any] | None = None,
+    relevance: dict[str, Any] | None = None,
 ) -> None:
     from jsonschema import Draft202012Validator
     # Backward-compatible normalization for v1 responses while the configured
@@ -1385,15 +1386,62 @@ def validate_result(
                     "MODEL_STAGE_MISMATCH_CORRECTED_BY_EXPLICIT_CONTEXT"
                 )
     if safe_status == "NONE":
+        # "Not supported" is a disagreement, not proof of noise. Content the
+        # deterministic layer positively recognises as non-outcome leaves
+        # through the branch above carrying its own reason -- JOB_ADVERTISEMENT,
+        # RECRUITER_QUESTIONNAIRE, JOB_BOARD_NOTIFICATION -- so the only
+        # proposals that reach here with a NOT_SUPPORTED reason are ones the
+        # model asserted and the source could not corroborate either way.
+        #
+        # Dropping those silently lost real interviews. Two mails from one
+        # genuine Zealogics AI interview, "Interview Access Code" and "Reminder:
+        # Interview Link Expires in 1 hour", were discarded this way at
+        # confidence 1.0 with no event, no notification and nothing on any
+        # screen -- and, because the model is not reproducible run to run, the
+        # same mail could land on needs_review instead on the next pass.
+        #
+        # Nothing here books anything. backend_transition_validated stays
+        # False, which is exactly what should_route_to_mail_alert requires of an
+        # OLLAMA result, so these reach the review queue and never the alert
+        # list. The transition itself is still refused: safe_status is NONE and
+        # no lifecycle or interview event is recorded.
+        # Narrow on purpose, because this veto is mostly right. Measured over
+        # the whole production corpus, 51 proposals were refused this way and
+        # most were the veto catching a hallucination: SELECTED on a TCS "OTP
+        # for login", HR_CONFIRMATION on "your Uber account is active",
+        # SELECTED on a GDPR retention notice and on "New jobs posted"
+        # blasts. Surfacing those would hand an operator ~36 mails that are
+        # correctly ignored today.
+        #
+        # One group behaves differently. Of the 51, six were a claim that a
+        # specific interview is scheduled or moved, and all six were genuine:
+        # the Zealogics access code and expiry reminder, two Sourcebae
+        # confirmations, Accenture's "We're looking forward to your interview",
+        # and a flocareer "Missed Interview Opportunity". A scheduled-interview
+        # claim is the one the source can least afford to lose, and the one the
+        # model is least prone to invent.
+        #
+        # Both conditions matter: the relevance gate must have established this
+        # recipient's own hiring process, so a newsletter promising an
+        # "interview preparation guide" still proves nothing and stays quietly
+        # ignored.
+        unsupported_proposal = (
+            rejection_reason in {
+                "INTERVIEW_EVENT_NOT_SUPPORTED_BY_ASSERTIVE_CONTEXT",
+                "PROPOSED_EVENT_NOT_SUPPORTED_BY_ASSERTIVE_CONTEXT",
+            }
+            and proposed_status in {"INTERVIEW_CONFIRMED", "INTERVIEW_RESCHEDULED"}
+            and str((relevance or {}).get("decision") or "").upper() == "ESTABLISHED"
+        )
         value.update(
-            status="IGNORED_NOT_OFFER_RELATED",
-            classification="not_relevant",
-            candidate_status="Profile Active",
+            status="MANUAL_REVIEW_REQUIRED" if unsupported_proposal else "IGNORED_NOT_OFFER_RELATED",
+            classification="needs_review" if unsupported_proposal else "not_relevant",
+            candidate_status="Needs Review" if unsupported_proposal else "Profile Active",
             is_selection_or_offer_related=False,
-            should_create_review_record=False,
-            requires_manual_review=False,
-            ignore_reason=rejection_reason or context["email_intent"],
-            validation_status="REJECTED",
+            should_create_review_record=unsupported_proposal,
+            requires_manual_review=unsupported_proposal,
+            ignore_reason=None if unsupported_proposal else (rejection_reason or context["email_intent"]),
+            validation_status="NEEDS_REVIEW" if unsupported_proposal else "REJECTED",
             lifecycle_event="NONE",
             is_job_outcome=False,
             evidence_summary=context["evidence_summary"],
@@ -1404,6 +1452,14 @@ def validate_result(
             backend_validation_reason=rejection_reason or "OUTCOME_NOT_ASSERTED",
             downgraded_from=proposed_status,
         )
+        if unsupported_proposal:
+            value["reason"] = (
+                f"The model read this as {proposed_status}, and the source did not "
+                "corroborate it. Nothing has been booked; an operator decides."
+            )
+            value["risk_flags"] = list(dict.fromkeys(
+                (value.get("risk_flags") or []) + ["PROPOSAL_NOT_CORROBORATED"]
+            ))
         return
     # The status is the validated transition. Model-supplied classification and
     # candidate labels are descriptive duplicates and must not contradict it.
@@ -2630,6 +2686,7 @@ def analyze(message: dict[str, Any], attachment_texts: list[dict[str, str]] | No
             validate_result(
                 result, message, attachment_texts,
                 deterministic_context=deterministic_context,
+                relevance=relevance,
             )
         except ValueError as exc:
             raise AIGatewayError(f"Ollama response failed schema validation: {exc}", code="OLLAMA_SCHEMA_VALIDATION_FAILED") from exc
