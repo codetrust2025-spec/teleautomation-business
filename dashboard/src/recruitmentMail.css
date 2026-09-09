@@ -2413,3 +2413,189 @@
    row accents carry that. */
 .mail-filters select option[value="interview"] { color: #7dd3fc; }
 .mail-filters select option[value="selection"] { color: #c4b5fd; }
+
+/* ── Compact Gmail operations layout ──────────────────────────────────────
+   Header, AI nodes and the four metric cards took roughly half the viewport
+   before the mailbox list began, so the list an operator came for started
+   below the fold. Everything below tightens that stack; nothing is removed,
+   and every rule is scoped to .sot-mailboxes-page so other pages sharing
+   these class names keep the spacing they have.
+
+   Placed at the end of the file deliberately: these override the base rules
+   above and would be dead if they came first. */
+
+/* The title block: same content, less air. */
+.sot-mailboxes-page .sot-header {
+  gap: 16px;
+  margin-bottom: 14px;
+}
+.sot-mailboxes-page .sot-title {
+  gap: 10px;
+}
+.sot-mailboxes-page .sot-brand-avatar {
+  width: 34px;
+  height: 34px;
+  font-size: 12px;
+}
+.sot-mailboxes-page .sot-title h1 {
+  margin: 0;
+  font-size: 19px;
+  line-height: 1.2;
+}
+/* The eyebrow and the strapline say what the page already says; on a page
+   whose job is the list below them they cost more than they explain. Hidden
+   rather than deleted so the markup and its meaning stay intact. */
+.sot-mailboxes-page .sot-title .sot-page-eyebrow,
+.sot-mailboxes-page .sot-title p,
+.sot-mailboxes-page .sot-overview-head p {
+  display: none;
+}
+.sot-mailboxes-page .sot-header-actions {
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+/* AI nodes, collapsed: one row rather than a three-card grid. */
+.sot-mailboxes-page .sot-ai-nodes {
+  margin: 0 0 12px;
+  padding: 6px 10px;
+}
+.sot-mailboxes-page .sot-ai-nodes > summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  list-style: none;
+  font-size: 12px;
+}
+.sot-mailboxes-page .sot-ai-nodes > summary::-webkit-details-marker {
+  display: none;
+}
+/* A disclosure triangle of our own, so the row still reads as expandable
+   after the native marker is removed. */
+.sot-mailboxes-page .sot-ai-nodes > summary::before {
+  content: "▸";
+  color: var(--sot-muted, #8da0bd);
+  font-size: 10px;
+  transition: transform 120ms ease;
+}
+.sot-mailboxes-page .sot-ai-nodes[open] > summary::before {
+  transform: rotate(90deg);
+}
+.sot-mailboxes-page .sot-ai-nodes > summary button {
+  margin-left: auto;
+}
+.sot-ai-nodes-glance {
+  color: var(--sot-muted, #8da0bd);
+  font-size: 11px;
+  font-weight: 600;
+}
+.sot-ai-nodes-glance.is-degraded {
+  color: var(--sot-amber, #ffa62b);
+}
+.sot-mailboxes-page .sot-ai-nodes[open] .sot-ai-node-grid {
+  margin-top: 8px;
+}
+
+/* The card the list lives in, and its heading. */
+.sot-mailboxes-page .sot-content-card.sot-mailbox-overview {
+  padding: 14px 16px;
+}
+.sot-mailboxes-page .sot-overview-head {
+  margin-bottom: 10px;
+}
+.sot-mailboxes-page .sot-overview-head h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+/* Four stat chips on one row instead of four tall cards. */
+.sot-mailboxes-page .sot-mailbox-metrics {
+  gap: 8px;
+  margin: 0 0 10px;
+}
+.sot-mailboxes-page .sot-mailbox-metric {
+  gap: 8px;
+  min-height: 0;
+  padding: 7px 10px;
+  border-radius: 8px;
+}
+.sot-mailboxes-page .sot-mailbox-metric > span {
+  width: 24px;
+  height: 24px;
+  font-size: 11px;
+}
+.sot-mailboxes-page .sot-mailbox-metric small {
+  font-size: 10px;
+  letter-spacing: 0.02em;
+}
+.sot-mailboxes-page .sot-mailbox-metric strong {
+  font-size: 17px;
+  line-height: 1.1;
+}
+
+/* Tabs and the controls that act on the list, sharing one row above it. */
+.sot-list-toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 0 0 2px;
+}
+.sot-list-toolbar .sot-mailbox-view-tabs {
+  margin: 0;
+  border-bottom: 0;
+  flex: 1 1 auto;
+}
+.sot-list-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding-bottom: 6px;
+}
+.sot-list-toolbar-actions .sot-search {
+  margin: 0;
+}
+.sot-mailboxes-page .sot-list-toolbar + .sot-add-mailbox-form {
+  margin: 10px 0 0;
+}
+/* The tab row carried the rule that separated it from the table; now that the
+   row is wider than the tabs, the whole toolbar carries it. */
+.sot-mailboxes-page .sot-list-toolbar {
+  border-bottom: 1px solid var(--sot-border, #21344d);
+}
+
+@media (max-width: 900px) {
+  /* Tablet: the toolbar stacks, so search takes the width it needs rather
+     than being squeezed beside the tabs. */
+  .sot-list-toolbar-actions {
+    width: 100%;
+    padding-bottom: 8px;
+  }
+  .sot-list-toolbar-actions .sot-search {
+    flex: 1 1 auto;
+  }
+  .sot-mailboxes-page .sot-mailbox-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .sot-mailboxes-page .sot-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .sot-mailboxes-page .sot-header-actions {
+    justify-content: flex-start;
+    width: 100%;
+  }
+  /* Two chips per row rather than four cramped ones; the numbers stay
+     readable, which is the only reason they are here. */
+  .sot-mailboxes-page .sot-mailbox-metric strong {
+    font-size: 15px;
+  }
+}

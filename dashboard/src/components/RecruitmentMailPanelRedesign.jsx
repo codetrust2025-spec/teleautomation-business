@@ -1445,13 +1445,32 @@ function AiNodeManager({
   onMakePrimary,
   onUnload,
 }) {
+  // Collapsed by default. The node grid is three cards tall and sits between
+  // the page header and the mailbox list, which is the space the list needs;
+  // an operator reads it when a node misbehaves, not on every visit. The
+  // summary keeps the fact that would send them looking, so collapsing hides
+  // the detail rather than the state.
+  const online = nodes.filter((node) => node.endpoint_reachable).length;
+  const primary = nodes.find((node) => node.primary);
   return (
-    <section className="sot-ai-nodes" aria-label="Ollama AI nodes">
-      <header>
+    <details className="sot-ai-nodes" aria-label="Ollama AI nodes">
+      <summary>
         <strong>AI nodes</strong>
+        <span
+          className={`sot-ai-nodes-glance${online < nodes.length ? " is-degraded" : ""}`}
+        >
+          {nodes.length
+            ? `${online}/${nodes.length} online${primary ? ` · ${primary.label}` : ""}`
+            : "none configured"}
+        </span>
         <button
           type="button"
-          onClick={onRefresh}
+          onClick={(event) => {
+            // Inside a summary, a click would toggle the panel as well.
+            event.preventDefault();
+            event.stopPropagation();
+            onRefresh();
+          }}
           disabled={busy || refreshing}
           aria-label="Refresh AI node health"
         >
@@ -1459,7 +1478,7 @@ function AiNodeManager({
             Refresh
           </ButtonContent>
         </button>
-      </header>
+      </summary>
       <div className="sot-ai-node-grid">
         {nodes.length ? (
           nodes.map((node) => (
@@ -1532,7 +1551,7 @@ function AiNodeManager({
           <p className="sot-empty">Node health has not loaded yet.</p>
         )}
       </div>
-    </section>
+    </details>
   );
 }
 
@@ -2689,6 +2708,10 @@ export default function RecruitmentMailPanelRedesign() {
       {tab === "mailboxes" && (
         <>
           <section className="sot-content-card sot-mailbox-overview">
+            {/* Search and Add Gmail used to sit here, a full row above the
+                four metric cards, which pushed the list they act on further
+                down the page. They now sit in the toolbar directly above the
+                table -- next to what they filter and add to. */}
             <div className="sot-overview-head">
               <div>
                 <h2>Candidate Gmail</h2>
@@ -2696,7 +2719,73 @@ export default function RecruitmentMailPanelRedesign() {
                   Link accounts and monitor important job outcomes.
                 </p>
               </div>
-              <div className="sot-overview-actions">
+            </div>
+            <section className="sot-mailbox-metrics">
+              <MailboxMetric
+                icon="✉"
+                label="Total Mailboxes"
+                value={rows.length}
+              />
+              <MailboxMetric
+                icon="✓"
+                label="Monitoring Active"
+                value={
+                  rows.filter((row) => row.uiStatus === "CONNECTED").length +
+                  rows.filter((row) =>
+                    ["SYNC_QUEUED", "SYNCING"].includes(row.uiStatus),
+                  ).length
+                }
+                tone="green"
+              />
+              <MailboxMetric
+                icon="!"
+                label="Pending Gmail"
+                value={pendingMailboxCandidates.length}
+                tone="amber"
+              />
+              {/* Only shown when something is actually broken: a permanent
+                  "Reconnect Required 0" is noise next to three live counts.
+                  Counted off the same uiStatus the rows below render, so the
+                  card and the rows cannot disagree. */}
+              {reconnectRequiredCount > 0 && (
+                <MailboxMetric
+                  icon="⚠"
+                  label="Reconnect Required"
+                  value={reconnectRequiredCount}
+                  tone="red"
+                />
+              )}
+            </section>
+            {/* Tabs and the controls that act on the list, on one row directly
+                above it. The tablist stays its own element: search and a button
+                are not tabs and must not sit inside it. */}
+            <div className="sot-list-toolbar">
+              <div
+                className="sot-mailbox-view-tabs"
+                role="tablist"
+                aria-label="Mailbox list"
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={mailboxListMode === "linked"}
+                  className={mailboxListMode === "linked" ? "active" : ""}
+                  onClick={() => setMailboxListMode("linked")}
+                >
+                  Linked <span>{rows.length}</span>
+                  <small>{activeMailboxCount} active</small>
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={mailboxListMode === "pending"}
+                  className={mailboxListMode === "pending" ? "active" : ""}
+                  onClick={() => setMailboxListMode("pending")}
+                >
+                  Pending Gmail <span>{pendingMailboxCandidates.length}</span>
+                </button>
+              </div>
+              <div className="sot-list-toolbar-actions">
                 <SearchInput value={search} onChange={setSearch} />
                 <button
                   type="button"
@@ -2754,67 +2843,6 @@ export default function RecruitmentMailPanelRedesign() {
                 </button>
               </form>
             )}
-            <section className="sot-mailbox-metrics">
-              <MailboxMetric
-                icon="✉"
-                label="Total Mailboxes"
-                value={rows.length}
-              />
-              <MailboxMetric
-                icon="✓"
-                label="Monitoring Active"
-                value={
-                  rows.filter((row) => row.uiStatus === "CONNECTED").length +
-                  rows.filter((row) =>
-                    ["SYNC_QUEUED", "SYNCING"].includes(row.uiStatus),
-                  ).length
-                }
-                tone="green"
-              />
-              <MailboxMetric
-                icon="!"
-                label="Pending Gmail"
-                value={pendingMailboxCandidates.length}
-                tone="amber"
-              />
-              {/* Only shown when something is actually broken: a permanent
-                  "Reconnect Required 0" is noise next to three live counts.
-                  Counted off the same uiStatus the rows below render, so the
-                  card and the rows cannot disagree. */}
-              {reconnectRequiredCount > 0 && (
-                <MailboxMetric
-                  icon="⚠"
-                  label="Reconnect Required"
-                  value={reconnectRequiredCount}
-                  tone="red"
-                />
-              )}
-            </section>
-            <div
-              className="sot-mailbox-view-tabs"
-              role="tablist"
-              aria-label="Mailbox list"
-            >
-              <button
-                type="button"
-                role="tab"
-                aria-selected={mailboxListMode === "linked"}
-                className={mailboxListMode === "linked" ? "active" : ""}
-                onClick={() => setMailboxListMode("linked")}
-              >
-                Linked <span>{rows.length}</span>
-                <small>{activeMailboxCount} active</small>
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={mailboxListMode === "pending"}
-                className={mailboxListMode === "pending" ? "active" : ""}
-                onClick={() => setMailboxListMode("pending")}
-              >
-                Pending Gmail <span>{pendingMailboxCandidates.length}</span>
-              </button>
-            </div>
             {mailboxListMode === "pending" ? (
               <PendingMailboxTable
                 candidates={visiblePendingMailboxCandidates}
