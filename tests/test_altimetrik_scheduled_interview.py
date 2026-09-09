@@ -148,7 +148,20 @@ class TestTheScheduleConvertsToIst:
         end = tuple(int(part) for part in schedule["time_end"].split(":"))
         assert (end[0] * 60 + end[1]) - (start[0] * 60 + start[1]) == 60
 
-    @pytest.mark.parametrize("zone", ["+0000", "Mars/Olympus", ""])
+    def test_the_numeric_offset_this_mail_states_is_understood(self):
+        """The body writes the zone as "UTC (+0000)". An offset is now a
+        supported way to state one, so this shape converts rather than being
+        parked -- 08:30 at +00:00 is 14:00 IST, the same slot the "UTC"
+        spelling produces above."""
+        schedule = normalized_schedule({"interview": {
+            "date": "2026-09-11", "time": "08:30 AM",
+            "end_time": "09:30 AM", "timezone": "+0000",
+        }})
+        assert (schedule["time"], schedule["time_end"]) == ("14:00", "15:00")
+        assert schedule["timezone"] == "Asia/Kolkata"
+        assert schedule["source_timezone"] == "UTC+00:00"
+
+    @pytest.mark.parametrize("zone", ["Mars/Olympus", "", "TBD", "+19:00"])
     def test_a_zone_it_cannot_resolve_is_refused_not_guessed(self, zone):
         from services.interview_auto_booking import BookingValidationError
 

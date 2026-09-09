@@ -43,7 +43,7 @@ def test_supported_timezones_are_explicit(raw, key):
     assert booking.validate_timezone(raw).key == key
 
 
-@pytest.mark.parametrize("raw", ["", "India/Imaginary", "GMT+5:30"])
+@pytest.mark.parametrize("raw", ["", "India/Imaginary", "GMT+25:00", "NOTAZONE"])
 def test_invalid_timezones_are_blocked(raw):
     with pytest.raises(booking.BookingValidationError):
         booking.validate_timezone(raw)
@@ -52,7 +52,8 @@ def test_invalid_timezones_are_blocked(raw):
 def test_non_ist_schedule_is_converted_to_booking_calendar():
     value = result(date="2026-07-20", time="03:00 PM", timezone="America/New_York")
     schedule = booking.normalized_schedule(value, now=datetime(2026, 7, 15, tzinfo=ZoneInfo("America/New_York")))
-    assert schedule == {"date": "2026-07-21", "time": "00:30", "time_end": "01:00", "source_timezone": "America/New_York"}
+    assert schedule == {"date": "2026-07-21", "time": "00:30", "time_end": "01:00",
+                        "timezone": "Asia/Kolkata", "source_timezone": "America/New_York"}
 
 
 def test_singapore_calendar_schedule_is_normalized_to_ist():
@@ -65,6 +66,7 @@ def test_singapore_calendar_schedule_is_normalized_to_ist():
         "date": "2026-07-23",
         "time": "17:30",
         "time_end": "18:00",
+        "timezone": "Asia/Kolkata",
         "source_timezone": "Asia/Singapore",
     }
 
@@ -82,6 +84,7 @@ def test_trusted_calendar_duration_is_preserved_instead_of_defaulting_to_30_minu
         "date": "2026-07-29",
         "time": "09:45",
         "time_end": "10:30",
+        "timezone": "Asia/Kolkata",
         "source_timezone": "Asia/Kolkata",
     }
 
