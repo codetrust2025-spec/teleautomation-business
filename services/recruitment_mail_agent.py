@@ -2077,31 +2077,6 @@ def _analysis_payload(message: dict[str, Any], attachment_texts: list[dict[str, 
 }
 
 
-def _deterministic_relevance_result(
-    context: dict[str, Any], routing_context: dict[str, Any], payload: dict[str, Any],
-) -> dict[str, Any] | None:
-    """Return a proven relevance decision, or None when a model must decide."""
-    if str(context.get("recruitment_relevance") or "") != "ESTABLISHED":
-        return None
-    sources = _source_texts(
-        str(payload.get("subject") or ""), str(payload.get("body") or ""),
-        payload.get("attachments") or [], payload.get("thread_context") or [],
-    )
-    evidence = [
-        {"source": item.get("source"), "text": item.get("text")}
-        for item in routing_context.get("evidence") or []
-        if _evidence_supported(item, sources)
-    ]
-    return {
-        "decision": "ESTABLISHED",
-        "message_kind": "RECIPIENT_HIRING_PROCESS",
-        "confidence": 100,
-        "evidence": evidence[:6],
-        "reason": "Deterministic context contains an explicit candidate lifecycle or interview assertion.",
-        "source": "DETERMINISTIC_ASSERTIVE_CONTEXT",
-    }
-
-
 def _validate_relevance_result(value: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
     from jsonschema import Draft202012Validator
 
@@ -2112,10 +2087,23 @@ def _validate_relevance_result(value: dict[str, Any], payload: dict[str, Any]) -
         str(payload.get("subject") or ""), str(payload.get("body") or ""),
         payload.get("attachments") or [], payload.get("thread_context") or [],
     )
-    supported = [
-        item for item in value.get("evidence") or []
-        if _evidence_supported(item, sources)
+    # Correct a mislabelled source before judging the quote, exactly as the
+    # classifier does. `_evidence_supported` searches only the category the
+    # model declared, so a quote that is verbatim in the body but labelled
+    # ATTACHMENT was thrown away and the whole ESTABLISHED answer downgraded.
+    # That is what turned away a genuine "Rescheduling interview for
+    # Application Security Engineer": the model read it correctly, quoted the
+    # body word for word, and named the wrong source.
+    #
+    # This corrects the label, never the quote. `_canonicalise_evidence_source`
+    # keeps an item only when its text occurs verbatim in exactly one source,
+    # so invented evidence still has nowhere to match, and an ambiguous quote
+    # still fails closed.
+    canonical = [
+        corrected for item in value.get("evidence") or []
+        if (corrected := _canonicalise_evidence_source(item, sources)) is not None
     ]
+    supported = [item for item in canonical if _evidence_supported(item, sources)]
     value["confidence"] = float(value.get("confidence") or 0) / (
         100.0 if float(value.get("confidence") or 0) > 1 else 1.0
     )
@@ -2472,47 +2460,58 @@ def analyze(message: dict[str, Any], attachment_texts: list[dict[str, str]] | No
             )
 
     try:
-        relevance = _deterministic_relevance_result(
-            deterministic_context, routing_context, payload,
+        # Ollama decides whether this mail is about the recipient's own hiring
+        # process. There is no keyword path around this call.
+        #
+        # There used to be one. When the deterministic layer asserted an
+        # interview, `_deterministic_relevance_result` returned ESTABLISHED /
+        # RECIPIENT_HIRING_PROCESS at confidence 100 and the relevance model was
+        # never asked. That layer matches vocabulary, not meaning: a
+        # handwriting-therapy mailing list saying "Join our FREE Interview with
+        # Imran Baig", with a date, a time and a Zoom link, satisfied
+        # `_is_assertive_interview_invitation` -- the webinar/workshop exclusion
+        # inspects only the subject, and the subject was
+        # "Her son's behaviour transformed through GraphoTherapy". 128 mails
+        # reached the classifier this way, among them nine from that list, a
+        # Naukri newsletter and an Uber account notice.
+        #
+        # `calendar_invite_intent` stopped using the shortcut when the same
+        # thing happened to three webinars. This is the other entry point.
+        relevance_response = request_model(
+            messages=[
+                {"role": "system", "content": RELEVANCE_PROMPT},
+                {"role": "user", "content": _prompt_json(payload)},
+            ],
+            model=models["primary"], max_retries=0,
+            workload="recruitment_mail_relevance",
+            output_schema=RELEVANCE_SCHEMA,
         )
-        relevance_model = None
-        relevance_duration = 0
-        if relevance is None:
+        try:
+            relevance = _validate_relevance_result(
+                parse_model_json(relevance_response.content), payload,
+            )
+        except (ValueError, json.JSONDecodeError):
             relevance_response = request_model(
                 messages=[
-                    {"role": "system", "content": RELEVANCE_PROMPT},
+                    {"role": "system", "content": RELEVANCE_PROMPT + " Return valid JSON only; no markdown or commentary."},
                     {"role": "user", "content": _prompt_json(payload)},
                 ],
-                model=models["primary"], max_retries=0,
-                workload="recruitment_mail_relevance",
+                model=relevance_response.model, max_retries=0,
+                workload="recruitment_mail_relevance_json_repair",
                 output_schema=RELEVANCE_SCHEMA,
             )
             try:
                 relevance = _validate_relevance_result(
                     parse_model_json(relevance_response.content), payload,
                 )
-            except (ValueError, json.JSONDecodeError):
-                relevance_response = request_model(
-                    messages=[
-                        {"role": "system", "content": RELEVANCE_PROMPT + " Return valid JSON only; no markdown or commentary."},
-                        {"role": "user", "content": _prompt_json(payload)},
-                    ],
-                    model=relevance_response.model, max_retries=0,
-                    workload="recruitment_mail_relevance_json_repair",
-                    output_schema=RELEVANCE_SCHEMA,
-                )
-                try:
-                    relevance = _validate_relevance_result(
-                        parse_model_json(relevance_response.content), payload,
-                    )
-                except (ValueError, json.JSONDecodeError) as exc:
-                    raise AIGatewayError(
-                        "Ollama returned invalid recruitment-relevance JSON after one repair retry.",
-                        code="OLLAMA_INVALID_JSON",
-                    ) from exc
-            relevance_model = relevance_response.model
-            relevance_duration = relevance_response.duration_ms
-            relevance["model"] = relevance_model
+            except (ValueError, json.JSONDecodeError) as exc:
+                raise AIGatewayError(
+                    "Ollama returned invalid recruitment-relevance JSON after one repair retry.",
+                    code="OLLAMA_INVALID_JSON",
+                ) from exc
+        relevance_model = relevance_response.model
+        relevance_duration = relevance_response.duration_ms
+        relevance["model"] = relevance_model
 
         if relevance.get("decision") != "ESTABLISHED":
             result = _neutral_non_alert_result(
