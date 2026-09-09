@@ -110,8 +110,11 @@ describe('the shell applies this rule', () => {
     expect(app).toMatch(/item\.badge === 'interviews'\s*\?\s*pending\?\.pendingInterviewCount/)
   })
 
-  it('leaves the Candidates badge wiring alone', () => {
-    expect(app).toMatch(/item\.badge === 'works'\s*\?\s*pending\?\.count/)
+  it('counts candidates on the Candidates badge, not tasks between them', () => {
+    // Was pending?.count -- the number of to-do items -- which made the badge
+    // disagree with its own label as soon as one candidate had two gaps.
+    expect(app).toContain('pending?.candidateCount || 0')
+    expect(app).not.toContain('pending?.count || 0')
   })
 })
 

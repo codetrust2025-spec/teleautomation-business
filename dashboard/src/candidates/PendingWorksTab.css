@@ -1,0 +1,145 @@
+/* Pending Works tab.
+   Borrows the Candidates page's own table (.cand-table) and only adds what the
+   table has no opinion about: the summary line, the priority pill and the
+   action button. Colours come from the variables already on the page rather
+   than new ones, so this follows the theme instead of restating it. */
+
+.cand-pending__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 0 0 12px;
+}
+
+.cand-pending__summary {
+  margin: 0;
+  font-size: 13px;
+  color: var(--cand-muted, #8da0bd);
+}
+.cand-pending__summary strong {
+  color: var(--cand-text, #f3f7ff);
+  font-size: 15px;
+}
+
+.cand-pending__name {
+  font-weight: 700;
+}
+/* A candidate with more than one gap is worth spotting before the rows are
+   counted by eye. */
+.cand-pending__task-count {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.16);
+  color: var(--cand-muted, #8da0bd);
+  font-size: 10px;
+  font-weight: 700;
+  vertical-align: middle;
+}
+
+.cand-pending__priority {
+  display: inline-block;
+  min-width: 58px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+}
+.cand-pending__priority.is-high {
+  background: rgba(255, 91, 97, 0.14);
+  color: #ff8a8f;
+}
+.cand-pending__priority.is-medium {
+  background: rgba(255, 166, 43, 0.14);
+  color: #ffbe6a;
+}
+.cand-pending__priority.is-low {
+  background: rgba(148, 163, 184, 0.14);
+  color: #9fb0c9;
+}
+
+.cand-pending-action {
+  padding: 5px 12px;
+  border: 1px solid rgba(50, 132, 255, 0.45);
+  border-radius: 7px;
+  background: rgba(50, 132, 255, 0.12);
+  color: #8ab8ff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.cand-pending-action:hover {
+  background: rgba(50, 132, 255, 0.2);
+}
+.cand-pending-action--ghost {
+  border-color: rgba(148, 163, 184, 0.3);
+  background: transparent;
+  color: var(--cand-muted, #8da0bd);
+}
+
+/* The grouped candidate cell spans its tasks, so the divider belongs on the
+   first row of each group rather than on every row. */
+.cand-pending-table tbody tr.cand-pending-row--first > td {
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.cand-pending-empty {
+  padding: 34px 18px;
+  text-align: center;
+  color: var(--cand-muted, #8da0bd);
+  font-size: 13px;
+}
+.cand-pending-empty__title {
+  margin: 0 0 6px;
+  color: var(--cand-text, #f3f7ff);
+  font-size: 15px;
+  font-weight: 700;
+}
+.cand-pending-empty--error {
+  color: #ff8a8f;
+}
+
+@media (max-width: 720px) {
+  /* The table becomes stacked cards, matching how the Candidates table already
+     behaves on a phone: a rowSpan cannot survive that, so the grouped cells
+     drop back into their own labelled rows. */
+  .cand-pending-table thead {
+    display: none;
+  }
+  .cand-pending-table,
+  .cand-pending-table tbody,
+  .cand-pending-table tr,
+  .cand-pending-table td {
+    display: block;
+    width: 100%;
+  }
+  .cand-pending-table tr {
+    margin-bottom: 10px;
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    border-radius: 10px;
+    padding: 6px 10px;
+  }
+  .cand-pending-table td {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 5px 0;
+    border: 0;
+  }
+  .cand-pending-table td::before {
+    content: attr(data-label);
+    color: var(--cand-muted, #8da0bd);
+    font-size: 11px;
+    font-weight: 700;
+  }
+  .cand-pending__head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

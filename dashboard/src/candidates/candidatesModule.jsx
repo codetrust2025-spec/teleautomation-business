@@ -12,6 +12,7 @@ import {
 import { CandidatesActiveRoster } from "./CandidatesActiveRoster.jsx";
 import { triggerRosterDownload } from "./candidatesRosterUtils.js";
 import { consumePendingWorkOpenIntent } from "../dailyOps/PendingWorksProvider.jsx";
+import { PendingWorksTab } from "./PendingWorksTab.jsx";
 import PayoutModal from "./PayoutModal.jsx";
 import "./PayoutModal.css";
 import EarningsBreakdown from "./EarningsBreakdown.jsx";
@@ -6218,6 +6219,15 @@ function CandidatesPanelImpl() {
         >
           Earnings
         </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={candTab === "pending"}
+          className={`cand-tabs__btn${candTab === "pending" ? " cand-tabs__btn--active" : ""}`}
+          onClick={() => setCandTab("pending")}
+        >
+          Pending Works
+        </button>
       </nav>
       <div
         className="cand-toolbar"
@@ -6353,6 +6363,15 @@ function CandidatesPanelImpl() {
         />
       )}
       {x && <div className="cand-error">{x}</div>}
+      {candTab === "pending" && (
+        <PendingWorksTab
+          onOpenCandidate={() => {
+            // The intent is already stashed; switching to the table lets the
+            // existing effect find the row and open its editor.
+            setCandTab("candidates");
+          }}
+        />
+      )}
       {candTab === "candidates" && (
         <div className="cand-table-wrap">
           <table className="cand-table">
