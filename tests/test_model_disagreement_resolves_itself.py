@@ -305,3 +305,60 @@ class TestTheSchemaIsTheModelsContract:
     def test_the_reconciler_does_not_write_the_retry_status(self):
         source = inspect.getsource(agent._reconcile_model_results)
         assert 'chosen["status"] = "AI_RETRY_PENDING"' not in source
+
+
+class TestTheConfidenceBandDoesNotUndoAnyOfThis:
+    """Resolving the disagreement is worth nothing if the next guard re-parks it.
+
+    Observed in production immediately after the first deploy of this change:
+    a "Thirdparty verification on behalf of Onni Global" mail came back
+    JOINING_DATE_UPDATED against BACKGROUND_VERIFICATION, reconciled correctly
+    to CONSERVATIVE_STAGE -- and was still written as MANUAL_REVIEW_REQUIRED.
+
+    The reconciler caps a reconciled result at 0.89 and the auto-accept
+    threshold is 0.90, so every one of the 466 lands in the medium band. That
+    band overwrote the status with MANUAL_REVIEW_REQUIRED, which added nothing:
+    a candidate advances only on AUTO_VALIDATED, and booking applies its own
+    thresholds. So the band keeps the reading and stops relabelling it.
+    """
+
+    def test_a_reconciled_result_lands_in_the_medium_band_by_construction(self):
+        chosen = reconcile("INTERVIEW_SHORTLISTED", "SELECTED")
+        auto_accept = 0.90
+        assert chosen["confidence"] < auto_accept
+        assert chosen["confidence"] >= 0.75
+
+    def test_the_medium_band_no_longer_overwrites_the_status(self):
+        source = inspect.getsource(agent.validate_result)
+        band = source[source.index("elif confidence < auto_threshold:"):]
+        band = band[:band.index('value["requires_manual_review"] = bool(')]
+        assert 'status="MANUAL_REVIEW_REQUIRED"' not in band
+        assert "requires_manual_review=True" not in band
+
+    def test_below_the_review_threshold_retries_rather_than_asking(self):
+        source = inspect.getsource(agent.validate_result)
+        band = source[source.index("if confidence < review_threshold:"):]
+        band = band[:band.index("elif confidence < auto_threshold:")]
+        assert "AI_RETRY_PENDING" in band
+        assert "MANUAL_REVIEW_REQUIRED" not in band
+        assert "should_create_review_record=False" in band
+
+    def test_medium_confidence_still_never_auto_validates(self):
+        """The safety half. AUTO_VALIDATED is what advances a candidate.
+
+        Checked against the code rather than the prose, since the comment in
+        that band explains the rule and would otherwise match.
+        """
+        source = inspect.getsource(agent.validate_result)
+        band = source[source.index("elif confidence < auto_threshold:"):]
+        band = band[:band.index('value["requires_manual_review"] = bool(')]
+        code = "\n".join(
+            line for line in band.splitlines() if not line.strip().startswith("#"))
+        assert "AUTO_VALIDATED" not in code
+
+    def test_an_actionable_interview_without_a_schedule_still_cannot_be_recorded(self):
+        """It must not become a confirmed interview nobody can book."""
+        source = inspect.getsource(agent.validate_result)
+        band = source[source.index("elif confidence < auto_threshold:"):]
+        band = band[:band.index('value["requires_manual_review"] = bool(')]
+        assert "MEDIUM_CONFIDENCE_INCOMPLETE_SCHEDULE" in band

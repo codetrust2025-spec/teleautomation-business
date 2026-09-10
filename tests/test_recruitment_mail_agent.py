@@ -65,16 +65,26 @@ def test_hash_is_deterministic():
     assert content_hash('same')==content_hash('same')
     assert content_hash('same')!=content_hash('different')
 
-def test_confidence_rule_persists_low_and_medium_confidence_for_manual_review():
+def test_confidence_rule_retries_low_and_records_medium_without_asking_anyone():
+    """Neither band asks a person, and neither band auto-validates.
+
+    Below the review threshold the reading is too unsure to record at all, so
+    it goes back for another attempt. In the medium band it is sure enough to
+    keep but not to act on -- which `validation_status` already says, since a
+    candidate advances only on AUTO_VALIDATED.
+    """
     message={'subject':'Selection update','body':'You have been selected for the role.'}
     low=valid_result();low['confidence']=.65
     validate_result(low,message)
-    assert low['status'] == 'MANUAL_REVIEW_REQUIRED'
-    assert low['classification'] == 'needs_review'
+    assert low['status'] == 'AI_RETRY_PENDING'
+    assert low['classification'] == 'ai_retry_pending'
+    assert low['requires_manual_review'] is False
+    assert low['should_create_review_record'] is False
     medium=valid_result();medium['confidence']=.85
     validate_result(medium,message)
-    assert medium['status'] == 'MANUAL_REVIEW_REQUIRED'
-    assert medium['requires_manual_review'] is True
+    assert medium['status'] != 'MANUAL_REVIEW_REQUIRED'
+    assert medium['requires_manual_review'] is False
+    assert medium['validation_status'] != 'AUTO_VALIDATED'
 
 def test_invalid_status_is_rejected():
     row=valid_result();row['status']='MADE_UP'

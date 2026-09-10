@@ -1685,16 +1685,49 @@ def validate_result(
     auto_threshold = max(0.8, min(0.99, float(os.getenv("AI_RECRUITMENT_AUTO_ACCEPT_THRESHOLD", "0.90"))))
     review_threshold = max(0.0, min(1.0, float(os.getenv("OLLAMA_CONFIDENCE_THRESHOLD", "0.75"))))
     if confidence < review_threshold:
-        value.update(status="MANUAL_REVIEW_REQUIRED", classification="needs_review", candidate_status="Needs Review",
-                     should_create_review_record=True, requires_manual_review=True, ignore_reason=None,
+        # Too unsure to record as anything. Another attempt runs against a
+        # different execution state and often is sure, so it retries rather
+        # than waiting on a person. `should_create_review_record` is cleared so
+        # no event is written and the retry exit in `process_message` claims it.
+        value.update(status="AI_RETRY_PENDING", classification="ai_retry_pending",
+                     candidate_status="AI Retry Pending",
+                     should_create_review_record=False, requires_manual_review=False,
+                     ignore_reason="AI_CONFIDENCE_BELOW_THRESHOLD",
                      reason="AI confidence is below the configured automatic-update threshold")
-        value["validation_status"] = "NEEDS_REVIEW"
+        value["validation_status"] = "RETRY_PENDING"
     elif confidence < auto_threshold:
+        # Medium confidence. Sure enough to record, not sure enough to act on
+        # by itself -- which `validation_status` already expresses, because
+        # `advance_candidate_status` moves a candidate only on AUTO_VALIDATED
+        # and `interview_auto_booking` applies its own thresholds on top.
+        #
+        # Overwriting the status with MANUAL_REVIEW_REQUIRED added nothing to
+        # that and cost the mail its reading. It is also where every resolved
+        # model disagreement landed: the reconciler caps a reconciled result at
+        # 0.89, just under the 0.90 auto-accept threshold, so all 466 of them
+        # arrived here and were relabelled "Needs Review" despite the two
+        # readers having been reconciled. The stage is kept instead.
+        #
+        # The carve-out for a fully scheduled interview is unchanged, and so is
+        # every gate below: a non-actionable classification cannot reach
+        # `interview_auto_booking.ACTIONABLE` at all, and an actionable one
+        # still faces the booking thresholds, the evidence guard, payment,
+        # duplicate and conflict.
         actionable_interview = value.get("classification") in {"interview_confirmed", "interview_rescheduled"}
         explicit_schedule = all(str((value.get("interview") or {}).get(key) or "").strip() for key in ("date", "time", "timezone"))
-        if not (actionable_interview and explicit_schedule and not value.get("risk_flags")):
-            value.update(status="MANUAL_REVIEW_REQUIRED", requires_manual_review=True, ignore_reason=None)
-        value["validation_status"] = "NEEDS_REVIEW"
+        if actionable_interview and not (explicit_schedule and not value.get("risk_flags")):
+            # An interview this system could act on, without the schedule that
+            # would let it. Undecided, so it retries; it must not be recorded
+            # as a confirmed interview nobody can book.
+            value.update(status="AI_RETRY_PENDING", classification="ai_retry_pending",
+                         candidate_status="AI Retry Pending",
+                         should_create_review_record=False, requires_manual_review=False,
+                         ignore_reason="MEDIUM_CONFIDENCE_INCOMPLETE_SCHEDULE")
+            value["validation_status"] = "RETRY_PENDING"
+        else:
+            value["requires_manual_review"] = False
+            value["ignore_reason"] = None
+            value["validation_status"] = "MEDIUM_CONFIDENCE"
     else:
         value["requires_manual_review"] = bool(value.get("requires_manual_review") or value.get("risk_flags"))
         value["ignore_reason"] = None
