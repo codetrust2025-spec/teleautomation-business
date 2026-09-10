@@ -119,12 +119,14 @@ class TestTheLiveWindow:
 
 
 class TestNothingElseAboutTheQueueChanged:
-    def test_terminal_parking_still_happens_first(self):
-        """Rows past the attempt cap are still parked before anything is
-        claimed, so they cannot be handed out again."""
+    def test_exhausted_retries_remain_claimable_with_backoff(self):
+        """No mail is terminally abandoned just because a model was down or
+        returned an uncertain result repeatedly.  The retry timestamp governs
+        capacity; the attempt count remains diagnostic only."""
         sql = _claim_sql()
-        assert "AI_FAILED_TERMINAL" in sql
-        assert sql.index("AI_FAILED_TERMINAL") < sql.index("ORDER BY")
+        assert "AI_FAILED_TERMINAL" not in sql
+        assert "processing_status IN ('AI_QUEUED','AI_RETRY_PENDING')" in sql
+        assert "ai_retry_after" in sql
 
     def test_expired_leases_are_still_returned_to_the_queue(self):
         sql = _claim_sql()
