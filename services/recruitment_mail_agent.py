@@ -1870,8 +1870,11 @@ def calendar_invite_is_a_candidate_interview(relevance: dict[str, Any]) -> bool:
     )
 
 
-def calendar_invite_verdict(relevance: dict[str, Any]) -> str:
-    """BOOK, REVIEW or IGNORE for a mail carrying a calendar invite.
+def calendar_invite_verdict(
+    relevance: dict[str, Any], *, calendar_result: dict[str, Any] | None = None,
+    message: dict[str, Any] | None = None,
+) -> str:
+    """BOOK, RETRY or IGNORE for a mail carrying a calendar invite.
 
     `decision` is the question the relevance prompt actually asks -- ESTABLISHED
     means the source ties this recipient to a real hiring process, and the same
@@ -1895,8 +1898,8 @@ def calendar_invite_verdict(relevance: dict[str, Any]) -> str:
     """
     decision = str(relevance.get("decision") or "").upper()
     kind = str(relevance.get("message_kind") or "").upper()
-    if decision == "ESTABLISHED":
-        return "BOOK" if kind == CANDIDATE_HIRING_MESSAGE_KIND else "REVIEW"
+    if decision == "ESTABLISHED" and kind == CANDIDATE_HIRING_MESSAGE_KIND:
+        return "BOOK"
     # NOT_ESTABLISHED, and the model named this the recipient's own hiring
     # process in the same breath. That pair contradicts itself, and reading it
     # as a rejection lost a real interview: a Microsoft Teams invite from
@@ -1917,14 +1920,22 @@ def calendar_invite_verdict(relevance: dict[str, Any]) -> str:
     # never RECIPIENT_HIRING_PROCESS.
     # An explicit NOT_ESTABLISHED is required: a missing or unreadable decision
     # is not a contradiction, it is junk, and junk still fails closed.
-    if decision == "NOT_ESTABLISHED" and kind == CANDIDATE_HIRING_MESSAGE_KIND:
-        return "REVIEW"
+    if (
+        (decision == "NOT_ESTABLISHED" and kind == CANDIDATE_HIRING_MESSAGE_KIND)
+        or (decision == "ESTABLISHED" and kind != CANDIDATE_HIRING_MESSAGE_KIND)
+    ):
+        # This is a deterministic evidence tie-breaker, not another model
+        # decision: authenticated invite structure plus hiring/role context
+        # can safely overcome a contradictory label; a clear webinar remains
+        # ignored; every other ambiguity returns to the automatic retry queue.
+        from services.calendar_interview_evidence import contradiction_resolution
+        return contradiction_resolution(relevance, calendar_result, message)
     return "IGNORE"
 
 
 def calendar_invite_needs_review(relevance: dict[str, Any]) -> bool:
-    """The model established the hiring process but named a conflicting kind."""
-    return calendar_invite_verdict(relevance) == "REVIEW"
+    """Legacy compatibility: ambiguity now retries automatically."""
+    return calendar_invite_verdict(relevance) == "RETRY"
 
 
 def _normalise_interview_timezone(raw) -> str:
@@ -2973,36 +2984,23 @@ def process_message(mailbox: dict[str, Any], decoded: dict[str, Any], attachment
                 error_code=getattr(exc, "code", "OLLAMA_INTERNAL_ERROR"),
             )
             return None
-        verdict = calendar_invite_verdict(calendar_relevance)
-        if verdict == "REVIEW":
-            # The model contradicted itself, and the invitation does not need it
-            # to be decisive. Reaching this line already means
-            # `trusted_interview_result` accepted the .ics: a single RFC 5545
-            # event with a UID, METHOD REQUEST or CANCEL, an organiser aligned
-            # with an authenticated sender, this recipient present in ATTENDEE,
-            # and an explicit start with a timezone. That is the deterministic
-            # evidence a booking rests on, and it does not become weaker because
-            # the model paired NOT_ESTABLISHED with RECIPIENT_HIRING_PROCESS.
-            #
-            # Gangadhar's ServiceNow interview was lost to this: a Teams invite
-            # from a named organiser, the candidate an attendee, 18:30 India
-            # Standard Time, refused because those two fields disagreed.
-            #
-            # A confident marketing answer still ignores below, which is what
-            # keeps the Zoom workshop out -- it answers NOT_ESTABLISHED with
-            # PUBLIC_EVENT, never RECIPIENT_HIRING_PROCESS. Payment, duplicate,
-            # conflict and lifecycle checks are all downstream of here and
-            # unchanged, so this decides detection only.
+        verdict = calendar_invite_verdict(
+            calendar_relevance, calendar_result=calendar_result, message=decoded,
+        )
+        if verdict == "RETRY":
+            # Contradictory relevance with insufficient deterministic proof is
+            # neither an ignore nor a human action.  Preserve the source mail
+            # and let the leased worker retry it with backoff.
             logger.warning(
-                "Calendar invite intent is self-contradictory; booking on the invitation "
-                "kind=%s decision=%s subject=%r",
+                "Calendar invite relevance requires automatic retry kind=%s decision=%s subject=%r",
                 calendar_relevance.get("message_kind"), calendar_relevance.get("decision"),
                 str(decoded.get("subject") or "")[:120],
             )
-            calendar_result = dict(calendar_result)
-            calendar_result["recruitment_relevance_result"] = deepcopy(calendar_relevance)
-            calendar_result["calendar_intent_contradictory"] = True
-            result, model, duration = calendar_result, "rfc5545-authenticated", 0
+            store.mark_message_status(
+                row["id"], "AI_RETRY_PENDING",
+                reason="CALENDAR_RELEVANCE_CONTRADICTION",
+            )
+            return None
         elif verdict == "IGNORE":
             reason = "CALENDAR_INVITE_NOT_A_CANDIDATE_INTERVIEW"
             logger.info(

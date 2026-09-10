@@ -158,6 +158,31 @@ class RecruitmentMailWorker:
         status=health(timeout=5)
         if not status.get('endpoint_reachable') or not status.get('model_available'):
             return
+        # Historical calendar recovery is deliberately target-bounded during
+        # rollout.  A deployment may name the two verified production message
+        # ids; no broad archive replay can create slots before its read-only
+        # reconciliation report is reviewed.
+        target_ids=[value.strip() for value in os.getenv('AI_CALENDAR_RECOVERY_MESSAGE_IDS','').split(',') if value.strip()]
+        for row in store.claim_calendar_invite_recovery_messages(
+            provider_message_ids=target_ids,
+            limit=max(1,min(10,int(os.getenv('AI_CALENDAR_RECOVERY_BATCH_SIZE','2')))),
+        ):
+            mailbox={'id':row['mailbox_id'],'candidate_id':row.get('mailbox_candidate_id') or row.get('candidate_id'),'email_address':row.get('email_address')}
+            decoded={'provider_message_id':row.get('provider_message_id'),'provider_thread_id':row.get('provider_thread_id'),
+              'sender_name':row.get('sender_name'),'sender_email':row.get('sender_email'),'recipient_email':row.get('recipient_email'),
+              'subject':row.get('subject'),'sent_at':row.get('sent_at'),'body':row.get('body_text') or '',
+              'html_body':row.get('html_body_text') or '','authentication_results':row.get('authentication_results'),
+              'received_spf':row.get('received_spf'),'rfc_message_id':row.get('rfc_message_id'),
+              'message_direction':row.get('message_direction'),'gmail_label_ids':row.get('gmail_label_ids') or [],
+              'to_metadata':row.get('to_metadata') or []}
+            try:
+                event=process_message(mailbox,decoded,row.get('attachments') or [],reprocess=True)
+                refreshed=store.stored_message(row['mailbox_id'],row['provider_message_id']) or {}
+                state=str((event or {}).get('auto_booking',{}).get('automation_state') or refreshed.get('processing_status') or 'AI_RETRY_PENDING').upper()
+                store.complete_calendar_invite_recovery(row['id'],state=state,reason=str(refreshed.get('ignore_reason') or 'CALENDAR_RECOVERY'))
+            except Exception as exc:
+                store.complete_calendar_invite_recovery(row['id'],state='AI_RETRY_PENDING',reason=type(exc).__name__)
+                logger.exception('Calendar invite recovery failed message_id=%s',row['id'])
         maximum=max(1,min(20,int(os.getenv('AI_MAIL_AI_RETRY_BATCH_SIZE','3'))))
         # The lease has to outlive a real analysis or the row is reclaimed
         # mid-flight and recycled forever. Production ran a 150s lease against

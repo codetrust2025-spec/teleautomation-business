@@ -1207,6 +1207,87 @@ def promote_ignored_messages(limit: int = 200) -> int:
     return len(rows)
 
 
+_CALENDAR_RECOVERY_VERSION = "calendar-evidence-v1"
+_CALENDAR_FALSE_IGNORE_REASONS = (
+    "CALENDAR_INVITE_NOT_A_CANDIDATE_INTERVIEW",
+    "EVIDENCE_DOES_NOT_ENTAIL_TRANSITION",
+    "CALENDAR_RELEVANCE_CONTRADICTION",
+)
+
+
+def claim_calendar_invite_recovery_messages(
+    *, provider_message_ids: list[str], limit: int = 5,
+) -> list[dict[str, Any]]:
+    """Lease a small, versioned set of previously ignored calendar invites.
+
+    This is intentionally not a historical mailbox replay. Only an explicit,
+    bounded set of provider message ids with an `.ics` attachment and a known
+    calendar false-ignore reason is eligible. A successful ignore is
+    reconsidered only after the recovery rules receive a new version.
+    """
+    ids = sorted({str(value).strip() for value in provider_message_ids if str(value).strip()})
+    if not use_postgres() or not ids:
+        return []
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT m.*,b.email_address,b.candidate_id AS mailbox_candidate_id
+                 FROM mailbox_messages m
+                 JOIN candidate_mailboxes b ON b.id=m.mailbox_id
+                 LEFT JOIN recruitment_calendar_recovery r ON r.mailbox_message_id=m.id
+                WHERE m.processing_status='AUTO_IGNORE'
+                  AND m.provider_message_id=ANY(%s)
+                  AND m.ignore_reason=ANY(%s)
+                  AND EXISTS(
+                    SELECT 1 FROM mailbox_attachments a
+                     WHERE a.mailbox_message_id=m.id
+                       AND lower(COALESCE(a.filename,'')) LIKE '%%.ics'
+                  )
+                  AND (
+                    r.mailbox_message_id IS NULL
+                    OR r.detection_version<>%s
+                    OR (r.state='AI_RETRY_PENDING' AND COALESCE(r.next_attempt_at,now())<=now())
+                  )
+                ORDER BY m.updated_at ASC
+                FOR UPDATE OF m SKIP LOCKED LIMIT %s""",
+            (ids, list(_CALENDAR_FALSE_IGNORE_REASONS), _CALENDAR_RECOVERY_VERSION, max(1, min(limit, 50))),
+        )
+        rows = _rows(cur)
+        for row in rows:
+            cur.execute(
+                """INSERT INTO recruitment_calendar_recovery(
+                      mailbox_message_id,detection_version,state,attempts,last_reason,next_attempt_at,updated_at)
+                   VALUES(%s,%s,'RUNNING',1,NULL,NULL,now())
+                   ON CONFLICT(mailbox_message_id) DO UPDATE SET
+                     detection_version=EXCLUDED.detection_version,state='RUNNING',
+                     attempts=recruitment_calendar_recovery.attempts+1,
+                     next_attempt_at=NULL,updated_at=now()""",
+                (row["id"], _CALENDAR_RECOVERY_VERSION),
+            )
+    for row in rows:
+        row["attachments"] = [
+            {**item, "text": item.get("extracted_text") or ""}
+            for item in attachments_for_message(row["id"], include_text=True)
+        ]
+    return rows
+
+
+def complete_calendar_invite_recovery(message_id: str, *, state: str, reason: str | None = None) -> None:
+    """Record a recovery outcome; only retryable results are scheduled again."""
+    if not use_postgres():
+        return
+    safe_state = state if state in {
+        "AUTO_IGNORE", "AI_RETRY_PENDING", "AUTO_BOOKED", "AUTO_RESCHEDULED", "AUTO_CANCELLED",
+    } else "AI_RETRY_PENDING"
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """UPDATE recruitment_calendar_recovery SET state=%s,last_reason=%s,
+                 next_attempt_at=CASE WHEN %s='AI_RETRY_PENDING'
+                   THEN now()+interval '15 minutes' ELSE NULL END,
+                 updated_at=now() WHERE mailbox_message_id=%s""",
+            (safe_state, reason, safe_state, message_id),
+        )
+
+
 # Only genuine offer documents identify a duplicate OFFER. Recurring documents
 # such as a resume, or a new interview invite, must never suppress a distinct
 # event just because the same file was attached to an earlier email.

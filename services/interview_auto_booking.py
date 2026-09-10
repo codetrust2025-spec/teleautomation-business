@@ -726,6 +726,22 @@ def execute_auto_booking(
     # lifecycle-safe persistence to the decision it receives.
     from services import recruitment_automation
 
+    # A mailbox can still carry a historical duplicate candidate row.  Booking
+    # state must always be created under the canonical person identity; the
+    # original mailbox/event ids remain the audit provenance.
+    booking_mailbox = dict(mailbox)
+    raw_candidate_id = str(mailbox.get("candidate_id") or "")
+    try:
+        canonical_candidate_id = candidate_store.canonical_candidate_identity_id(raw_candidate_id)
+    except Exception as exc:
+        raise BookingValidationError(
+            "CANDIDATE_MAPPING_FAILED", "The mailbox candidate identity could not be resolved."
+        ) from exc
+    if not canonical_candidate_id:
+        raise BookingValidationError(
+            "CANDIDATE_MAPPING_FAILED", "The mailbox candidate identity could not be resolved."
+        )
+    booking_mailbox["candidate_id"] = canonical_candidate_id
     automated_result = recruitment_automation.apply_decision(result)
     decision = recruitment_automation.decision_for(automated_result)
     _record_automation_projection(
@@ -733,9 +749,9 @@ def execute_auto_booking(
         reason="FINAL_AI_DECISION",
     )
     with _BOOKING_LOCK:
-        with mail_store.candidate_booking_lock(str(mailbox.get("candidate_id") or "")):
+        with mail_store.candidate_booking_lock(canonical_candidate_id):
             outcome = _execute_auto_booking(
-                mailbox=mailbox, message=message, event=event, result=automated_result,
+                mailbox=booking_mailbox, message=message, event=event, result=automated_result,
                 correlation_id=correlation_id,
             )
     # A final non-booking decision is authoritative.  It can deliberately
