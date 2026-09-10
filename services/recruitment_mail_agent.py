@@ -1895,9 +1895,31 @@ def calendar_invite_verdict(relevance: dict[str, Any]) -> str:
     """
     decision = str(relevance.get("decision") or "").upper()
     kind = str(relevance.get("message_kind") or "").upper()
-    if decision != "ESTABLISHED":
-        return "IGNORE"
-    return "BOOK" if kind == CANDIDATE_HIRING_MESSAGE_KIND else "REVIEW"
+    if decision == "ESTABLISHED":
+        return "BOOK" if kind == CANDIDATE_HIRING_MESSAGE_KIND else "REVIEW"
+    # NOT_ESTABLISHED, and the model named this the recipient's own hiring
+    # process in the same breath. That pair contradicts itself, and reading it
+    # as a rejection lost a real interview: a Microsoft Teams invite from
+    # "Thaga, Mohamed" -- METHOD:REQUEST, STATUS:CONFIRMED, SEQUENCE:0, the
+    # candidate an ATTENDEE, DTSTART 2026-09-10T18:30 India Standard Time --
+    # came back NOT_ESTABLISHED / RECIPIENT_HIRING_PROCESS at 0.85 and was
+    # dropped with no event, no alert and no booking. The interview was that
+    # evening.
+    #
+    # This is the mirror of the pairing already handled above, and it is
+    # treated the same way: an answer at odds with itself is a question for an
+    # operator, never a booking and never silence.
+    #
+    # A confident non-candidate answer still ignores, which is the whole
+    # webinar defence: every marketing sample checked in production -- the Zoom
+    # workshop, the Naukri bootcamp, Yocket, Talent500, Impacteers and the
+    # GraphoTherapy list -- answered NOT_ESTABLISHED with one of these kinds,
+    # never RECIPIENT_HIRING_PROCESS.
+    # An explicit NOT_ESTABLISHED is required: a missing or unreadable decision
+    # is not a contradiction, it is junk, and junk still fails closed.
+    if decision == "NOT_ESTABLISHED" and kind == CANDIDATE_HIRING_MESSAGE_KIND:
+        return "REVIEW"
+    return "IGNORE"
 
 
 def calendar_invite_needs_review(relevance: dict[str, Any]) -> bool:
