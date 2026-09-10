@@ -14,7 +14,7 @@
  * disagree with the badges next to those accounts.
  */
 import React from 'react'
-import { describe, it, expect, vi, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 
 import { ReconnectWorklist } from './ReconnectWorklist.jsx'
@@ -40,7 +40,21 @@ const row = (name, email, authorisedDaysAgo, { broken = false } = {}) => ({
   },
 })
 
-afterEach(cleanup)
+// The fixtures are anchored to NOW, but the component asks the real clock:
+// `grantDaysRemaining(mailbox, Date.now())`. On 2026-09-09 the two agreed and
+// on 2026-09-10 they were a day apart, so "expires in 2 days" became "expires
+// in 1 day" and a deploy failed on a test that had nothing to do with the
+// change. Freezing Date -- and only Date, so React's own timers still run --
+// makes these assertions mean the same thing on any day.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(NOW)
+})
+
+afterEach(() => {
+  vi.useRealTimers()
+  cleanup()
+})
 
 describe('how long a grant has left', () => {
   it('lasts the seven days Google actually gives it', () => {

@@ -1608,6 +1608,52 @@ def validate_result(
                 ),
             )
             return
+        # The source can prove the transition without any single sentence
+        # entailing it. `classify_context` reads the whole mail -- interview
+        # wording, a real date, a time, a joining link -- and names the
+        # transition from that shape, while `_entailing_evidence_from_source`
+        # matches a sentence against `_TRANSITION_ASSERTIONS`. One question,
+        # two vocabularies, and they disagree: flocareer writes "Remember to
+        # attend the video interview today at 06:30 PM IST", which the shape
+        # reader calls INTERVIEW_CONFIRMED and the sentence matcher does not
+        # recognise at all.
+        #
+        # Silently ignoring those hid real interviews. Of the 26 mails refused
+        # this way in production, 23 had the deterministic layer naming the
+        # very transition the model proposed, and they read "Interview
+        # scheduled with Mphasis on Sat, August 15", "You are invited for
+        # interview with Deloitte", "Interview Call Letter".
+        #
+        # This books nothing. backend_transition_validated stays False, so
+        # should_route_to_mail_alert still refuses it and auto-booking still
+        # refuses it; the mail reaches the review queue instead of vanishing.
+        # A mail whose deterministic reading does not name this transition is
+        # still rejected exactly as before, which is what keeps rejections and
+        # job adverts out.
+        asserted_by_source = safe_status in {
+            str(context.get("interview_event") or "NONE").upper(),
+            str(context.get("lifecycle_event") or "NONE").upper(),
+        }
+        if asserted_by_source:
+            value.update(
+                status="MANUAL_REVIEW_REQUIRED", classification="needs_review",
+                candidate_status="Needs Review", is_selection_or_offer_related=False,
+                should_create_review_record=True, requires_manual_review=True,
+                ignore_reason=None, validation_status="NEEDS_REVIEW",
+                lifecycle_event="NONE", interview_event="NONE", business_domain="NONE",
+                is_job_outcome=False, is_current_event=False, evidence=supported,
+                backend_transition_validated=False,
+                backend_validation_reason="SOURCE_ASSERTS_TRANSITION_UNQUOTED",
+                downgraded_from=proposed_status,
+                summary=(
+                    "The email reads as this outcome and the source parser agrees, but "
+                    "no quoted sentence entails it, so a human confirms before booking."
+                ),
+            )
+            value["risk_flags"] = list(dict.fromkeys(
+                (value.get("risk_flags") or []) + ["TRANSITION_UNQUOTED"]
+            ))
+            return
         value.update(
             status="IGNORED_NOT_OFFER_RELATED", classification="not_relevant",
             candidate_status="Profile Active", is_selection_or_offer_related=False,
