@@ -260,6 +260,15 @@ def execute(value):
     )
 
 
+def execute_event(value, *, message_id, thread_id="gt1", notification_id="n1"):
+    return booking.execute_auto_booking(
+        mailbox={"id": "mb1", "candidate_id": "c1", "email_address": "candidate@test.invalid"},
+        message={"provider_message_id": message_id, "provider_thread_id": thread_id},
+        event={"mailbox_message_id": f"mm-{message_id}", "notification": {"id": notification_id, "email_analysis_id": "ma1"}},
+        result=value, correlation_id=f"corr-{message_id}",
+    )
+
+
 def execute_manual(value):
     return booking.execute_manual_approved_booking(
         mailbox={"id": "mb1", "candidate_id": "c1", "email_address": "candidate@test.invalid"},
@@ -280,6 +289,34 @@ def test_valid_confirmed_interview_books_without_approval(monkeypatch):
     assert outcome["notification"]["schedule"]["time"] == "15:00"
     assert outcome["notification"]["schedule"]["source_timezone"] == "Asia/Kolkata"
     assert audits[-1]["auto_booked"] is True
+
+
+def test_final_auto_book_decision_supersedes_a_stale_review_flag(monkeypatch):
+    monkeypatch.setenv("AI_INTERVIEW_AUTO_BOOKING_ENABLED", "true")
+    _candidate, audits = install_store_fakes(monkeypatch)
+    monkeypatch.setattr(booking.candidate_store, "assign_interview_slot", slot_writer("slot1"))
+    value = result()
+    value.update(requires_manual_review=True, automation_decision="AUTO_BOOK")
+
+    outcome = execute(value)
+
+    assert outcome["status"] == "Auto Booked"
+    assert audits[-1]["auto_booked"] is True
+
+
+@pytest.mark.parametrize("decision", ["AUTO_IGNORE", "AI_RETRY_PENDING"])
+def test_non_booking_final_decision_never_creates_a_slot(monkeypatch, decision):
+    monkeypatch.setenv("AI_INTERVIEW_AUTO_BOOKING_ENABLED", "true")
+    _candidate, audits = install_store_fakes(monkeypatch)
+    monkeypatch.setattr(booking.candidate_store, "assign_interview_slot", lambda **_kwargs: pytest.fail("must not book"))
+    value = result()
+    value["automation_decision"] = decision
+
+    outcome = execute(value)
+
+    assert outcome["status"] == "Blocked"
+    assert outcome["failure_code"] == "NOT_ACTIONABLE"
+    assert audits[-1]["auto_booked"] is False
 
 
 def test_invalid_round_text_is_not_saved_as_a_round(monkeypatch):
@@ -387,7 +424,11 @@ def test_payment_failure_creates_blocked_audit_without_booking(monkeypatch):
 
 def test_duplicate_booking_is_blocked(monkeypatch):
     monkeypatch.setenv("AI_INTERVIEW_AUTO_BOOKING_ENABLED", "true")
-    row = {"id": "c1", "name": "Rahul", "slot_confirmed": True, "date": "2099-07-20", "time": "15:00"}
+    row = {
+        "id": "c1", "name": "Rahul", "slot_confirmed": True,
+        "date": "2099-07-20", "time": "15:00",
+        "interview_source_message_id": "gm1",
+    }
     install_store_fakes(monkeypatch, rows=[row])
     outcome = execute(result())
     assert outcome["failure_code"] == "DUPLICATE_BOOKING"
@@ -463,11 +504,13 @@ def test_future_historical_interview_still_uses_live_safety_gates(monkeypatch):
     assert outcome["failure_code"] == "AI_NOT_VALIDATED"
 
 
-def test_slot_overlap_is_blocked(monkeypatch):
+def test_different_interview_overlap_is_allowed(monkeypatch):
     monkeypatch.setenv("AI_INTERVIEW_AUTO_BOOKING_ENABLED", "true")
     install_store_fakes(monkeypatch, conflicts=[{"id": "other", "name": "Other"}])
+    monkeypatch.setattr(booking.candidate_store, "assign_interview_slot", slot_writer("slot1"))
     outcome = execute(result())
-    assert outcome["failure_code"] == "SLOT_CONFLICT"
+    assert outcome["status"] == "Auto Booked"
+    assert outcome["audit"]["conflict_status"] == "NOT_REQUIRED"
 
 
 def test_candidate_email_mismatch_is_blocked(monkeypatch):
@@ -612,6 +655,7 @@ def test_pending_lifecycle_retry_does_not_create_a_second_slot(monkeypatch):
     existing = {
         "id": "slot1", "name": "Rahul", "slot_confirmed": True,
         "date": "2099-07-20", "time": "15:00", "time_end": "15:30",
+        "interview_source_message_id": "gm1",
     }
     install_store_fakes(monkeypatch, rows=[existing])
     incoming = booking.interview_lifecycle.LifecycleEvent.from_payload(
@@ -623,11 +667,15 @@ def test_pending_lifecycle_retry_does_not_create_a_second_slot(monkeypatch):
             booking.interview_lifecycle.TransitionDecision.IDEMPOTENT, incoming, "lifecycle-1", "", "PENDING",
         ),
     )
+    monkeypatch.setattr(
+        booking.candidate_store, "assert_slot_persisted", lambda *_args, **_kwargs: dict(existing),
+    )
     monkeypatch.setattr(booking.candidate_store, "assign_interview_slot", lambda **_kwargs: pytest.fail("retry must not create a second slot"))
 
     outcome = execute(result())
 
-    assert outcome["status"] == "Duplicate Ignored"
+    assert outcome["status"] == "Auto Booked"
+    assert outcome["booking"]["id"] == "slot1"
 
 
 def test_retry_recovers_persisted_slot_before_audit_without_assigning_again(monkeypatch):
@@ -662,20 +710,18 @@ def test_a_blocked_booking_tells_the_notification_why(monkeypatch):
     """The reason reaching the UI is the one the validator decided, not a
     guess reconstructed from the status text."""
     monkeypatch.setenv("AI_INTERVIEW_AUTO_BOOKING_ENABLED", "true")
-    install_store_fakes(monkeypatch, conflicts=[{"id": "other"}])
+    install_store_fakes(monkeypatch, payment_reason="Record at least payment received")
 
     outcome = execute(result())
 
     assert outcome["status"] == "Blocked"
-    assert outcome["failure_code"] == "SLOT_CONFLICT"
-    assert outcome["block_reason"]["reason_code"] == "NO_MATCHING_SLOT"
+    assert outcome["failure_code"] == "PAYMENT_VALIDATION_FAILED"
+    assert outcome["block_reason"]["reason_code"] == "PAYMENT_NOT_CLEARED"
     reason = outcome["notification"]["block_reason"]
-    assert reason["reason"] == (
-        "No available slot matches the invite time (20 Jul 2099, 3:00 PM)"
-    )
-    assert reason["reason_code"] == "NO_MATCHING_SLOT"
+    assert reason["reason"] == "Payment is not cleared for this interview"
+    assert reason["reason_code"] == "PAYMENT_NOT_CLEARED"
     # The exact validator branch survives alongside the operator-facing text.
-    assert reason["internal_code"] == "SLOT_CONFLICT"
+    assert reason["internal_code"] == "PAYMENT_VALIDATION_FAILED"
 
 
 def test_a_duplicate_booking_names_the_round_it_clashes_with(monkeypatch):
@@ -683,6 +729,7 @@ def test_a_duplicate_booking_names_the_round_it_clashes_with(monkeypatch):
     install_store_fakes(monkeypatch, rows=[{
         "id": "c1", "slot_confirmed": True,
         "date": "2099-07-20", "time": "15:00",
+        "interview_source_message_id": "gm1",
     }])
 
     outcome = execute(result())
@@ -861,20 +908,17 @@ def test_each_revision_in_turn_lands_on_the_final_time(monkeypatch):
     assert len(rows) == 1
 
 
-def test_a_revision_still_refuses_to_overlap_another_candidate(monkeypatch):
+def test_a_revision_allows_another_interview_to_overlap(monkeypatch):
     monkeypatch.setenv("AI_INTERVIEW_AUTO_BOOKING_ENABLED", "true")
     install_store_fakes(
         monkeypatch, rows=[booked_slot("15:30", 0)], conflicts=[{"id": "someone-else"}],
     )
-    monkeypatch.setattr(
-        booking.candidate_store, "update_interview_slot",
-        lambda **kwargs: pytest.fail("must not save over another candidate's slot"),
-    )
+    monkeypatch.setattr(booking.candidate_store, "update_interview_slot", slot_writer("c1"))
 
     outcome = execute(revision(2, "01:00 PM"))
 
-    assert outcome["status"] == "Blocked"
-    assert outcome["failure_code"] == "SLOT_CONFLICT"
+    assert outcome["status"] == "Rescheduled"
+    assert outcome["audit"]["conflict_status"] == "NOT_REQUIRED"
 
 
 def test_an_unrelated_calendar_event_is_still_a_new_booking(monkeypatch):
@@ -891,6 +935,38 @@ def test_an_unrelated_calendar_event_is_still_a_new_booking(monkeypatch):
 
     assert execute(revision(1, "11:30 AM"))["status"] == "Auto Booked"
     assert saved, "a different event must still create its own booking"
+
+
+def test_different_calendar_invites_can_share_the_exact_same_time(monkeypatch):
+    """Gangadhar-style parallel invites must not block each other by time."""
+    monkeypatch.setenv("AI_INTERVIEW_AUTO_BOOKING_ENABLED", "true")
+    rows = []
+    _candidate, audits = install_store_fakes(monkeypatch, rows=rows)
+    monkeypatch.setattr(booking.candidate_store, "list_candidates", lambda **_kwargs: list(rows))
+
+    def _assign(**kwargs):
+        booking_id = f"slot-{len(rows) + 1}"
+        stored = slot_writer(booking_id)(**kwargs)
+        rows.append(stored)
+        return stored
+
+    monkeypatch.setattr(booking.candidate_store, "assign_interview_slot", _assign)
+    first = result()
+    first["calendar"] = {"uid": "gangadhar-invite-one", "sequence": 0}
+    second = result()
+    second["calendar"] = {"uid": "gangadhar-invite-two", "sequence": 0}
+
+    one = execute_event(first, message_id="gangadhar-gm-1", thread_id="gangadhar-thread-1")
+    two = execute_event(second, message_id="gangadhar-gm-2", thread_id="gangadhar-thread-2")
+
+    assert one["status"] == two["status"] == "Auto Booked"
+    assert [row["interview_calendar_uid"] for row in rows] == [
+        "gangadhar-invite-one", "gangadhar-invite-two",
+    ]
+    assert {(row["date"], row["time"], row["time_end"]) for row in rows} == {
+        ("2099-07-20", "15:00", "15:30"),
+    }
+    assert [audit["conflict_status"] for audit in audits] == ["NOT_REQUIRED", "NOT_REQUIRED"]
 
 
 def test_an_invite_without_a_calendar_uid_behaves_exactly_as_before(monkeypatch):
