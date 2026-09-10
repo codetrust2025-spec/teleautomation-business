@@ -42,8 +42,12 @@ class TestTheThreeTiers:
         assert store._QUEUE_TIMEZONE == "Asia/Kolkata"
 
     def test_a_null_sent_at_cannot_jump_the_queue(self):
-        """Without COALESCE the tier is NULL and sorts unpredictably."""
-        assert store._TIER_SQL.count("COALESCE(sent_at,created_at)") == 2
+        """A bare `sent_at` makes the tier NULL, which sorts to the very front.
+
+        Asserted as an invariant rather than a count, so the tier expression can
+        grow without the guard quietly ceasing to check anything.
+        """
+        assert "sent_at" not in store._TIER_SQL.replace("COALESCE(sent_at,created_at)", "")
 
     def test_fifo_survives_inside_every_tier(self):
         sql = _claim_sql()

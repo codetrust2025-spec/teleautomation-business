@@ -805,10 +805,28 @@ def stored_message(mailbox_id: str, provider_message_id: str) -> dict[str, Any] 
 #: Operations time. "Today" means the operator's day, not UTC's.
 _QUEUE_TIMEZONE = "Asia/Kolkata"
 
+#: When a mail became this pipeline's work.
+#:
+#: Usually that is when it was sent, but mail does not always reach us as it is
+#: written. A mailbox reconnects after its token expired, a Gmail history gap is
+#: backfilled, a sync catches up -- and a batch lands carrying a `sent_at` from
+#: days ago. Such a mail has never been read, never been classified, and may
+#: describe something that has not happened yet, so as far as the queue is
+#: concerned it arrived when we received it, not when it was written.
+#:
+#: Bounded by how stale it already was on arrival, because a genuine archive
+#: sweep also lands with a recent `created_at`. Without that bound, importing an
+#: old mailbox would promote thousands of dead mails ahead of live ones and
+#: recreate the exact stall this tiering exists to prevent.
+_QUEUE_ARRIVAL_SQL = """CASE
+      WHEN COALESCE(sent_at,created_at) >= created_at-(%s||' days')::interval
+        THEN GREATEST(COALESCE(sent_at,created_at),created_at)
+      ELSE COALESCE(sent_at,created_at) END"""
+
 #: Tier 1 just arrived, tier 2 is the rest of today, tier 3 is history.
-_TIER_SQL = """CASE
-      WHEN COALESCE(sent_at,created_at) >= now()-(%s||' hours')::interval THEN 1
-      WHEN COALESCE(sent_at,created_at) >= (date_trunc('day', now() AT TIME ZONE %s) AT TIME ZONE %s) THEN 2
+_TIER_SQL = f"""CASE
+      WHEN {_QUEUE_ARRIVAL_SQL} >= now()-(%s||' hours')::interval THEN 1
+      WHEN {_QUEUE_ARRIVAL_SQL} >= (date_trunc('day', now() AT TIME ZONE %s) AT TIME ZONE %s) THEN 2
       ELSE 3 END"""
 
 #: Rotates across claims so one in every `_backlog_share()` goes to history.
@@ -828,6 +846,24 @@ def _live_mail_window_hours() -> int:
         return max(1, min(720, int(os.getenv("AI_MAIL_LIVE_WINDOW_HOURS", "2"))))
     except (TypeError, ValueError):
         return 2
+
+
+def _ingest_freshness_days() -> int:
+    """How stale a mail may already be on arrival and still count as new work.
+
+    Three days. Measured against the production queue on 2026-09-10, where
+    2,456 mails were claimable: three days promotes 49 of them and leaves 2,405
+    in history, including the 116 ingested that same day whose `sent_at` ran
+    back to 2026-08-27. It is wide enough to cover a mailbox that reconnects
+    after a weekend, and narrow enough that the promoted set drains in about an
+    hour at the measured 54 analyses/hour.
+
+    Zero disables the promotion entirely and restores tiering by `sent_at`.
+    """
+    try:
+        return max(0, min(30, int(os.getenv("AI_MAIL_INGEST_FRESHNESS_DAYS", "3"))))
+    except (TypeError, ValueError):
+        return 3
 
 
 def _backlog_share() -> int:
@@ -892,9 +928,19 @@ def claim_ai_messages(limit: int = 1, *, lease_seconds: int = 150) -> list[dict[
         #
         # FIFO is preserved inside each tier -- `sent_at ASC` after the tier --
         # so a thread is still processed in the order it arrived.
+        #
+        # A tier is decided by when the mail reached us, not only by when it
+        # was written -- see `_QUEUE_ARRIVAL_SQL`. Konduru Srinivas's HCLTech
+        # interview was missed because those two are not the same thing. The
+        # invitation was sent on 2026-09-08 and ingested on 2026-09-10; tiering
+        # on `sent_at` alone filed a mail we had owned for four minutes as
+        # history, at rank 2279 of 2456. At ~60 analyses/hour the model would
+        # have reached it about 33 hours later -- a full day after the 12:00
+        # interview it was announcing.
         live_hours=_live_mail_window_hours()
+        fresh_days=_ingest_freshness_days()
         tier=_TIER_SQL
-        tier_params=(live_hours,_QUEUE_TIMEZONE,_QUEUE_TIMEZONE)
+        tier_params=(fresh_days,live_hours,fresh_days,_QUEUE_TIMEZONE,_QUEUE_TIMEZONE)
         if _claim_prefers_backlog():
             order=f"({tier} = 3) DESC,{tier} ASC"
             order_params=tier_params+tier_params
