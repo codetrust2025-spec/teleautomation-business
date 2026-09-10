@@ -15,12 +15,13 @@ def test_dashboard_query_does_not_use_reserved_day_alias():
     assert "created_at::date AS event_day" in source
 
 def test_mail_reprocess_paths_preserve_trust_metadata():
+    """The worker-owned notification reprocess retains every trust field."""
     source = Path("core/recruitment_mail_api.py").read_text(encoding="utf-8")
     for field in (
         "authentication_results", "received_spf", "rfc_message_id",
         "message_direction", "gmail_label_ids", "to_metadata",
     ):
-        assert source.count(f"'{field}':context.get('{field}')") >= 2
+        assert source.count(f"'{field}':context.get('{field}')") >= 1
 
 def app_client(monkeypatch):
     monkeypatch.delenv('DASHBOARD_PASSWORD',raising=False)
@@ -183,31 +184,25 @@ def test_gmail_pubsub_rejects_bad_token_without_reading_mailbox(monkeypatch):
     assert response.status_code==403
 
 
-def test_manual_approve_and_book_bridges_review_event_to_booking(monkeypatch):
+def test_manual_approve_and_book_is_retired_in_favor_of_worker_automation(monkeypatch):
     monkeypatch.setenv('AI_INTERVIEW_OFFER_TRACKING_ENABLED','true')
-    structured={
-        'classification':'interview_confirmed',
-        'interview':{'date':'2099-07-21','time':'12:30 PM','timezone':None},
-        'evidence':[{'meaning':'INTERVIEW_CONFIRMED','text':'Join the interview'}],
-    }
-    event={'id':'e1','candidate_id':'c1','mailbox_message_id':'mm1','primary_status':'INTERVIEW_CONFIRMED','structured_result':structured}
-    context={'mailbox_id':'mb1','mailbox_candidate_id':'c1','email_address':'candidate@test.invalid',
-             'provider_message_id':'gm1','provider_thread_id':'gt1','recipient_email':'candidate@test.invalid'}
-    audits=[]
-    monkeypatch.setattr(recruitment_mail_api.store,'event_detail',lambda *args,**kwargs:event)
-    monkeypatch.setattr(recruitment_mail_api.store,'event_reprocess_context',lambda _id:context)
-    monkeypatch.setattr(recruitment_mail_api.store,'review_event',lambda *args,**kwargs:{**event,'review_status':'APPROVED'})
-    monkeypatch.setattr(recruitment_mail_api.store,'notification_for_event',lambda _id:{'id':'n1'})
-    monkeypatch.setattr(recruitment_mail_api.store,'audit',lambda **kwargs:audits.append(kwargs))
     from services import interview_auto_booking
-    calls=[]
-    monkeypatch.setattr(interview_auto_booking,'execute_manual_approved_booking',lambda **kwargs:calls.append(kwargs) or {
-        'status':'Approved & Booked','booking':{'id':'slot1'},'failure_code':None,
-    })
+    monkeypatch.setattr(
+        interview_auto_booking, 'execute_manual_approved_booking',
+        lambda **_kwargs: pytest.fail('manual booking must not be reachable'),
+    )
+
     response=app_client(monkeypatch).post('/api/ai-recruitment/events/e1/approve-and-book',json={})
-    assert response.status_code==200
-    assert response.json()['booking_result']['status']=='Approved & Booked'
-    assert calls[0]['result']['ai_validation_status']=='MANUAL_APPROVED'
-    assert calls[0]['result']['interview']['timezone']=='Asia/Kolkata'
-    assert calls[0]['reviewer']=='dev'
-    assert audits[0]['action']=='INTERVIEW_APPROVE_AND_BOOK'
+    assert response.status_code==410
+    assert 'fully automated' in response.json()['detail']
+
+
+def test_manual_event_edit_and_offer_actions_are_retired(monkeypatch):
+    monkeypatch.setenv('AI_INTERVIEW_OFFER_TRACKING_ENABLED','true')
+    client=app_client(monkeypatch)
+
+    event_edit=client.patch('/api/ai-recruitment/events/e1',json={'changes':{'summary':'override'}})
+    offer_verify=client.post('/api/offer-verification/o1/verify',json={})
+
+    assert event_edit.status_code==410
+    assert offer_verify.status_code==410

@@ -44,19 +44,13 @@ const trackedStatuses = new Set([
   "INTERVIEW_CONFIRMED",
   "INTERVIEW_SHORTLISTED",
   "MANUAL_REVIEW_REQUIRED",
+  "AI_RETRY_PENDING",
 ]);
 const hiddenReviews = new Set(["IGNORED", "FALSE_POSITIVE", "DUPLICATE"]);
-const bookableInterviewStatuses = new Set([
-  "INTERVIEW_CONFIRMED",
-  "INTERVIEW_RESCHEDULED",
-  "INTERVIEW_CANCELLED",
-]);
-// Mirrors the lifecycle_groups mapping in
-// core/recruitment_mail_store.py::summarize_selection_tracking_events so the
-// summary tiles filter the Review Queue to exactly the statuses each tile's
-// count is derived from.
+// Mirrors the automation groups exposed by
+// core/recruitment_mail_store.py::summarize_selection_tracking_events.
 const STATUS_GROUP_STATUSES = {
-  needs_review: ["MANUAL_REVIEW_REQUIRED", "IGNORED_LOW_CONFIDENCE"],
+  automation_pending: ["AI_RETRY_PENDING", "MANUAL_REVIEW_REQUIRED", "IGNORED_LOW_CONFIDENCE"],
   selected: ["SELECTED", "FINAL_SELECTION_CONFIRMED"],
   offers_received: [
     "OFFER_INDICATION",
@@ -138,7 +132,7 @@ const aiNeverRan = (event) => {
   );
 };
 // Single source of truth for the "AI / Validation" label shown in both the
-// review table and the Detection Evidence drawer, so the two never drift.
+// automation activity table and the Detection Evidence drawer.
 const describeAiStatus = (event) => {
   const aiStatus = String(
     event?.ai_status || event?.structured_result?.ai_status || "",
@@ -156,10 +150,10 @@ const describeAiStatus = (event) => {
   }
   if (isManuallyApproved(event)) {
     return {
-      status: "Manually approved",
+      status: "Legacy approval",
       reason: aiFailureCode(event)
-        ? `Human review completed after ${aiFailureReason(event).toLowerCase()}`
-        : "Human review completed",
+        ? `Legacy approval recorded after ${aiFailureReason(event).toLowerCase()}`
+        : "Legacy approval recorded",
     };
   }
   if (aiFailureCode(event) || aiStatus === "RETRY_PENDING") {
@@ -247,10 +241,13 @@ const initials = (name) =>
     .join("")
     .toUpperCase();
 const isVisibleEvent = (event) =>
-  trackedStatuses.has(event.primary_status) &&
+  (trackedStatuses.has(event.primary_status) ||
+    String(event.automation_state || "").toUpperCase() === "AI_RETRY_PENDING") &&
   !hiddenReviews.has(event.review_status) &&
   event.visible_in_offer_review !== false &&
-  ((event.primary_status === "MANUAL_REVIEW_REQUIRED" &&
+  (String(event.automation_state || "").toUpperCase() === "AI_RETRY_PENDING" ||
+    String(event.primary_status || "").toUpperCase() === "AI_RETRY_PENDING" ||
+    (event.primary_status === "MANUAL_REVIEW_REQUIRED" &&
     ((event.validation_status || event.structured_result?.validation_status) ===
       "RETRY_PENDING" ||
       event.cleanup_version === "manual_content_audit_keep_v1")) ||
@@ -708,7 +705,7 @@ function AddMailboxForm({
   );
 }
 
-function ReviewQueue({
+function AutomationActivity({
   events,
   names,
   candidateId,
@@ -716,12 +713,12 @@ function ReviewQueue({
   statusFilterLabel,
   onClearStatusFilter,
   onEvidence,
-  onReview,
   onAddMailbox,
   addMailboxOpen,
 }) {
-  const pendingEvents = events.filter(
-    (event) => String(event.review_status || "").toUpperCase() === "PENDING",
+  const pendingEvents = events.filter((event) =>
+    String(event.automation_state || event.primary_status || "").toUpperCase() ===
+      "AI_RETRY_PENDING",
   );
   const interviewEvents = events.filter((event) =>
     String(event.primary_status || "").startsWith("INTERVIEW_"),
@@ -731,12 +728,12 @@ function ReviewQueue({
     <section className="sot-content-card sot-priority-review">
       <header>
         <div>
-          <span className="sot-workspace-eyebrow">FIRST ACTION</span>
-          <h2>Priority Mail Review</h2>
+          <span className="sot-workspace-eyebrow">AUTOMATED FLOW</span>
+          <h2>Mail Automation</h2>
           <p>
             {statusFilterLabel
               ? `Showing only "${statusFilterLabel}" emails.`
-              : "Only selection, offer and interview emails waiting for your decision are shown here."}
+              : "Every retained mail is being processed automatically; evidence remains available for audit."}
           </p>
         </div>
         <div className="sot-review-header-actions">
@@ -764,9 +761,9 @@ function ReviewQueue({
         aria-label="Priority review summary"
       >
         <article className={pendingEvents.length ? "is-urgent" : ""}>
-          <small>Needs action now</small>
+          <small>Automatic retries</small>
           <strong>{pendingEvents.length}</strong>
-          <span>Pending human decisions</span>
+          <span>Awaiting AI recovery</span>
         </article>
         <article>
           <small>Selection &amp; offers</small>
@@ -779,8 +776,8 @@ function ReviewQueue({
           <span>Schedule and booking emails</span>
         </article>
         <div className="sot-priority-order-note">
-          <strong>Action required only</strong>
-          <span>Reviewed and completed mail is hidden from this queue.</span>
+          <strong>No approval queue</strong>
+          <span>Booking, cancellation, and reschedule changes apply automatically.</span>
         </div>
       </div>
       <div className="sot-table-wrap">
@@ -794,7 +791,7 @@ function ReviewQueue({
               <th>Confidence</th>
               <th>AI / Validation</th>
               <th>Evidence Summary</th>
-              <th>Actions</th>
+              <th>Evidence</th>
             </tr>
           </thead>
           <tbody>
@@ -805,9 +802,6 @@ function ReviewQueue({
                     "FALLBACK" ||
                   String(event.ai_model || "").includes("fallback:") ||
                   String(event.ai_model || "").includes("ai-unavailable");
-                const canBookInterview =
-                  bookableInterviewStatuses.has(event.primary_status) &&
-                  !event.booking_id;
                 return (
                   <tr key={event.id}>
                     <td>
@@ -880,7 +874,7 @@ function ReviewQueue({
                     <td>
                       <strong>
                         {isManualAuditKeep(event)
-                          ? "Manually reviewed"
+                          ? "Legacy audit"
                           : aiFailureCode(event)
                             ? "AI unavailable"
                             : event.ai_model || "Not analyzed"}
@@ -903,43 +897,6 @@ function ReviewQueue({
                         <button onClick={() => onEvidence(event.id)}>
                           Evidence
                         </button>
-                        <button onClick={() => onReview(event.id, "retry")}>
-                          Retry AI
-                        </button>
-                        {canBookInterview &&
-                          ["PENDING", "APPROVED"].includes(
-                            event.review_status,
-                          ) && (
-                            <button
-                              className="approve"
-                              onClick={() =>
-                                onReview(event.id, "approve-and-book")
-                              }
-                            >
-                              {event.review_status === "APPROVED"
-                                ? "Book Interview"
-                                : "Approve & Book"}
-                            </button>
-                          )}
-                        {event.review_status === "PENDING" && (
-                          <>
-                            {!canBookInterview && (
-                              <button
-                                className="approve"
-                                onClick={() => onReview(event.id, "approve")}
-                              >
-                                Approve
-                              </button>
-                            )}
-                            <button
-                              onClick={() =>
-                                onReview(event.id, "false-positive")
-                              }
-                            >
-                              Reject
-                            </button>
-                          </>
-                        )}
                       </div>
                     </td>
                   </tr>
@@ -948,7 +905,7 @@ function ReviewQueue({
             ) : (
               <tr>
                 <td colSpan={8} className="sot-empty">
-                  No review mails need your action.
+                  No mail is awaiting automated processing.
                 </td>
               </tr>
             )}
@@ -964,7 +921,6 @@ function CandidateOutcomes({
   selectedId,
   timeline,
   onEvidence,
-  onOfferReview,
 }) {
   return (
     <section className="sot-content-card">
@@ -1010,9 +966,7 @@ function CandidateOutcomes({
                   {Math.round(Number(offer.confidence) * 100)}%
                 </small>
                 {offer.verification_status === "PENDING_REVIEW" && (
-                  <button onClick={() => onOfferReview(offer.id, "verify")}>
-                    Verify offer
-                  </button>
+                  <small>Automatic verification pending</small>
                 )}
               </article>
             ))}
@@ -1217,8 +1171,8 @@ function EvidenceDrawer({ id, onClose, onChanged }) {
           <h3>{event.received_email?.subject || event.subject}</h3>
           <p>
             AI analysis is pending because the AI service was unavailable. The
-            source email and deterministic fallback evidence are shown below for
-            safe manual review.
+            source email and deterministic fallback evidence are retained while
+            the worker retries automatically.
           </p>
           <dl>
             <div>
@@ -1253,7 +1207,7 @@ function EvidenceDrawer({ id, onClose, onChanged }) {
           <p>
             {event.evidence_summary ||
               event.structured_result?.evidence_summary ||
-              "Fallback evidence requires administrator verification."}
+              "Fallback evidence will be re-evaluated automatically."}
           </p>
           <ul>
             {(event.structured_result?.evidence || []).map((item, index) => (
@@ -1366,10 +1320,10 @@ function EvidenceDrawer({ id, onClose, onChanged }) {
               </dd>
             </div>
             <div>
-              <dt>{isManuallyApproved(event) ? "Review method" : "Model"}</dt>
+              <dt>{isManuallyApproved(event) ? "Legacy method" : "Model"}</dt>
               <dd>
                 {isManuallyApproved(event)
-                  ? "Human approval"
+                  ? "Legacy approval"
                   : isManualAuditKeep(event)
                     ? "Manual operator audit"
                     : event.ai_model}
@@ -1617,7 +1571,7 @@ function MonitoringOverview({
             <small>
               {aiStatus?.status === "healthy"
                 ? "qwen2.5:7b is ready"
-                : "Failures route to review"}
+                : "Failures retry automatically"}
             </small>
           </div>
         </article>
@@ -1718,21 +1672,22 @@ function MonitoringOverview({
       <aside className="sot-review-rule">
         <span className="sot-review-rule-icon">!</span>
         <div>
-          <strong>Fail-safe review lane</strong>
+          <strong>Fail-safe automation</strong>
           <small>
             Low confidence, model timeout, missing schedule, payment block or
-            slot conflict never changes candidate data automatically.
+            a deterministic booking block remains visible and is retried
+            automatically; it never needs an approval decision.
           </small>
         </div>
         <button type="button" onClick={() => onOpen("reviews")}>
-          {metrics.needs_review || 0} waiting
+          {metrics.automation_pending ?? metrics.needs_review ?? 0} retrying
         </button>
       </aside>
     </section>
   );
 }
 
-function InterviewWorkspace({ notifications, summary, onReview, onOpenMail }) {
+function InterviewWorkspace({ notifications, summary, onOpenMail }) {
   const today = new Date().toISOString().slice(0, 10);
   const upcoming = notifications.filter(
     (item) =>
@@ -1752,13 +1707,6 @@ function InterviewWorkspace({ notifications, summary, onReview, onOpenMail }) {
           <h2>Interview Monitoring</h2>
           <p>From a confirmed email schedule to a safe Daily Ops booking.</p>
         </div>
-        <button
-          type="button"
-          className="sot-secondary-button"
-          onClick={onReview}
-        >
-          Open review queue
-        </button>
       </header>
       <div className="sot-interview-metrics">
         <MailboxMetric
@@ -1919,6 +1867,8 @@ export default function RecruitmentMailPanelRedesign() {
   // operations live in their dedicated pages.
   const [tab, setTab] = useState("mailboxes");
   const [metrics, setMetrics] = useState({
+    automation_pending: 0,
+    // Legacy API alias. The visible UI uses automation_pending only.
     needs_review: 0,
     selected: 0,
     offers_received: 0,
@@ -1934,7 +1884,7 @@ export default function RecruitmentMailPanelRedesign() {
   const [mailboxes, setMailboxes] = useState([]);
   const [monitoringSummary, setMonitoringSummary] = useState({
     auto_booked_interviews: 0,
-    needs_review: 0,
+    automation_pending: 0,
     unread: 0,
   });
   const [interviewNotifications, setInterviewNotifications] = useState([]);
@@ -2289,55 +2239,6 @@ export default function RecruitmentMailPanelRedesign() {
       },
     );
   };
-  const review = async (id, action) => {
-    const approveAndBook = action === "approve-and-book";
-    const ok = await confirm({
-      title: approveAndBook
-        ? "Approve and book this interview?"
-        : `${human(action)} detection?`,
-      message: approveAndBook
-        ? "The source evidence will be approved and the schedule will pass payment, duplicate, conflict, timezone, and future-date checks before Daily Ops is changed."
-        : "This decision is recorded in the audit log.",
-      confirmLabel: approveAndBook ? "Approve & Book" : human(action),
-      variant: action === "approve" || approveAndBook ? "success" : "danger",
-    });
-    if (ok)
-      run(
-        () =>
-          request(`/api/ai-recruitment/events/${id}/${action}`, {
-            method: "POST",
-            body: "{}",
-          }),
-        approveAndBook
-          ? {
-              started: "Validating and booking the reviewed interview…",
-              success: (result) => {
-                const booking = result.booking_result || {};
-                if (booking.status === "Blocked")
-                  return `Detection approved, but booking was blocked: ${booking.message || booking.failure_code || "review the booking checks"}.`;
-                if (booking.duplicate)
-                  return "This interview was already booked; no duplicate slot was created.";
-                return `Interview ${booking.status || "approved"}. Daily Ops has been updated.`;
-              },
-            }
-          : {},
-      );
-  };
-  const offerReview = async (id, action) => {
-    const ok = await confirm({
-      title: `${human(action)} offer case?`,
-      message: "This does not create a payment obligation.",
-      confirmLabel: human(action),
-      variant: "success",
-    });
-    if (ok)
-      run(() =>
-        request(`/api/offer-verification/${id}/${action}`, {
-          method: "POST",
-          body: "{}",
-        }),
-      );
-  };
 
   const allRows = useMemo(
     () =>
@@ -2445,10 +2346,10 @@ export default function RecruitmentMailPanelRedesign() {
     {
       tone: "amber",
       icon: "△",
-      value: metrics.needs_review ?? 0,
-      title: "Needs Review",
-      subtitle: "Requires your attention",
-      group: "needs_review",
+      value: metrics.automation_pending ?? metrics.needs_review ?? 0,
+      title: "AI Retry Pending",
+      subtitle: "Retries automatically",
+      group: "automation_pending",
     },
     {
       tone: "blue",
@@ -2663,7 +2564,7 @@ export default function RecruitmentMailPanelRedesign() {
                 className="sot-secondary-button"
                 onClick={() => setTab("reviews")}
               >
-                Open review queue
+                Open automation activity
               </button>
             </header>
             <section className="sot-summary-grid">
@@ -2693,7 +2594,7 @@ export default function RecruitmentMailPanelRedesign() {
               <div>
                 <span>Safety rule</span>
                 <strong>
-                  Unknown or unsupported outcomes wait for human review
+                  Unknown or unsupported outcomes retry automatically
                 </strong>
               </div>
             </div>
@@ -2704,7 +2605,6 @@ export default function RecruitmentMailPanelRedesign() {
               selectedId={candidateId}
               timeline={timeline}
               onEvidence={setEvidenceId}
-              onOfferReview={offerReview}
             />
           )}
         </>
@@ -2713,7 +2613,6 @@ export default function RecruitmentMailPanelRedesign() {
         <InterviewWorkspace
           notifications={visibleInterviewNotifications}
           summary={monitoringSummary}
-          onReview={() => setTab("reviews")}
           onOpenMail={setEvidenceId}
         />
       )}
@@ -2899,7 +2798,7 @@ export default function RecruitmentMailPanelRedesign() {
               onSubmit={connectNewMailbox}
             />
           )}
-          <ReviewQueue
+          <AutomationActivity
             events={prioritizedReviewEvents
               .filter((event) =>
                 candidateId
@@ -2925,7 +2824,6 @@ export default function RecruitmentMailPanelRedesign() {
             }
             onClearStatusFilter={() => setReviewStatusFilter("")}
             onEvidence={setEvidenceId}
-            onReview={review}
             onAddMailbox={() => setShowAddMailbox((visible) => !visible)}
             addMailboxOpen={showAddMailbox}
           />

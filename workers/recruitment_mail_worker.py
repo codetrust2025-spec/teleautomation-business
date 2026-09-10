@@ -143,6 +143,17 @@ class RecruitmentMailWorker:
                 logger.exception('Gmail watch renewal failed mailbox_id=%s; polling fallback remains active',mailbox_id)
     def process_ai_recovery(self):
         """Process leased semantic work independently from Gmail ingestion."""
+        # Legacy review rows are converted before checking Ollama health.  An
+        # outage must leave them in the durable automatic queue, never in a
+        # human action list; when the gateway recovers the same worker claims
+        # them with normal backoff and leasing.
+        promoted = store.promote_legacy_review_states()
+        ignored = store.promote_ignored_messages()
+        if promoted or ignored:
+            _publish(
+                'mail_automation_state_updated', processing_status='AI_RETRY_PENDING',
+                promoted_retry_count=promoted, auto_ignore_count=ignored,
+            )
         from core.ai_gateway import health
         status=health(timeout=5)
         if not status.get('endpoint_reachable') or not status.get('model_available'):

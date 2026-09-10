@@ -18,6 +18,7 @@ def result(classification="interview_confirmed", confidence=.96, **interview):
         "classification": classification, "classification_source": "OLLAMA",
         "ai_validation_status": "VALIDATED", "confidence": confidence,
         "requires_manual_review": False, "interview": details,
+        "evidence": [{"meaning": "INTERVIEW_CONFIRMED", "text": "Interview schedule confirmed"}],
         "candidate": {"email": "candidate@test.invalid"},
         "company": {"name": "Example"}, "job": {"title": "Engineer"},
         "summary": "Confirmed interview", "reason": "Explicit schedule",
@@ -295,6 +296,23 @@ def test_valid_confirmed_interview_books_without_approval(monkeypatch):
     assert audits[-1]["auto_booked"] is True
 
 
+def test_auto_booking_projects_decision_then_verified_persisted_outcome(monkeypatch):
+    monkeypatch.setenv("AI_INTERVIEW_AUTO_BOOKING_ENABLED", "true")
+    _candidate, _audits = install_store_fakes(monkeypatch)
+    monkeypatch.setattr(booking.candidate_store, "assign_interview_slot", slot_writer("slot1"))
+    transitions = []
+    monkeypatch.setattr(
+        booking.mail_store, "record_automation_state",
+        lambda **kwargs: transitions.append(kwargs),
+    )
+
+    outcome = execute(result())
+
+    assert outcome["automation_state"] == "AUTO_BOOKED"
+    assert [row["state"] for row in transitions] == ["AUTO_BOOK", "AUTO_BOOKED"]
+    assert transitions[-1]["booking_id"] == "slot1"
+
+
 def test_final_auto_book_decision_supersedes_a_stale_review_flag(monkeypatch):
     monkeypatch.setenv("AI_INTERVIEW_AUTO_BOOKING_ENABLED", "true")
     _candidate, audits = install_store_fakes(monkeypatch)
@@ -308,8 +326,11 @@ def test_final_auto_book_decision_supersedes_a_stale_review_flag(monkeypatch):
     assert audits[-1]["auto_booked"] is True
 
 
-@pytest.mark.parametrize("decision", ["AUTO_IGNORE", "AI_RETRY_PENDING"])
-def test_non_booking_final_decision_never_creates_a_slot(monkeypatch, decision):
+@pytest.mark.parametrize(
+    ("decision", "expected_state"),
+    [("AUTO_IGNORE", "AUTO_IGNORE"), ("AI_RETRY_PENDING", "AI_RETRY_PENDING")],
+)
+def test_non_booking_final_decision_never_creates_a_slot(monkeypatch, decision, expected_state):
     monkeypatch.setenv("AI_INTERVIEW_AUTO_BOOKING_ENABLED", "true")
     _candidate, audits = install_store_fakes(monkeypatch)
     monkeypatch.setattr(booking.candidate_store, "assign_interview_slot", lambda **_kwargs: pytest.fail("must not book"))
@@ -320,6 +341,7 @@ def test_non_booking_final_decision_never_creates_a_slot(monkeypatch, decision):
 
     assert outcome["status"] == "Blocked"
     assert outcome["failure_code"] == "NOT_ACTIONABLE"
+    assert outcome["automation_state"] == expected_state
     assert audits[-1]["auto_booked"] is False
 
 
