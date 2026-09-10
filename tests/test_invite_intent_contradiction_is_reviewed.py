@@ -94,20 +94,23 @@ class TestWhatProcessMessageDoesWithEachVerdict:
         assert "archive_event_for_message" not in block
         assert "return None" not in block
 
-    def test_review_produces_a_record_an_operator_sees(self):
+    def test_a_contradictory_answer_now_books_on_the_invitation(self):
+        """Reaching this branch already means the .ics was accepted: one event,
+        a UID, an authenticated organiser, this recipient as an attendee, and an
+        explicit start. The model disagreeing with itself does not weaken that,
+        and waiting for a person lost Gangadhar's ServiceNow interview."""
         source = self._source()
         block = source[source.index('if verdict == "REVIEW"'):source.index('elif verdict == "IGNORE"')]
-        assert 'status="MANUAL_REVIEW_REQUIRED"' in block
-        assert 'classification="needs_review"' in block
-        assert "should_create_review_record=True" in block
-        assert "requires_manual_review=True" in block
+        assert 'MANUAL_REVIEW_REQUIRED' not in block
+        assert 'needs_review' not in block
+        assert 'requires_manual_review=True' not in block
+        assert 'model, duration = calendar_result, "rfc5545-authenticated", 0' in block
 
-    def test_review_is_not_a_booking(self):
-        """It keeps the .ics schedule, but never claims the invite is confirmed."""
+    def test_the_contradiction_is_recorded_even_though_it_books(self):
         source = self._source()
         block = source[source.index('if verdict == "REVIEW"'):source.index('elif verdict == "IGNORE"')]
-        assert "needs-review" in block
-        assert 'model, duration = calendar_result, "rfc5545-authenticated", 0' not in block
+        assert 'calendar_intent_contradictory' in block
+        assert 'logger.warning' in block
 
     def test_the_review_answer_is_kept_for_audit(self):
         source = self._source()
@@ -121,9 +124,10 @@ class TestWhatProcessMessageDoesWithEachVerdict:
         assert "IGNORED_NOT_OFFER_RELATED" in block
         assert "return None" in block
 
-    def test_book_is_the_only_path_that_authenticates_the_invite(self):
+    def test_both_booking_paths_authenticate_the_same_way(self):
+        """The agreed answer and the contradictory one both book on the .ics."""
         source = self._source()
-        assert source.count('"rfc5545-authenticated", 0') == 1
+        assert source.count('"rfc5545-authenticated", 0') == 2
 
     def test_each_verdict_has_exactly_one_branch(self):
         source = self._source()

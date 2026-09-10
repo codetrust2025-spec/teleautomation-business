@@ -128,9 +128,13 @@ def test_past_schedule_is_blocked():
         booking.normalized_schedule(value, now=datetime(2026, 7, 15, tzinfo=ZoneInfo("Asia/Kolkata")))
 
 
+# `manual` is the model's own requires_manual_review flag. It no longer vetoes
+# a booking: it described the model's confidence in its reading, not the
+# evidence, and it refused a Karat reminder at confidence 1.0 with a full
+# schedule. Confidence and completeness still gate exactly as before.
 @pytest.mark.parametrize(("confidence", "manual", "date_value", "allowed"), [
     (.95, False, "2026-07-20", True), (.85, False, "2026-07-20", True),
-    (.79, False, "2026-07-20", False), (.95, True, "2026-07-20", False),
+    (.79, False, "2026-07-20", False), (.95, True, "2026-07-20", True),
     (.85, False, "", False),
 ])
 def test_confidence_and_completeness_gate(monkeypatch, confidence, manual, date_value, allowed):

@@ -287,8 +287,8 @@ def validate_ai_for_booking(result: dict[str, Any], classification: str) -> None
     required = all(str(interview.get(key) or "").strip() for key in ("date", "time", "timezone"))
     if confidence < automatic and not required:
         raise BookingValidationError("MEDIUM_CONFIDENCE_INCOMPLETE", "Medium-confidence booking requires explicit date, time, and timezone.")
-    # Claude owns the final automation decision.  The booking layer consumes
-    # it rather than re-litigating classifier/review logic, while retaining
+    # The detection layer owns the final automation decision. The booking layer
+    # consumes it rather than re-litigating classifier logic, while retaining
     # its own source, schedule, candidate, payment and lifecycle invariants.
     final_decision = str(
         result.get("automation_decision") or result.get("booking_decision") or ""
@@ -299,10 +299,21 @@ def validate_ai_for_booking(result: dict[str, Any], classification: str) -> None
         )
     if final_decision not in {"", "AUTO_BOOK"}:
         raise BookingValidationError(
-            "AI_REQUIRES_REVIEW", "The final automation decision is not recognized for booking."
+            "NOT_ACTIONABLE", "The final automation decision is not recognized for booking."
         )
-    if bool(result.get("requires_manual_review")) and final_decision != "AUTO_BOOK":
-        raise BookingValidationError("AI_REQUIRES_REVIEW", "Ollama marked this interview for manual review.")
+    # The model's own request for review is not a veto, with or without an
+    # explicit decision. It described the model's confidence in its reading
+    # rather than the evidence: a Karat interview reminder carried it at
+    # confidence 1.0 with a full schedule, and a Teams invite naming the
+    # candidate as an attendee was refused on it too, on the day of the
+    # interview.
+    #
+    # Everything that protects a booking by reading evidence is still here and
+    # still ahead of this point -- a validated Ollama result or a trusted
+    # authenticated invitation, confidence over the review threshold, an
+    # explicit date, time and timezone for a medium-confidence booking, and an
+    # actionable classification. Payment, duplicate, conflict and lifecycle all
+    # run after it.
     if classification not in ACTIONABLE:
         raise BookingValidationError("NOT_ACTIONABLE", "This interview classification does not change a booking.")
 
