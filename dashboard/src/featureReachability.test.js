@@ -127,6 +127,9 @@ describe('operations backend routes are reachable from the UI', () => {
     // Read-only production runbook endpoint; deliberately not a dashboard
     // control, because reconciliation must never auto-repair live records.
     /^\/api\/mail-monitoring\/interview-reconciliation$/,
+    // Inventory only. Historical calendar mail must be reported and explicitly
+    // selected for bounded recovery, never exposed as a bulk-book UI action.
+    /^\/api\/mail-monitoring\/calendar-recovery-discovery$/,
   ]
 
   // The client builds parameterised routes as template literals, so the literal
