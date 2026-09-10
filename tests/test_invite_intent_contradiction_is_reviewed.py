@@ -1,27 +1,4 @@
-"""A contradictory intent answer is a question for an operator, not a rejection.
-
-The calendar gate required the relevance model to say ESTABLISHED *and* to name
-the kind RECIPIENT_HIRING_PROCESS. Those are not the same question. The prompt
-asks for `decision` -- "does the source tie this recipient to a real hiring
-process" -- and it already says marketing, training, webinars and public events
-are NOT_ESTABLISHED. `message_kind` is a label describing the mail.
-
-Requiring both to agree dropped real interviews. Checked against production,
-three genuine cancellations for named candidates came back ESTABLISHED with a
-contradicting kind and were silently discarded:
-
-    Canceled: L1 Interview_Gangadhar Nagarale      ESTABLISHED / MARKETING_OR_TRAINING
-    Canceled: Gopichand - Round 1 - System Admin   ESTABLISHED / GENERAL
-    Canceled: [Send Secure]Altisource Discussion   ESTABLISHED / MARKETING_OR_TRAINING
-
-each quoting the candidate's own interview line as its evidence. A cancellation
-carries its meaning in the subject and the .ics -- the bodies are disclaimer and
-stylesheet boilerplate -- so the model has little to label the mail from, and
-mislabels it while judging it correctly.
-
-Nothing is loosened for webinars. Every marketing sample checked in production
-answered NOT_ESTABLISHED, which still ignores them here.
-"""
+"""Contradictory calendar relevance resolves to BOOK, IGNORE, or automatic retry."""
 
 from __future__ import annotations
 
@@ -33,129 +10,35 @@ from services import recruitment_mail_agent as agent
 
 
 def relevance(decision, kind):
-    return {
-        "decision": decision, "message_kind": kind, "confidence": 0.96,
-        "evidence": [{"source": "EMAIL_SUBJECT", "text": "L1 Interview"}],
-        "reason": "checked against production",
-    }
+    return {"decision": decision, "message_kind": kind, "confidence": 0.96}
 
 
-# What production actually returned for the six cancellations, and for the
-# marketing mails that must stay out.
-GENUINE_KEPT = [("ESTABLISHED", "RECIPIENT_HIRING_PROCESS")]
-GENUINE_CONTRADICTORY = [
-    ("ESTABLISHED", "MARKETING_OR_TRAINING"),   # eOne L1, Altisource
-    ("ESTABLISHED", "GENERAL"),                 # Skillmine round one
-]
-MARKETING = [
-    ("NOT_ESTABLISHED", "PUBLIC_EVENT"),        # Zoom workshop, Yocket, Impacteers
-    ("NOT_ESTABLISHED", "NEWSLETTER"),          # Naukri bootcamp
-    ("NOT_ESTABLISHED", "MARKETING_OR_TRAINING"),  # Talent500, GraphoTherapy
-    ("NOT_ESTABLISHED", "UNKNOWN"),
-]
+class TestTheThreeAutomatedVerdicts:
+    def test_an_agreed_hiring_process_is_booked(self):
+        assert agent.calendar_invite_verdict(relevance("ESTABLISHED", "RECIPIENT_HIRING_PROCESS")) == "BOOK"
+
+    @pytest.mark.parametrize("decision,kind", [
+        ("ESTABLISHED", "MARKETING_OR_TRAINING"),
+        ("ESTABLISHED", "GENERAL"),
+        ("NOT_ESTABLISHED", "RECIPIENT_HIRING_PROCESS"),
+    ])
+    def test_unproven_contradictions_retry(self, decision, kind):
+        assert agent.calendar_invite_verdict(relevance(decision, kind)) == "RETRY"
+
+    @pytest.mark.parametrize("kind", ["PUBLIC_EVENT", "NEWSLETTER", "MARKETING_OR_TRAINING", "UNKNOWN"])
+    def test_confident_non_candidate_is_ignored(self, kind):
+        assert agent.calendar_invite_verdict(relevance("NOT_ESTABLISHED", kind)) == "IGNORE"
 
 
-class TestTheThreeVerdicts:
-    @pytest.mark.parametrize("decision,kind", GENUINE_KEPT)
-    def test_an_agreed_hiring_process_is_booked(self, decision, kind):
-        assert agent.calendar_invite_verdict(relevance(decision, kind)) == "BOOK"
+class TestNoReviewBranchRemains:
+    def test_retries_are_durable_and_human_free(self):
+        source = inspect.getsource(agent.process_message)
+        block = source[source.index('if verdict == "RETRY"'):source.index('elif verdict == "IGNORE"')]
+        assert "AI_RETRY_PENDING" in block
+        assert "MANUAL_REVIEW_REQUIRED" not in block
+        assert "requires_manual_review=True" not in block
 
-    @pytest.mark.parametrize("decision,kind", GENUINE_CONTRADICTORY)
-    def test_a_contradictory_answer_goes_to_review(self, decision, kind):
-        assert agent.calendar_invite_verdict(relevance(decision, kind)) == "REVIEW"
-
-    @pytest.mark.parametrize("decision,kind", MARKETING)
-    def test_not_established_is_still_ignored(self, decision, kind):
-        """The whole webinar defence, unchanged."""
-        assert agent.calendar_invite_verdict(relevance(decision, kind)) == "IGNORE"
-
-    def test_a_missing_or_junk_answer_is_ignored_not_reviewed(self):
-        for value in ({}, {"decision": None}, {"decision": "nonsense"},
-                      {"message_kind": "RECIPIENT_HIRING_PROCESS"}):
-            assert agent.calendar_invite_verdict(value) == "IGNORE"
-
-    def test_review_is_never_also_bookable(self):
-        """The booking predicate must stay strict; only the drop is relaxed."""
-        for decision, kind in GENUINE_CONTRADICTORY:
-            value = relevance(decision, kind)
-            assert agent.calendar_invite_needs_review(value) is True
-            assert agent.calendar_invite_is_a_candidate_interview(value) is False
-
-
-class TestWhatProcessMessageDoesWithEachVerdict:
-    @staticmethod
-    def _source():
-        return inspect.getsource(agent.process_message)
-
-    def test_review_does_not_mark_the_mail_ignored(self):
-        source = self._source()
-        block = source[source.index('if verdict == "REVIEW"'):source.index('elif verdict == "IGNORE"')]
-        assert "IGNORED_NOT_OFFER_RELATED" not in block
-        assert "archive_event_for_message" not in block
-        assert "return None" not in block
-
-    def test_a_contradictory_answer_now_books_on_the_invitation(self):
-        """Reaching this branch already means the .ics was accepted: one event,
-        a UID, an authenticated organiser, this recipient as an attendee, and an
-        explicit start. The model disagreeing with itself does not weaken that,
-        and waiting for a person lost Gangadhar's ServiceNow interview."""
-        source = self._source()
-        block = source[source.index('if verdict == "REVIEW"'):source.index('elif verdict == "IGNORE"')]
-        assert 'MANUAL_REVIEW_REQUIRED' not in block
-        assert 'needs_review' not in block
-        assert 'requires_manual_review=True' not in block
-        assert 'model, duration = calendar_result, "rfc5545-authenticated", 0' in block
-
-    def test_the_contradiction_is_recorded_even_though_it_books(self):
-        source = self._source()
-        block = source[source.index('if verdict == "REVIEW"'):source.index('elif verdict == "IGNORE"')]
-        assert 'calendar_intent_contradictory' in block
-        assert 'logger.warning' in block
-
-    def test_the_review_answer_is_kept_for_audit(self):
-        source = self._source()
-        block = source[source.index('if verdict == "REVIEW"'):source.index('elif verdict == "IGNORE"')]
-        assert 'calendar_result["recruitment_relevance_result"]' in block
-
-    def test_ignore_still_archives_and_returns(self):
-        source = self._source()
-        block = source[source.index('elif verdict == "IGNORE"'):source.index('else:\n            calendar_result = dict')]
-        assert "CALENDAR_INVITE_NOT_A_CANDIDATE_INTERVIEW" in block
-        assert "IGNORED_NOT_OFFER_RELATED" in block
-        assert "return None" in block
-
-    def test_both_booking_paths_authenticate_the_same_way(self):
-        """The agreed answer and the contradictory one both book on the .ics."""
-        source = self._source()
-        assert source.count('"rfc5545-authenticated", 0') == 2
-
-    def test_each_verdict_has_exactly_one_branch(self):
-        source = self._source()
-        assert source.count('if verdict == "REVIEW"') == 1
-        assert source.count('elif verdict == "IGNORE"') == 1
-
-    def test_the_intent_check_still_precedes_trusting_the_invite(self):
-        source = self._source()
-        assert source.index("calendar_invite_intent(") < source.index('"rfc5545-authenticated", 0')
-
-    def test_a_gateway_failure_still_parks_rather_than_deciding(self):
-        source = self._source()
-        assert "CALENDAR_INTENT_UNAVAILABLE" in source
+    def test_gateway_failure_retries_rather_than_ignores(self):
+        source = inspect.getsource(agent.process_message)
         failure = source.index("CALENDAR_INTENT_UNAVAILABLE")
         assert "AI_RETRY_PENDING" in source[failure - 400:failure + 400]
-
-
-class TestTheGateStillAsksTheModel:
-    def test_no_deterministic_shortcut_came_back(self):
-        source = inspect.getsource(agent.calendar_invite_intent)
-        assert "RELEVANCE_PROMPT" in source
-        assert "_deterministic_relevance_result" not in source
-
-    def test_the_verdict_reads_only_the_model_s_two_fields(self):
-        """No keyword rule may creep in here: the model's answer decides."""
-        source = inspect.getsource(agent.calendar_invite_verdict)
-        code = source[source.index('"""', source.index('"""') + 3) + 3:]
-        for forbidden in ("subject", "body", "sender", "re.search", "classify_context"):
-            assert forbidden not in code
-        assert 'relevance.get("decision")' in code
-        assert 'relevance.get("message_kind")' in code

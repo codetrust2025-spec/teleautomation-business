@@ -575,5 +575,11 @@ def trusted_interview_result(decoded: dict[str, Any], attachments: list[dict[str
         "historical_employment_evidence": False, "lifecycle_event": "NONE",
         "interview_event": status, "business_domain": "INTERVIEW_TRACKING",
         "evidence_summary": evidence_text[:1000], "schedule_state": schedule_state,
-        "calendar": {"uid": invite["uid"], "sequence": invite["sequence"], "method": invite["method"]},
+        "calendar": {
+            "uid": invite["uid"], "sequence": invite["sequence"],
+            "method": invite["method"], "summary": invite["summary"],
+            "organizer": invite["organizer"],
+            "attendee_count": len(invite["attendees"]),
+            "has_dtend": bool(invite["end"]),
+        },
     }

@@ -49,12 +49,12 @@ from services import booking_block_reasons as reasons
          "Invite screenshot or email details are incomplete"),
         ("PAYMENT_VALIDATION_FAILED", "PAYMENT_NOT_CLEARED",
          "Payment is not cleared for this interview"),
-        ("AI_REQUIRES_REVIEW", "MANUAL_REVIEW_REQUIRED",
-         "Booking requires manual review"),
-        ("AUTO_BOOKING_DISABLED", "MANUAL_REVIEW_REQUIRED",
-         "Booking requires manual review"),
-        ("NOT_ACTIONABLE", "MANUAL_REVIEW_REQUIRED",
-         "Booking requires manual review"),
+        ("AI_REQUIRES_REVIEW", "AI_RETRY_PENDING",
+         "Automatic booking is queued for a safe retry"),
+        ("AUTO_BOOKING_DISABLED", "AI_RETRY_PENDING",
+         "Automatic booking is queued for a safe retry"),
+        ("NOT_ACTIONABLE", "AI_RETRY_PENDING",
+         "Automatic booking is queued for a safe retry"),
     ],
 )
 def test_every_blocking_code_has_a_reason_an_operator_can_act_on(
@@ -67,19 +67,20 @@ def test_every_blocking_code_has_a_reason_an_operator_can_act_on(
     assert described["internal_code"] == internal_code
 
 
-def test_an_unmapped_code_falls_back_to_manual_review():
-    # A block nobody has classified still needs a person to look at it.
+def test_an_unmapped_code_falls_back_to_automatic_retry():
+    # An unknown deterministic failure remains visible and is retried; it is
+    # never silently discarded or routed to a human approval queue.
     described = reasons.describe("SOME_NEW_VALIDATOR_BRANCH")
-    assert described["reason_code"] == "MANUAL_REVIEW_REQUIRED"
-    assert described["reason"] == "Booking requires manual review"
+    assert described["reason_code"] == "AI_RETRY_PENDING"
+    assert described["reason"] == "Automatic booking is queued for a safe retry"
     assert described["internal_code"] == "SOME_NEW_VALIDATOR_BRANCH"
 
 
 def test_a_missing_code_never_produces_an_empty_reason():
     for value in (None, "", "   "):
         described = reasons.describe(value)
-        assert described["reason"] == "Booking requires manual review"
-        assert described["reason_code"] == "MANUAL_REVIEW_REQUIRED"
+        assert described["reason"] == "Automatic booking is queued for a safe retry"
+        assert described["reason_code"] == "AI_RETRY_PENDING"
 
 
 def test_the_reason_names_the_time_the_invite_asked_for():

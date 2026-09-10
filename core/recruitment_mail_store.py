@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import itertools
+import hashlib
 import json
 import logging
 import os
@@ -29,7 +30,7 @@ CANONICAL_CLASSIFICATIONS = {
     "document_verification", "compensation_confirmation", "interview_update",
     "interview_shortlisted", "interview_confirmed", "interview_rescheduled",
     "interview_cancelled", "candidate_rejected", "needs_review",
-    "not_relevant", "final_round_cleared", "hr_confirmation",
+    "not_relevant", "ai_retry_pending", "final_round_cleared", "hr_confirmation",
 }
 
 # Mail Monitoring Notifications track only auto interview slot booking and
@@ -111,6 +112,7 @@ _STATUS_CLASSIFICATION = {
     "MANUAL_REVIEW_REQUIRED": "needs_review",
     "IGNORED_LOW_CONFIDENCE": "needs_review",
     "IGNORED_NOT_OFFER_RELATED": "not_relevant",
+    "AI_RETRY_PENDING": "ai_retry_pending",
 }
 
 _CLASSIFICATION_STATUS = {
@@ -134,6 +136,7 @@ _CLASSIFICATION_STATUS = {
     "interview_cancelled": "Interview Cancelled",
     "candidate_rejected": "Rejected",
     "needs_review": "Needs Review",
+    "ai_retry_pending": "AI Retry Pending",
     "not_relevant": "Profile Active",
 }
 
@@ -868,27 +871,12 @@ def _max_ai_attempts() -> int:
 def claim_ai_messages(limit: int = 1, *, lease_seconds: int = 150) -> list[dict[str, Any]]:
     """Lease queued semantic work so crashes/timeouts cannot lose or duplicate it."""
     with get_connection() as conn, conn.cursor() as cur:
-        # A row that has burned through its attempts is parked terminally
-        # rather than returned to the queue: without this a message can be
-        # reclaimed indefinitely (production reached 105 attempts). Terminal
-        # rows are excluded from the claim below, and no backoff can revive
-        # them, so they stop consuming Ollama capacity while staying visible.
-        max_attempts=_max_ai_attempts()
-        cur.execute("""UPDATE mailbox_messages SET processing_status='AI_FAILED_TERMINAL',
-              ai_lease_expires_at=NULL,updated_at=now(),ai_last_error_code='MAX_ATTEMPTS_EXHAUSTED'
-            WHERE processing_status='AI_RUNNING' AND ai_lease_expires_at<now()
-              AND COALESCE(ai_retry_count,0)>=%s""",(max_attempts,))
+        # No semantic outcome may be abandoned in a terminal manual-review
+        # bucket.  Leases are reclaimed as retry work and exponential backoff
+        # controls load; retry count is diagnostic, not a reason to lose mail.
         cur.execute("""UPDATE mailbox_messages SET processing_status='AI_QUEUED',ai_lease_expires_at=NULL,
               updated_at=now(),ai_last_error_code='LEASE_EXPIRED'
             WHERE processing_status='AI_RUNNING' AND ai_lease_expires_at<now()""")
-        # Rows that exhausted their attempts before the cap existed are already
-        # excluded from the claim below, but would otherwise sit in the queue
-        # forever looking like a live backlog. Park them under the same
-        # terminal state so the queue reflects what is actually claimable.
-        cur.execute("""UPDATE mailbox_messages SET processing_status='AI_FAILED_TERMINAL',
-              ai_lease_expires_at=NULL,updated_at=now(),ai_last_error_code='MAX_ATTEMPTS_EXHAUSTED'
-            WHERE processing_status IN ('AI_QUEUED','AI_RETRY_PENDING')
-              AND COALESCE(ai_retry_count,0)>=%s""",(max_attempts,))
         # Live mail first, then the backlog -- each oldest-first within itself.
         #
         # Strict `ORDER BY sent_at ASC` is FIFO over the whole table, so a large
@@ -928,10 +916,9 @@ def claim_ai_messages(limit: int = 1, *, lease_seconds: int = 150) -> list[dict[
         cur.execute(f"""SELECT id FROM mailbox_messages
           WHERE processing_status IN ('AI_QUEUED','AI_RETRY_PENDING')
             AND COALESCE(ai_retry_after,now())<=now()
-            AND COALESCE(ai_retry_count,0)<%s
           ORDER BY {order},sent_at ASC,id
           FOR UPDATE SKIP LOCKED LIMIT %s""",
-          (max_attempts,)+order_params+(max(1,min(limit,20)),))
+          order_params+(max(1,min(limit,20)),))
         ids=[row[0] for row in cur.fetchall()]
         if not ids:return []
         cur.execute("""UPDATE mailbox_messages m SET processing_status='AI_RUNNING',
@@ -1020,6 +1007,362 @@ def mark_message_status(message_id:str,status:str,*,reason:str|None=None,cleanup
           ai_last_error_code=COALESCE(%s,ai_last_error_code),
           ai_lease_expires_at=CASE WHEN %s='AI_RUNNING' THEN ai_lease_expires_at ELSE NULL END,updated_at=now() WHERE id=%s""",
           (status,reason,status,cleanup_version,error_code,status,message_id))
+    # Mail-level terminal and retry paths frequently occur before an event is
+    # created (for example marketing, an exact Gmail duplicate, or an Ollama
+    # outage).  Give those messages the same durable, auditable automated
+    # state as an event-backed booking.  This is deliberately after the
+    # original status write so the transition layer can be added without
+    # weakening ingestion's primary persistence boundary.
+    normalized = str(status or "").upper()
+    if normalized in {
+        "IGNORED_NOT_OFFER_RELATED", "IGNORED_LOW_CONFIDENCE",
+        "DUPLICATE_CONTENT", "DUPLICATE_OFFER_EVENT", "DUPLICATE_OFFER_ATTACHMENT",
+    }:
+        record_automation_state(
+            mailbox_message_id=message_id, event_id=None, state="AUTO_IGNORE",
+            reason=reason or normalized, details={"source_status": normalized},
+        )
+    elif normalized in {"AI_RETRY_PENDING", "VALIDATION_FAILED", "MANUAL_REVIEW_REQUIRED"}:
+        record_automation_state(
+            mailbox_message_id=message_id, event_id=None, state="AI_RETRY_PENDING",
+            reason=reason or normalized, details={"source_status": normalized},
+        )
+
+
+_AUTOMATION_STATES = frozenset({
+    "AUTO_BOOK", "AUTO_IGNORE", "AI_RETRY_PENDING",
+    "AUTO_BOOKED", "AUTO_CANCELLED", "AUTO_RESCHEDULED",
+})
+
+
+def _automation_dedupe_key(
+    mailbox_message_id: str, state: str, *, booking_id: str | None, reason: str | None,
+) -> str:
+    material = "\x1f".join((mailbox_message_id, state, str(booking_id or ""), str(reason or "")))
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+def _record_automation_transition(
+    cur: Any, *, mailbox_message_id: str, event_id: str | None, state: str,
+    reason: str | None = None, booking_id: str | None = None, details: dict[str, Any] | None = None,
+) -> None:
+    if state not in _AUTOMATION_STATES:
+        raise ValueError(f"Unsupported automation state: {state}")
+    dedupe_key = _automation_dedupe_key(
+        mailbox_message_id, state, booking_id=booking_id, reason=reason,
+    )
+    cur.execute(
+        """INSERT INTO recruitment_automation_transitions(
+              id,mailbox_message_id,ai_recruitment_event_id,automation_state,
+              reason,booking_id,dedupe_key,details,created_at)
+           VALUES(%s,%s,%s,%s,%s,%s,%s,%s::jsonb,now())
+           ON CONFLICT(dedupe_key) DO NOTHING""",
+        (
+            _id(), mailbox_message_id, event_id, state, reason, booking_id,
+            dedupe_key, json.dumps(details or {}, default=str),
+        ),
+    )
+
+
+def record_automation_state(
+    *, mailbox_message_id: str, event_id: str | None, state: str,
+    reason: str | None = None, booking_id: str | None = None,
+    details: dict[str, Any] | None = None,
+) -> None:
+    """Atomically project an automation result without erasing raw evidence.
+
+    ``AUTO_BOOKED``/``AUTO_RESCHEDULED`` are called only by the executor after
+    its canonical candidate-slot re-read.  Retry states stay durable and are
+    reclaimed by the mailbox worker; no state is parked for a human action.
+    """
+    if not use_postgres():
+        return
+    if state not in _AUTOMATION_STATES:
+        raise ValueError(f"Unsupported automation state: {state}")
+    retry = state == "AI_RETRY_PENDING"
+    ignored = state == "AUTO_IGNORE"
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT id FROM mailbox_messages WHERE id=%s FOR UPDATE", (mailbox_message_id,))
+        if not cur.fetchone():
+            return
+        _record_automation_transition(
+            cur, mailbox_message_id=mailbox_message_id, event_id=event_id,
+            state=state, reason=reason, booking_id=booking_id, details=details,
+        )
+        cur.execute(
+            """UPDATE mailbox_messages SET processing_status=%s,
+                 ai_retry_after=CASE WHEN %s THEN now() ELSE NULL END,
+                 ai_lease_expires_at=NULL,ignore_reason=COALESCE(%s,ignore_reason),
+                 ignored_at=CASE WHEN %s THEN now() ELSE ignored_at END,
+                 updated_at=now() WHERE id=%s""",
+            (state, retry, reason, ignored, mailbox_message_id),
+        )
+        if event_id:
+            cur.execute(
+                """UPDATE ai_recruitment_events SET automation_state=%s,
+                     requires_manual_review=false,review_status='AUTOMATED',
+                     structured_result=jsonb_set(
+                       COALESCE(structured_result,'{}'::jsonb),
+                       '{automation_state}',to_jsonb(%s::text),true),updated_at=now()
+                   WHERE id=%s""",
+                (state, state, event_id),
+            )
+        cur.execute(
+            """INSERT INTO recruitment_audit_log(id,actor,role,action,source_id,new_value,created_at)
+               VALUES(%s,'system','system','RECRUITMENT_AUTOMATION_STATE',%s,%s::jsonb,now())""",
+            (_id(), event_id or mailbox_message_id, json.dumps({
+                "state": state, "reason": reason, "booking_id": booking_id,
+            }, default=str)),
+        )
+
+
+def promote_legacy_review_states(limit: int = 50) -> int:
+    """Replace legacy human-review rows with automatic retry work.
+
+    The original classifier status remains in ``original_primary_status`` and
+    the structured result, so this is a reversible projection rather than a
+    destructive rewrite.  Row locks plus transition dedupe make concurrent
+    worker passes harmless.
+    """
+    if not use_postgres():
+        return 0
+    promoted = 0
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT e.id,e.mailbox_message_id
+                 FROM ai_recruitment_events e
+                 JOIN mailbox_messages m ON m.id=e.mailbox_message_id
+                WHERE COALESCE(e.automation_state,'') NOT IN (
+                        'AUTO_BOOK','AUTO_IGNORE','AI_RETRY_PENDING',
+                        'AUTO_BOOKED','AUTO_CANCELLED','AUTO_RESCHEDULED')
+                  AND (e.requires_manual_review=true OR e.classification='needs_review'
+                       OR e.primary_status='MANUAL_REVIEW_REQUIRED'
+                       OR e.validation_status IN ('NEEDS_REVIEW','REVIEW_REQUIRED'))
+                ORDER BY e.updated_at ASC
+                FOR UPDATE OF e,m SKIP LOCKED LIMIT %s""",
+            (max(1, min(limit, 500)),),
+        )
+        rows = cur.fetchall()
+        for event_id, message_id in rows:
+            reason = "LEGACY_REVIEW_CONVERTED_TO_AUTOMATIC_RETRY"
+            _record_automation_transition(
+                cur, mailbox_message_id=message_id, event_id=event_id,
+                state="AI_RETRY_PENDING", reason=reason,
+            )
+            cur.execute(
+                """UPDATE mailbox_messages SET processing_status='AI_RETRY_PENDING',
+                     ai_retry_count=COALESCE(ai_retry_count,0)+1,
+                     ai_retry_after=now()+(LEAST(360,POWER(2,LEAST(COALESCE(ai_retry_count,0)+1,8)))||' minutes')::interval,
+                     ai_lease_expires_at=NULL,ai_last_error_code=%s,updated_at=now()
+                   WHERE id=%s""",
+                (reason, message_id),
+            )
+            cur.execute(
+                """UPDATE ai_recruitment_events SET
+                     original_primary_status=COALESCE(original_primary_status,primary_status),
+                     primary_status='AI_RETRY_PENDING',classification='ai_retry_pending',
+                     candidate_status='AI Retry Pending',automation_state='AI_RETRY_PENDING',
+                     requires_manual_review=false,review_status='AUTOMATED',
+                     validation_status='RETRY_PENDING',ai_status='AI_RETRY_PENDING',
+                     structured_result=jsonb_set(
+                       jsonb_set(COALESCE(structured_result,'{}'::jsonb),
+                         '{automation_decision}','"AI_RETRY_PENDING"'::jsonb,true),
+                       '{automation_state}','"AI_RETRY_PENDING"'::jsonb,true),
+                     updated_at=now() WHERE id=%s""",
+                (event_id,),
+            )
+            cur.execute(
+                """INSERT INTO recruitment_audit_log(id,actor,role,action,candidate_id,source_id,new_value,created_at)
+                     SELECT %s,'system','system','LEGACY_REVIEW_AUTO_RETRIED',candidate_id,%s,%s::jsonb,now()
+                       FROM ai_recruitment_events WHERE id=%s""",
+                (_id(), event_id, json.dumps({"state": "AI_RETRY_PENDING", "reason": reason}), event_id),
+            )
+            promoted += 1
+    return promoted
+
+
+def promote_ignored_messages(limit: int = 200) -> int:
+    """Give non-recruitment/marketing messages an explicit automated outcome."""
+    if not use_postgres():
+        return 0
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT id,ignore_reason FROM mailbox_messages
+                WHERE processing_status IN ('IGNORED_NOT_OFFER_RELATED','IGNORED_LOW_CONFIDENCE',
+                                            'DUPLICATE_CONTENT','DUPLICATE_OFFER_EVENT')
+                ORDER BY updated_at ASC FOR UPDATE SKIP LOCKED LIMIT %s""",
+            (max(1, min(limit, 1000)),),
+        )
+        rows = cur.fetchall()
+        for message_id, reason in rows:
+            _record_automation_transition(
+                cur, mailbox_message_id=message_id, event_id=None,
+                state="AUTO_IGNORE", reason=str(reason or "AUTOMATED_IGNORE"),
+            )
+            cur.execute(
+                """UPDATE mailbox_messages SET processing_status='AUTO_IGNORE',
+                     ignored_at=COALESCE(ignored_at,now()),updated_at=now() WHERE id=%s""",
+                (message_id,),
+            )
+    return len(rows)
+
+
+_CALENDAR_RECOVERY_VERSION = "calendar-evidence-v1"
+_CALENDAR_FALSE_IGNORE_REASONS = (
+    "CALENDAR_INVITE_NOT_A_CANDIDATE_INTERVIEW",
+    "EVIDENCE_DOES_NOT_ENTAIL_TRANSITION",
+    "CALENDAR_RELEVANCE_CONTRADICTION",
+)
+
+
+def claim_calendar_invite_recovery_messages(
+    *, provider_message_ids: list[str], limit: int = 5,
+) -> list[dict[str, Any]]:
+    """Lease a small, versioned set of previously ignored calendar invites.
+
+    This is intentionally not a historical mailbox replay. Only an explicit,
+    bounded set of provider message ids with an `.ics` attachment and a known
+    calendar false-ignore reason is eligible. A successful ignore is
+    reconsidered only after the recovery rules receive a new version.
+    """
+    ids = sorted({str(value).strip() for value in provider_message_ids if str(value).strip()})
+    if not use_postgres() or not ids:
+        return []
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT m.*,b.email_address,b.candidate_id AS mailbox_candidate_id
+                 FROM mailbox_messages m
+                 JOIN candidate_mailboxes b ON b.id=m.mailbox_id
+                 LEFT JOIN recruitment_calendar_recovery r ON r.mailbox_message_id=m.id
+                WHERE m.processing_status='AUTO_IGNORE'
+                  AND m.provider_message_id=ANY(%s)
+                  AND m.ignore_reason=ANY(%s)
+                  AND EXISTS(
+                    SELECT 1 FROM mailbox_attachments a
+                     WHERE a.mailbox_message_id=m.id
+                       AND lower(COALESCE(a.filename,'')) LIKE '%%.ics'
+                  )
+                  AND (
+                    r.mailbox_message_id IS NULL
+                    OR r.detection_version<>%s
+                    OR (r.state='AI_RETRY_PENDING' AND COALESCE(r.next_attempt_at,now())<=now())
+                  )
+                ORDER BY m.updated_at ASC
+                FOR UPDATE OF m SKIP LOCKED LIMIT %s""",
+            (ids, list(_CALENDAR_FALSE_IGNORE_REASONS), _CALENDAR_RECOVERY_VERSION, max(1, min(limit, 50))),
+        )
+        rows = _rows(cur)
+        for row in rows:
+            cur.execute(
+                """INSERT INTO recruitment_calendar_recovery(
+                      mailbox_message_id,detection_version,state,attempts,last_reason,next_attempt_at,updated_at)
+                   VALUES(%s,%s,'RUNNING',1,NULL,NULL,now())
+                   ON CONFLICT(mailbox_message_id) DO UPDATE SET
+                     detection_version=EXCLUDED.detection_version,state='RUNNING',
+                     attempts=recruitment_calendar_recovery.attempts+1,
+                     next_attempt_at=NULL,updated_at=now()""",
+                (row["id"], _CALENDAR_RECOVERY_VERSION),
+            )
+    for row in rows:
+        row["attachments"] = [
+            {**item, "text": item.get("extracted_text") or ""}
+            for item in attachments_for_message(row["id"], include_text=True)
+        ]
+    return rows
+
+
+def complete_calendar_invite_recovery(message_id: str, *, state: str, reason: str | None = None) -> None:
+    """Record a recovery outcome; only retryable results are scheduled again."""
+    if not use_postgres():
+        return
+    safe_state = state if state in {
+        "AUTO_IGNORE", "AI_RETRY_PENDING", "AUTO_BOOKED", "AUTO_RESCHEDULED", "AUTO_CANCELLED",
+    } else "AI_RETRY_PENDING"
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """UPDATE recruitment_calendar_recovery SET state=%s,last_reason=%s,
+                 next_attempt_at=CASE WHEN %s='AI_RETRY_PENDING'
+                   THEN now()+interval '15 minutes' ELSE NULL END,
+                 updated_at=now() WHERE mailbox_message_id=%s""",
+            (safe_state, reason, safe_state, message_id),
+        )
+
+
+def calendar_invite_recovery_discovery(*, limit: int = 500) -> dict[str, Any]:
+    """Read-only inventory of historical calendar ignores.
+
+    This deliberately does *not* lease, reprocess, or alter a message.  It is
+    the safety valve before expanding a recovery list: an operator can see
+    whether an old invite was already represented by an audit/event, was
+    cancelled, or is merely a candidate for the narrowly configured recovery
+    worker.
+    """
+    empty = {
+        "summary": {
+            "total": 0, "recovery_candidates": 0, "already_represented": 0,
+            "stale_or_cancelled": 0, "already_assessed": 0,
+        },
+        "records": [],
+    }
+    if not use_postgres():
+        return empty
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT m.id AS mailbox_message_id,m.provider_message_id,m.subject,
+                      m.sent_at,m.ignore_reason,m.processing_status,
+                      COALESCE(e.canonical_candidate_id,e.candidate_id,b.candidate_id)
+                        AS canonical_candidate_id,
+                      e.id AS event_id,e.primary_status AS event_status,
+                      r.state AS recovery_state,r.attempts AS recovery_attempts,
+                      audit.booking_id,audit.booking_status,audit.auto_booked,
+                      CASE
+                        WHEN audit.booking_id IS NOT NULL AND audit.auto_booked
+                          THEN 'ALREADY_REPRESENTED'
+                        WHEN e.primary_status='INTERVIEW_CANCELLED'
+                          THEN 'STALE_OR_CANCELLED'
+                        WHEN r.state IN ('AUTO_BOOKED','AUTO_RESCHEDULED','AUTO_CANCELLED','AUTO_IGNORE')
+                          THEN 'ALREADY_ASSESSED'
+                        ELSE 'RECOVERY_CANDIDATE'
+                      END AS discovery_state
+                 FROM mailbox_messages m
+                 JOIN candidate_mailboxes b ON b.id=m.mailbox_id
+                 LEFT JOIN LATERAL (
+                    SELECT id,candidate_id,canonical_candidate_id,primary_status
+                      FROM ai_recruitment_events
+                     WHERE mailbox_message_id=m.id
+                     ORDER BY updated_at DESC LIMIT 1
+                 ) e ON true
+                 LEFT JOIN LATERAL (
+                    SELECT booking_id,booking_status,auto_booked
+                      FROM interview_auto_booking_audit
+                     WHERE gmail_message_id=m.provider_message_id
+                     ORDER BY updated_at DESC LIMIT 1
+                 ) audit ON true
+                 LEFT JOIN recruitment_calendar_recovery r ON r.mailbox_message_id=m.id
+                WHERE m.processing_status='AUTO_IGNORE'
+                  AND m.ignore_reason=ANY(%s)
+                  AND EXISTS(
+                    SELECT 1 FROM mailbox_attachments a
+                     WHERE a.mailbox_message_id=m.id
+                       AND lower(COALESCE(a.filename,'')) LIKE '%%.ics'
+                  )
+                ORDER BY m.sent_at ASC LIMIT %s""",
+            (list(_CALENDAR_FALSE_IGNORE_REASONS), max(1, min(limit, 2000))),
+        )
+        records = _rows(cur)
+    summary = {"total": len(records), "recovery_candidates": 0, "already_represented": 0,
+               "stale_or_cancelled": 0, "already_assessed": 0}
+    state_counts = {
+        "RECOVERY_CANDIDATE": "recovery_candidates",
+        "ALREADY_REPRESENTED": "already_represented",
+        "STALE_OR_CANCELLED": "stale_or_cancelled",
+        "ALREADY_ASSESSED": "already_assessed",
+    }
+    for record in records:
+        bucket = state_counts.get(str(record.get("discovery_state") or ""))
+        if bucket:
+            summary[bucket] += 1
+    return {"summary": summary, "records": records}
 
 
 # Only genuine offer documents identify a duplicate OFFER. Recurring documents
@@ -1565,19 +1908,24 @@ def summarize_selection_tracking_events(events: list[dict[str, Any]]) -> dict[st
     filters: dict[str,list[str]]={}
     for key,statuses in lifecycle_groups.items():
         filters[key]=sorted({str(event.get('canonical_candidate_id') or event.get('candidate_id')) for event in truth if event.get('primary_status') in statuses})
-    filters['needs_review']=sorted({
+    filters['automation_pending']=sorted({
         str(event.get('id')) for event in events
         if event.get('id')
-        and str(event.get('review_status') or '').upper() == 'PENDING'
         and (
-            str(event.get('validation_status') or '').upper() in {'NEEDS_REVIEW','RETRY_PENDING'}
+            str(event.get('automation_state') or '').upper() == 'AI_RETRY_PENDING'
+            or str(event.get('primary_status') or '').upper() == 'AI_RETRY_PENDING'
+            or (
+                str(event.get('review_status') or '').upper() == 'PENDING'
+                and str(event.get('validation_status') or '').upper() in {'NEEDS_REVIEW','RETRY_PENDING'}
+            )
             or str(event.get('cleanup_version') or '') == 'manual_content_audit_keep_v1'
         )
     })
     metrics={key:len(value) for key,value in filters.items()}
     # Backward-compatible aliases for older clients; all originate here.
     metrics.update({
-        'pending_reviews':metrics['needs_review'],
+        'needs_review':metrics['automation_pending'],
+        'pending_reviews':metrics['automation_pending'],
         'selections_detected':metrics['selected'],
         'offers_accepted':metrics['offers_accepted'],
         'joining_confirmations':metrics['joining_confirmed'],
@@ -1591,7 +1939,7 @@ def selection_tracking_stats() -> dict[str, Any]:
     predicate, params = qualified_event_sql('e')
     with get_connection() as conn, conn.cursor() as cur:
         cur.execute(f"""SELECT e.id,e.candidate_id,e.canonical_candidate_id,e.primary_status,
-          e.review_status,e.validation_status,e.cleanup_version
+          e.review_status,e.validation_status,e.cleanup_version,e.automation_state
           FROM ai_recruitment_events e WHERE {predicate}""",params)
         events=_rows(cur)
     return summarize_selection_tracking_events(events)

@@ -54,10 +54,15 @@ def _confidence(result: dict[str, Any]) -> float:
 
 def normalize_booking_round(result: dict[str, Any]) -> str:
     """Discard model/calendar labels unless they are supported round values."""
-    interview = dict(result.get("interview") or {})
+    # Keep the source result and its automation projection in sync.  The
+    # booking wrapper adds top-level decision fields, but callers may retain
+    # the nested interview object for subsequent event/alert persistence.
+    interview = result.get("interview")
+    if not isinstance(interview, dict):
+        interview = {}
+        result["interview"] = interview
     round_name = candidate_store.normalise_interview_round(interview.get("round"))
     interview["round"] = round_name or None
-    result["interview"] = interview
     return round_name
 
 
@@ -716,19 +721,66 @@ def execute_auto_booking(
     result: dict[str, Any], correlation_id: str | None = None,
 ) -> dict[str, Any]:
     """Serialize validation plus mutation so concurrent mailbox jobs cannot race."""
+    # This boundary consumes Claude's final automation decision.  It does not
+    # infer relevance itself; booking only applies deterministic validation and
+    # lifecycle-safe persistence to the decision it receives.
+    from services import recruitment_automation
+
+    # A mailbox can still carry a historical duplicate candidate row.  Booking
+    # state must always be created under the canonical person identity; the
+    # original mailbox/event ids remain the audit provenance.
+    booking_mailbox = dict(mailbox)
+    raw_candidate_id = str(mailbox.get("candidate_id") or "")
+    try:
+        canonical_candidate_id = candidate_store.canonical_candidate_identity_id(raw_candidate_id)
+    except Exception as exc:
+        raise BookingValidationError(
+            "CANDIDATE_MAPPING_FAILED", "The mailbox candidate identity could not be resolved."
+        ) from exc
+    if not canonical_candidate_id:
+        raise BookingValidationError(
+            "CANDIDATE_MAPPING_FAILED", "The mailbox candidate identity could not be resolved."
+        )
+    booking_mailbox["candidate_id"] = canonical_candidate_id
+    automated_result = recruitment_automation.apply_decision(result)
+    decision = recruitment_automation.decision_for(automated_result)
+    _record_automation_projection(
+        event=event, state=decision.value, result=automated_result,
+        reason="FINAL_AI_DECISION",
+    )
     with _BOOKING_LOCK:
-        with mail_store.candidate_booking_lock(str(mailbox.get("candidate_id") or "")):
-            return _execute_auto_booking(
-                mailbox=mailbox, message=message, event=event, result=result,
+        with mail_store.candidate_booking_lock(canonical_candidate_id):
+            outcome = _execute_auto_booking(
+                mailbox=booking_mailbox, message=message, event=event, result=automated_result,
                 correlation_id=correlation_id,
             )
+    # A final non-booking decision is authoritative.  It can deliberately
+    # enter the deterministic executor only to leave a normal booking audit;
+    # its expected NOT_ACTIONABLE outcome must never turn an AI retry into an
+    # ignore state.
+    final_state = (
+        decision
+        if decision in {
+            recruitment_automation.AutomationState.AUTO_IGNORE,
+            recruitment_automation.AutomationState.AI_RETRY_PENDING,
+        }
+        else recruitment_automation.outcome_for(outcome)
+    )
+    _record_automation_projection(
+        event=event, state=final_state.value, result=automated_result,
+        reason=str(outcome.get("failure_code") or outcome.get("status") or "AUTOMATION_COMPLETE"),
+        booking_id=str((outcome.get("booking") or {}).get("id") or "") or None,
+        details={"event_type": outcome.get("event_type"), "booking_status": outcome.get("status")},
+    )
+    outcome["automation_state"] = final_state.value
+    return outcome
 
 
 def execute_manual_approved_booking(
     *, mailbox: dict[str, Any], message: dict[str, Any], event: dict[str, Any],
     result: dict[str, Any], reviewer: str, correlation_id: str | None = None,
 ) -> dict[str, Any]:
-    """Apply a human-approved interview through the same booking safety gates."""
+    """Legacy-only compatibility path; no public automation route calls this."""
     with _BOOKING_LOCK:
         with mail_store.candidate_booking_lock(str(mailbox.get("candidate_id") or "")):
             return _execute_auto_booking(
@@ -738,6 +790,27 @@ def execute_manual_approved_booking(
 
 
 _PERSISTED_BOOKING_STATUSES = {"Auto Booked", "Approved & Booked", "Rescheduled"}
+
+
+def _record_automation_projection(
+    *, event: dict[str, Any], state: str, result: dict[str, Any], reason: str,
+    booking_id: str | None = None, details: dict[str, Any] | None = None,
+) -> None:
+    """Keep mail/event state aligned with a booking attempt without masking it."""
+    message_id = str(event.get("mailbox_message_id") or "")
+    if not message_id:
+        return
+    try:
+        mail_store.record_automation_state(
+            mailbox_message_id=message_id, event_id=str(event.get("id") or "") or None,
+            state=state, reason=reason, booking_id=booking_id,
+            details={"automation_decision": result.get("automation_decision"), **(details or {})},
+        )
+    except Exception:
+        # Booking audit/lifecycle persistence remains the source of truth if a
+        # non-critical projection write is temporarily unavailable. The worker
+        # reconciliation report will surface it rather than losing the mail.
+        logger.exception("Unable to persist automation projection state=%s event=%s", state, event.get("id"))
 
 
 def _booking_not_saved() -> BookingValidationError:
@@ -1034,7 +1107,7 @@ def _execute_auto_booking(
         booking_status = "Duplicate Ignored" if duplicate_ignored else "Blocked"
         validation_status = "SKIPPED" if duplicate_ignored else "BLOCKED"
         display_status = "Already Booked — Duplicate Ignored" if duplicate_ignored else "Automatic Booking Blocked"
-        priority = "low" if duplicate_ignored else "review_required"
+        priority = "low" if duplicate_ignored else "retry_pending"
         event_type = "duplicate_booking_ignored" if duplicate_ignored else "slot_booking_blocked"
         audit = mail_store.record_booking_audit(
             analysis_id=analysis["id"], candidate_id=str(mailbox.get("candidate_id") or ""),
@@ -1078,11 +1151,11 @@ def _execute_auto_booking(
         )
         updated_notification = mail_store.attach_booking_to_notification(
             notification.get("id"), audit_id=audit["id"], booking_id=None,
-            booking_status="Processing Failed", result=result, priority="review_required",
+            booking_status="Processing Failed", result=result, priority="retry_pending",
             display_status="Automatic Booking Processing Failed",
             detail="Review the mail analysis and retry after the underlying error is resolved.",
-            # An unexpected error is not a classified block, so it reads as
-            # manual review - which is what it needs.
+            # An unexpected error remains durable retry work; it never becomes
+            # a manual-review action.
             block_reason=booking_block_reasons.describe(
                 code, interview=(result.get("interview") or {}),
             ),

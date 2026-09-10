@@ -9,7 +9,7 @@ def test_every_requested_classification_is_stable():
         'offer_revoked','joining_confirmed','joining_date_updated','onboarding_started',
         'background_verification','document_verification','compensation_confirmation',
         'interview_update','interview_shortlisted','interview_confirmed','interview_rescheduled',
-        'interview_cancelled','candidate_rejected','needs_review','not_relevant',
+            'interview_cancelled','candidate_rejected','needs_review','ai_retry_pending','not_relevant',
         'final_round_cleared','hr_confirmation',
     }
 

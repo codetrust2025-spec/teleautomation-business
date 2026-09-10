@@ -36,6 +36,7 @@ from services.recruitment_mail_agent import (
     calendar_invite_is_a_candidate_interview,
     calendar_invite_verdict,
 )
+from services.calendar_interview_evidence import evidence_for
 
 
 def answer(decision, kind):
@@ -47,21 +48,50 @@ def answer(decision, kind):
 
 
 class TestTheInviteThatWasMissed:
-    def test_the_exact_answer_that_dropped_it_now_goes_to_review(self):
+    def test_the_exact_answer_without_structural_proof_retries_automatically(self):
         assert calendar_invite_verdict(
-            answer("NOT_ESTABLISHED", "RECIPIENT_HIRING_PROCESS")) == "REVIEW"
+            answer("NOT_ESTABLISHED", "RECIPIENT_HIRING_PROCESS")) == "RETRY"
 
-    def test_it_is_still_not_a_booking(self):
+    def test_strong_calendar_and_role_evidence_books_the_missed_invite(self):
         value = answer("NOT_ESTABLISHED", "RECIPIENT_HIRING_PROCESS")
-        assert calendar_invite_is_a_candidate_interview(value) is False
+        calendar = {
+            "calendar_validation_status": "TRUSTED",
+            "calendar": {"method": "REQUEST", "uid": "gangadhar-thaga", "has_dtend": True},
+            "interview": {"date": "2099-09-10", "meeting_link": "https://teams.microsoft.com/l/meetup-join/test"},
+        }
+        message = {"subject": "ServiceNow Developer", "body": "Please join the discussion."}
+        assert calendar_invite_verdict(value, calendar_result=calendar, message=message) == "BOOK"
 
-    def test_both_contradictions_are_treated_alike(self):
-        """One says hiring and not-established; the other says established and
-        not-hiring. Neither is a rejection and neither is permission."""
+    def test_both_contradictions_retry_without_strong_calendar_context(self):
         assert calendar_invite_verdict(
-            answer("NOT_ESTABLISHED", "RECIPIENT_HIRING_PROCESS")) == "REVIEW"
+            answer("NOT_ESTABLISHED", "RECIPIENT_HIRING_PROCESS")) == "RETRY"
         assert calendar_invite_verdict(
-            answer("ESTABLISHED", "MARKETING_OR_TRAINING")) == "REVIEW"
+            answer("ESTABLISHED", "MARKETING_OR_TRAINING")) == "RETRY"
+
+    def test_clear_webinar_wins_over_a_contradictory_label(self):
+        calendar = {
+            "calendar_validation_status": "TRUSTED",
+            "calendar": {"method": "REQUEST", "uid": "webinar", "has_dtend": True},
+            "interview": {"date": "2099-09-10", "meeting_link": "https://zoom.us/j/1"},
+        }
+        message = {"subject": "ServiceNow webinar", "body": "Join our public training workshop."}
+        assert calendar_invite_verdict(
+            answer("ESTABLISHED", "MARKETING_OR_TRAINING"),
+            calendar_result=calendar, message=message,
+        ) == "IGNORE"
+
+    def test_thin_teams_calendar_requires_dtend_before_overriding_ai(self):
+        calendar = {
+            "calendar_validation_status": "TRUSTED",
+            "calendar": {"method": "REQUEST", "uid": "thin", "has_dtend": False},
+            "interview": {"date": "2099-09-10", "meeting_link": "https://teams.microsoft.com/l/meetup-join/test"},
+        }
+        message = {"subject": "L1 Discussion with Gangadhar - ServiceNow DevOps"}
+        assert evidence_for(calendar, message)["trusted_request"] is False
+        assert calendar_invite_verdict(
+            answer("NOT_ESTABLISHED", "RECIPIENT_HIRING_PROCESS"),
+            calendar_result=calendar, message=message,
+        ) == "RETRY"
 
 
 class TestTheWebinarDefenceIsUntouched:

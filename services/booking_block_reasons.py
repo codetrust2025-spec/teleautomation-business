@@ -33,7 +33,7 @@ LOW_CONFIDENCE = "LOW_CONFIDENCE"
 INCOMPLETE_EVIDENCE = "INCOMPLETE_EVIDENCE"
 DUPLICATE_INVITE = "DUPLICATE_INVITE"
 PAYMENT_NOT_CLEARED = "PAYMENT_NOT_CLEARED"
-MANUAL_REVIEW_REQUIRED = "MANUAL_REVIEW_REQUIRED"
+AI_RETRY_PENDING = "AI_RETRY_PENDING"
 BOOKING_NOT_SAVED = "BOOKING_NOT_SAVED"
 STALE_INTERVIEW_EVENT = "STALE_INTERVIEW_EVENT"
 
@@ -48,13 +48,13 @@ REASON_TEXT = {
     INCOMPLETE_EVIDENCE: "Invite screenshot or email details are incomplete",
     DUPLICATE_INVITE: "Duplicate invite detected",
     PAYMENT_NOT_CLEARED: "Payment is not cleared for this interview",
-    MANUAL_REVIEW_REQUIRED: "Booking requires manual review",
+    AI_RETRY_PENDING: "Automatic booking is queued for a safe retry",
     BOOKING_NOT_SAVED: "Booking was not saved — book this slot manually and report it",
     STALE_INTERVIEW_EVENT: "A newer interview update already controls this booking",
 }
 
-# Validator code -> reason code. Anything absent falls back to manual review,
-# which is the safe answer: a block nobody has classified still needs a human.
+# Validator code -> reason code. Anything absent is retried automatically;
+# no unclassified booking block is silently converted into a human queue.
 _INTERNAL_TO_REASON = {
     "DUPLICATE_BOOKING": DUPLICATE_BOOKING,
     "SLOT_CONFLICT": NO_MATCHING_SLOT,
@@ -78,9 +78,9 @@ _INTERNAL_TO_REASON = {
     "MISSING_EVIDENCE": INCOMPLETE_EVIDENCE,
     "AI_NOT_VALIDATED": INCOMPLETE_EVIDENCE,
     "PAYMENT_VALIDATION_FAILED": PAYMENT_NOT_CLEARED,
-    "AI_REQUIRES_REVIEW": MANUAL_REVIEW_REQUIRED,
-    "AUTO_BOOKING_DISABLED": MANUAL_REVIEW_REQUIRED,
-    "NOT_ACTIONABLE": MANUAL_REVIEW_REQUIRED,
+    "AI_REQUIRES_REVIEW": AI_RETRY_PENDING,
+    "AUTO_BOOKING_DISABLED": AI_RETRY_PENDING,
+    "NOT_ACTIONABLE": AI_RETRY_PENDING,
     # The store accepted the write and the row does not hold the slot. This is
     # never the invite's fault, so it must not read as a parsing or duplicate
     # problem — it is a storage failure an operator has to act on.
@@ -93,7 +93,7 @@ _MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
 
 
 def reason_code_for(internal_code: Any) -> str:
-    return _INTERNAL_TO_REASON.get(str(internal_code or "").strip().upper(), MANUAL_REVIEW_REQUIRED)
+    return _INTERNAL_TO_REASON.get(str(internal_code or "").strip().upper(), AI_RETRY_PENDING)
 
 
 def format_schedule(date: Any, time: Any = None) -> str:
