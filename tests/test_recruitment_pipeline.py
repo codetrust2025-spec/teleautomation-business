@@ -433,8 +433,11 @@ def test_validator_disagreement_never_overrides_primary_or_creates_lifecycle(mon
     monkeypatch.setattr(agent,"configured_models",lambda:{"primary":"qwen3.6","validator":"gemma4"})
     monkeypatch.setattr(agent,"chat_structured",lambda **kwargs:Response(next(outputs),kwargs["model"]))
     result,_,_=agent.analyze(source,[])
-    assert result["primary_status"] == "MANUAL_REVIEW_REQUIRED"
-    assert result["requires_manual_review"] is True
+    # A positive validator still cannot override a different primary reading,
+    # and still creates no lifecycle event. The unresolved disagreement returns
+    # for an automatic retry rather than waiting on a person.
+    assert result["primary_status"] == "AI_RETRY_PENDING"
+    assert result["requires_manual_review"] is False
     assert result["should_create_review_record"] is False
     assert result["lifecycle_event"] == "NONE"
     assert result["backend_transition_validated"] is False

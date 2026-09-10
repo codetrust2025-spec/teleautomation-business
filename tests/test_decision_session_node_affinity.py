@@ -140,16 +140,19 @@ class TestNothingElseChanged:
         with ollama_nodes.decision_session():
             assert ollama_nodes.candidate_order("qwen2.5:7b")[0] == "jagadeesh"
 
-    def test_model_disagreement_is_untouched(self):
-        """It must still force review; this change only stops feeding it
-        answers from two different machines."""
+    def test_model_disagreement_detection_is_untouched(self):
+        """This change only stops feeding it answers from two machines.
+
+        The disagreement branch still exists and still validates no
+        transition. Where it sends the mail -- automatic retry rather than a
+        person -- is settled in test_model_disagreement_resolves_itself.py.
+        """
         source = inspect.getsource(agent.validate_result)
         assert 'if "MODEL_DISAGREEMENT" in' in source
         marker = source.index('if "MODEL_DISAGREEMENT" in')
         block = source[marker:marker + 700]
-        assert 'status="MANUAL_REVIEW_REQUIRED"' in block
-        assert "requires_manual_review=True" in block
         assert "backend_transition_validated=False" in block
+        assert 'backend_validation_reason="MODEL_DISAGREEMENT"' in block
 
     def test_no_seed_was_introduced(self):
         """Measured: a seed did not stabilise anything. On rtx4060 seed=42 gave

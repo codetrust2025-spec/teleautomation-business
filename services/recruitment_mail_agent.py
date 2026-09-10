@@ -1370,12 +1370,17 @@ def validate_result(
                 # conflict, slot -- is untouched.
                 value["requires_manual_review"] = False
                 value["manual_review_cleared_from"] = proposed_status
+    # An unresolved disagreement about a booking-relevant status. `_reconcile_
+    # model_results` has already decided that this one cannot be settled from
+    # the two readings alone, so nothing here may accept a transition. It goes
+    # back for an automatic retry rather than to a person: a later attempt runs
+    # against a different execution state and frequently settles it.
     if "MODEL_DISAGREEMENT" in {str(flag).upper() for flag in value.get("risk_flags") or []}:
         value.update(
-            status="MANUAL_REVIEW_REQUIRED", classification="needs_review",
-            candidate_status="Needs Review", is_selection_or_offer_related=False,
-            should_create_review_record=False, requires_manual_review=True,
-            ignore_reason="MODEL_DISAGREEMENT", validation_status="NEEDS_REVIEW",
+            status="AI_RETRY_PENDING", classification="ai_retry_pending",
+            candidate_status="AI Retry Pending", is_selection_or_offer_related=False,
+            should_create_review_record=False, requires_manual_review=False,
+            ignore_reason="MODEL_DISAGREEMENT", validation_status="RETRY_PENDING",
             lifecycle_event="NONE", interview_event="NONE", business_domain="NONE",
             is_job_outcome=False, is_current_event=False,
             backend_transition_validated=False,
@@ -2511,18 +2516,87 @@ def _reconcile_model_results(primary: dict[str, Any], validator: dict[str, Any])
         chosen["confidence"] = min(primary_confidence, validator_confidence)
         chosen["model_validation"] = {"agreed": True, "primary_status": primary.get("status"), "validator_status": validator.get("status")}
         return chosen
-    # A second reader is evidence, not an override authority. Any unresolved
-    # disagreement becomes an audit-only manual result with no lifecycle event;
-    # in particular a positive validator can no longer create an alert after a
-    # negative or different primary conclusion.
+    # A second reader is evidence, not an override authority. Detection of the
+    # disagreement is unchanged; what follows only decides what to do about it,
+    # and in no case is that a booking or a person.
+    #
+    # Measured over 30 days of production, all 489 disagreements were "both
+    # readers say this is a real recruitment event, but name a different
+    # stage" -- 242 INTERVIEW_SHORTLISTED against SELECTED, 97 INTERVIEW_UPDATE
+    # against SELECTED, 76 INTERVIEW_UPDATE against INTERVIEW_SHORTLISTED. Not
+    # one was positive against negative. Requiring two independent readings of
+    # a thirty-value enum to produce the identical string is a far stricter
+    # test than the decision needs, and it was consuming about a fifth of the
+    # model's output to produce no decision at all: 497 real recruitment mails
+    # were parked with no outcome.
+    #
+    # Only three classifications can move a booking -- confirmed, rescheduled
+    # and cancelled. When neither reading is one of those, the two disagree
+    # about which label to show and not about what to do, so the disagreement
+    # is resolved to the more conservative stage and left to earn its way
+    # through every ordinary guard below. Nothing is skipped for it.
+    primary_rank = store.stage_rank(primary.get("status"))
+    validator_rank = store.stage_rank(validator.get("status"))
+    booking_relevant = {"INTERVIEW_CONFIRMED", "INTERVIEW_RESCHEDULED", "INTERVIEW_CANCELLED"}
+    # Both readings must be positive. One reader saying "recruitment event" and
+    # the other "not relevant" is a disagreement about whether anything
+    # happened at all, and taking the conservative side of that would quietly
+    # ignore the mail -- which is precisely how a real interview goes missing.
+    # That case is uncertain, so it retries.
+    resolvable = (
+        primary_positive
+        and validator_positive
+        and primary_rank is not None
+        and validator_rank is not None
+        and not booking_relevant & {
+            str(primary.get("status") or "").upper(), str(validator.get("status") or "").upper(),
+        }
+    )
+    verdict = {
+        "agreed": False,
+        "primary_status": primary.get("status"),
+        "validator_status": validator.get("status"),
+    }
+    if resolvable:
+        # The earlier stage wins. Advancing a candidate on a contested reading
+        # is the only irreversible half of this choice, and the evidence that
+        # survives is the evidence belonging to the reading actually adopted.
+        conservative = primary if primary_rank <= validator_rank else validator
+        chosen = deepcopy(conservative)
+        chosen["confidence"] = min(primary_confidence, validator_confidence, 0.89)
+        # Deliberately not a risk flag. The tail of `validate_result` turns any
+        # risk flag into `requires_manual_review`, so recording the
+        # reconciliation there would send every one of these straight back to
+        # the review state this exists to remove. `model_validation` is
+        # persisted in the stored analysis, so the audit trail survives either
+        # way -- with `resolution` and `resolved_status` naming what happened.
+        chosen["reason"] = (
+            "Primary and independent validator named different stages; neither can move a "
+            f"booking, so the earlier stage ({chosen.get('status')}) was taken."
+        )
+        chosen["summary"] = chosen["reason"]
+        chosen["model_validation"] = {
+            **verdict, "resolution": "CONSERVATIVE_STAGE", "resolved_status": chosen.get("status"),
+        }
+        return chosen
+    # The two readings differ in what they would do, not merely in what they
+    # would say. That must never book on the strength of one of them, and it is
+    # never a question for a person either: it goes back for an automatic
+    # retry, which a different execution state can resolve on its own.
+    #
+    # `status` stays whatever the primary reader said, because `validate_result`
+    # schema-validates this result before anything else and the schema is the
+    # model's own output contract -- `AI_RETRY_PENDING` is not one of its
+    # values. Writing it here raised `invalid selection/offer JSON` on every
+    # booking-relevant disagreement, which surfaced as a validation failure
+    # against the wrong cause and spent the retry allowance toward a terminal
+    # park. The MODEL_DISAGREEMENT risk flag carries the decision instead, and
+    # the branch in `validate_result` converts it once the schema has passed.
     chosen = deepcopy(primary)
-    chosen["status"] = "MANUAL_REVIEW_REQUIRED"
     chosen["is_recruitment_related"] = True
     chosen["is_selection_or_offer_related"] = False
     chosen["should_create_review_record"] = False
-    chosen["requires_manual_review"] = True
-    chosen["classification"] = "needs_review"
-    chosen["candidate_status"] = "Needs Review"
+    chosen["requires_manual_review"] = False
     chosen["ignore_reason"] = "MODEL_DISAGREEMENT"
     chosen["lifecycle_event"] = "NONE"
     chosen["interview_event"] = "NONE"
@@ -2532,9 +2606,12 @@ def _reconcile_model_results(primary: dict[str, Any], validator: dict[str, Any])
     chosen["evidence"] = []
     chosen["confidence"] = min(primary_confidence, validator_confidence, 0.89)
     chosen["risk_flags"] = list(dict.fromkeys((chosen.get("risk_flags") or []) + ["MODEL_DISAGREEMENT"]))
-    chosen["reason"] = "Primary and independent validator disagree; no lifecycle transition was accepted."
+    chosen["reason"] = (
+        "Primary and independent validator disagree on a booking-relevant status; "
+        "no lifecycle transition was accepted and the mail returns for automatic retry."
+    )
     chosen["summary"] = chosen["reason"]
-    chosen["model_validation"] = {"agreed": False, "primary_status": primary.get("status"), "validator_status": validator.get("status")}
+    chosen["model_validation"] = {**verdict, "resolution": "AUTOMATIC_RETRY"}
     return chosen
 
 
@@ -3113,6 +3190,37 @@ def process_message(mailbox: dict[str, Any], decoded: dict[str, Any], attachment
         result["is_selection_or_offer_related"] = False
         result["should_create_review_record"] = False
         result["ignore_reason"] = "JOB_BOARD_NOTIFICATION"
+    def _queued_for_another_attempt() -> bool:
+        """Park an undecided result for automatic retry. Never a person's queue.
+
+        `AI_RETRY_PENDING` is deliberately not a tracked status, so without
+        this the mail falls into the ignore branch below and is marked
+        not-relevant -- silently discarding a mail the readers agreed was a
+        real recruitment event. Two separate checks reach here, one before the
+        ignore branch and one after the evidence guard, so both share this exit.
+        """
+        if "AI_RETRY_PENDING" not in {
+            str(result.get("status") or "").upper(),
+            str(result.get("primary_status") or "").upper(),
+        }:
+            return False
+        reason = str(result.get("ignore_reason") or "MODEL_DISAGREEMENT")
+        logger.info(
+            "Recruitment email returned for automatic retry reason=%s subject=%r",
+            reason, str(decoded.get("subject") or "")[:120],
+        )
+        store.mark_message_status(row["id"], "AI_RETRY_PENDING", reason=reason, error_code=reason)
+        try:
+            store.record_analysis(
+                row["id"], mailbox["candidate_id"], result,
+                model=model, processing_status="RETRY_PENDING",
+            )
+        except Exception:
+            logger.debug("Unable to persist automatic-retry analysis", exc_info=True)
+        return True
+
+    if _queued_for_another_attempt():
+        return None
     if not result.get("is_selection_or_offer_related") or not result.get("should_create_review_record") or result.get("primary_status") not in TRACKED_STATUSES:
         status = "IGNORED_LOW_CONFIDENCE" if result.get("primary_status") == "IGNORED_LOW_CONFIDENCE" else "IGNORED_NOT_OFFER_RELATED"
         if reprocess:
@@ -3126,9 +3234,19 @@ def process_message(mailbox: dict[str, Any], decoded: dict[str, Any], attachment
             store.mark_reprocessed(row["id"], previous_status, status, "HISTORICAL_SEMANTIC_RESCAN")
         return None
     if not result.get("evidence") and result.get("primary_status") != "MANUAL_REVIEW_REQUIRED":
-        result.update(primary_status="MANUAL_REVIEW_REQUIRED", status="MANUAL_REVIEW_REQUIRED",
-                      classification="needs_review", candidate_status="Needs Review",
-                      requires_manual_review=True, reason="The AI result lacks source-supported evidence")
+        # The anti-hallucination guard is unchanged: a result with no
+        # source-supported evidence still cannot become a lifecycle transition
+        # or a booking. Only its destination changes -- another attempt rather
+        # than a person's queue, since the quoting failure is usually a
+        # property of the sampling and not of the mail.
+        result.update(primary_status="AI_RETRY_PENDING", status="AI_RETRY_PENDING",
+                      classification="ai_retry_pending", candidate_status="AI Retry Pending",
+                      requires_manual_review=False, should_create_review_record=False,
+                      validation_status="RETRY_PENDING",
+                      ignore_reason=result.get("ignore_reason") or "EVIDENCE_NOT_SOURCE_SUPPORTED",
+                      reason="The AI result lacks source-supported evidence")
+        if _queued_for_another_attempt():
+            return None
     if reprocess:
         # Downstream booking must distinguish delayed historical recovery from
         # a live message. This marker is persisted in the structured analysis

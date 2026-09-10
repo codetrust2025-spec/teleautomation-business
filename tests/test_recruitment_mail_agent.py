@@ -160,11 +160,14 @@ def test_unsupported_joining_prediction_with_disagreement_fails_closed():
 
     validate_result(row, message, attachments)
 
-    assert row['status'] == 'MANUAL_REVIEW_REQUIRED'
-    assert row['classification'] == 'needs_review'
+    # Fails closed exactly as before -- no transition, no lifecycle event and
+    # nothing a booking could act on. The unresolved disagreement now returns
+    # for an automatic retry rather than to a person's queue.
+    assert row['status'] == 'AI_RETRY_PENDING'
+    assert row['classification'] == 'ai_retry_pending'
     assert row['should_create_review_record'] is False
     assert row['lifecycle_event'] == 'NONE'
-    assert row['requires_manual_review'] is True
+    assert row['requires_manual_review'] is False
     assert row['backend_transition_validated'] is False
     assert row['backend_validation_reason'] == 'MODEL_DISAGREEMENT'
 
