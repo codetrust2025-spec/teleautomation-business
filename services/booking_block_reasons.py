@@ -35,6 +35,7 @@ DUPLICATE_INVITE = "DUPLICATE_INVITE"
 PAYMENT_NOT_CLEARED = "PAYMENT_NOT_CLEARED"
 MANUAL_REVIEW_REQUIRED = "MANUAL_REVIEW_REQUIRED"
 BOOKING_NOT_SAVED = "BOOKING_NOT_SAVED"
+STALE_INTERVIEW_EVENT = "STALE_INTERVIEW_EVENT"
 
 REASON_TEXT = {
     DUPLICATE_BOOKING: "Candidate already has a booking for this round",
@@ -49,6 +50,7 @@ REASON_TEXT = {
     PAYMENT_NOT_CLEARED: "Payment is not cleared for this interview",
     MANUAL_REVIEW_REQUIRED: "Booking requires manual review",
     BOOKING_NOT_SAVED: "Booking was not saved — book this slot manually and report it",
+    STALE_INTERVIEW_EVENT: "A newer interview update already controls this booking",
 }
 
 # Validator code -> reason code. Anything absent falls back to manual review,
@@ -83,6 +85,7 @@ _INTERNAL_TO_REASON = {
     # never the invite's fault, so it must not read as a parsing or duplicate
     # problem — it is a storage failure an operator has to act on.
     "BOOKING_NOT_PERSISTED": BOOKING_NOT_SAVED,
+    "STALE_INTERVIEW_EVENT": STALE_INTERVIEW_EVENT,
 }
 
 _MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",

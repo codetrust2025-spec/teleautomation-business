@@ -16,12 +16,18 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from core import recruitment_mail_store as mail_store
 from features import candidate_store
 from services import booking_block_reasons, interview_timezones
+from services import interview_lifecycle
 
 logger = logging.getLogger("teleautomation.interview_auto_booking")
 
 ACTIONABLE = {"interview_confirmed", "interview_rescheduled", "interview_cancelled"}
 TIME_RE = re.compile(r"^(0?[1-9]|1[0-2]):([0-5]\d)\s*([AP]M)$", re.I)
 _BOOKING_LOCK = Lock()
+# Historical booking-audit rows may carry this outcome.  It remains a
+# recognized deterministic validation code for those records, but it is not
+# emitted for external interview commitments: two different lifecycle events
+# are allowed to occupy the same time.
+_LEGACY_SLOT_CONFLICT_CODE = "SLOT_CONFLICT"
 
 
 @dataclass
@@ -281,7 +287,21 @@ def validate_ai_for_booking(result: dict[str, Any], classification: str) -> None
     required = all(str(interview.get(key) or "").strip() for key in ("date", "time", "timezone"))
     if confidence < automatic and not required:
         raise BookingValidationError("MEDIUM_CONFIDENCE_INCOMPLETE", "Medium-confidence booking requires explicit date, time, and timezone.")
-    if bool(result.get("requires_manual_review")):
+    # Claude owns the final automation decision.  The booking layer consumes
+    # it rather than re-litigating classifier/review logic, while retaining
+    # its own source, schedule, candidate, payment and lifecycle invariants.
+    final_decision = str(
+        result.get("automation_decision") or result.get("booking_decision") or ""
+    ).strip().upper()
+    if final_decision in {"AUTO_IGNORE", "AI_RETRY_PENDING"}:
+        raise BookingValidationError(
+            "NOT_ACTIONABLE", "The final automation decision does not authorize booking."
+        )
+    if final_decision not in {"", "AUTO_BOOK"}:
+        raise BookingValidationError(
+            "AI_REQUIRES_REVIEW", "The final automation decision is not recognized for booking."
+        )
+    if bool(result.get("requires_manual_review")) and final_decision != "AUTO_BOOK":
         raise BookingValidationError("AI_REQUIRES_REVIEW", "Ollama marked this interview for manual review.")
     if classification not in ACTIONABLE:
         raise BookingValidationError("NOT_ACTIONABLE", "This interview classification does not change a booking.")
@@ -475,6 +495,62 @@ def _calendar_revision_of(slots: list[dict[str, Any]], result: dict[str, Any]) -
         except (TypeError, ValueError):
             booked = 0
         if incoming >= booked:
+            return row
+    return None
+
+
+def _same_lifecycle_slot(
+    row: dict[str, Any], *, result: dict[str, Any], message: dict[str, Any], schedule: dict[str, str],
+) -> bool:
+    """Whether a confirmed row is the same logical interview as this event.
+
+    Interview commitments are deliberately allowed to overlap.  A date/time
+    comparison alone therefore cannot be a duplicate guard: it would reject a
+    second, genuinely different invite for the candidate.  Calendar UID is
+    authoritative; without one, match the source message or the same fallback
+    identity used by the lifecycle store (candidate scope is provided by the
+    caller, then thread plus exact schedule).
+    """
+    uid = _calendar_uid(result)
+    if uid:
+        return _same_text(row.get("interview_calendar_uid"), uid)
+    source_id = str(message.get("provider_message_id") or "").strip()
+    if source_id and _same_text(row.get("interview_source_message_id"), source_id):
+        return True
+    thread_id = str(message.get("provider_thread_id") or "").strip()
+    return bool(
+        thread_id
+        and _same_text(row.get("interview_source_thread_id"), thread_id)
+        and str(row.get("date") or "")[:10] == schedule["date"]
+        and str(row.get("time") or "")[:5] == schedule["time"]
+        and str(row.get("time_end") or "")[:5] == schedule["time_end"]
+    )
+
+
+def _recover_pending_lifecycle_slot(
+    slots: list[dict[str, Any]], *, result: dict[str, Any], message: dict[str, Any], schedule: dict[str, str],
+) -> dict[str, Any] | None:
+    """Find the already-written slot after a crash before audit/alert write.
+
+    This is deliberately stricter than ordinary duplicate detection: recovery
+    requires the logical event identity plus the exact persisted schedule, so
+    a retry cannot adopt another interview merely because it shares a time.
+    """
+    uid = _calendar_uid(result)
+    source_id = str(message.get("provider_message_id") or "").strip()
+    for row in slots:
+        identity_matches = (
+            bool(uid) and _same_text(row.get("interview_calendar_uid"), uid)
+        ) or (
+            not uid and bool(source_id) and _same_text(row.get("interview_source_message_id"), source_id)
+        )
+        if not identity_matches:
+            continue
+        if (
+            str(row.get("date") or "")[:10] == schedule["date"]
+            and str(row.get("time") or "")[:5] == schedule["time"]
+            and str(row.get("time_end") or "")[:5] == schedule["time_end"]
+        ):
             return row
     return None
 
@@ -718,12 +794,6 @@ def _execute_auto_booking(
         validation_status="MANUAL_APPROVED" if manual_reviewer else str(result.get("ai_validation_status") or "UNAVAILABLE"),
         processing_status="VALIDATING",
     )
-    existing_audit = mail_store.booking_audit_for_message(message["provider_message_id"], classification)
-    if existing_audit and existing_audit.get("auto_booked"):
-        logger.info("Duplicate Gmail interview outcome ignored correlation_id=%s gmail_message_id=%s", correlation_id, message["provider_message_id"])
-        return {"status": existing_audit.get("booking_status") or "Already Processed", "event_type": "duplicate_booking_ignored",
-                "booking": {"id": existing_audit.get("booking_id")}, "audit": existing_audit,
-                "notification": notification, "duplicate": True}
     historical = historical_booking_disposition(result, classification)
     if historical:
         audit = mail_store.record_booking_audit(
@@ -778,15 +848,91 @@ def _execute_auto_booking(
         # of something already booked is handled as the reschedule it is.
         if classification == "interview_confirmed" and _calendar_revision_of(slots, result):
             classification = "interview_rescheduled"
-        if classification == "interview_confirmed":
-            duplicate = next((row for row in slots if str(row.get("date"))[:10] == schedule["date"] and str(row.get("time"))[:5] == schedule["time"]), None)
+        # The mail event is not the idempotency boundary: a resend, a
+        # calendar revision, and an old replay all describe the same logical
+        # interview.  Claim its lifecycle transition before mutating a slot.
+        lifecycle_result = dict(result)
+        lifecycle_result["classification"] = classification
+        lifecycle_claim = interview_lifecycle.claim(str(candidate["id"]), lifecycle_result, message)
+        if lifecycle_claim.decision in {
+            interview_lifecycle.TransitionDecision.STOP_STALE,
+            interview_lifecycle.TransitionDecision.STOP_CONFLICT,
+            interview_lifecycle.TransitionDecision.STOP_NEEDS_REVIEW,
+        }:
+            raise BookingValidationError(
+                "STALE_INTERVIEW_EVENT",
+                "This mail is older than, or conflicts with, the current interview lifecycle state.",
+                payment_status=payment_status, duplicate_status="PASSED", conflict_status="NOT_REQUIRED",
+            )
+        if lifecycle_claim.decision == interview_lifecycle.TransitionDecision.IDEMPOTENT and lifecycle_claim.booking_id:
+            if classification != "interview_cancelled":
+                booking = _confirm_slot_still_stored(lifecycle_claim.booking_id and {"id": lifecycle_claim.booking_id}, schedule)
+            else:
+                booking = {"id": lifecycle_claim.booking_id}
+            existing_audit = mail_store.booking_audit_for_message(message["provider_message_id"], classification)
+            if existing_audit:
+                # Retrying the idempotent outcome also heals a crash after the
+                # audit write but before its notification projection.
+                repaired_notification = mail_store.attach_booking_to_notification(
+                    notification.get("id"), audit_id=existing_audit.get("id"), booking_id=str(booking.get("id") or ""),
+                    booking_status=existing_audit.get("booking_status") or "Already Processed", result=result,
+                    priority="high", schedule=schedule,
+                    display_status="Interview Automatically Booked",
+                ) if notification.get("id") else notification
+                return {
+                    "status": existing_audit.get("booking_status") or "Already Processed",
+                    "event_type": "notification_created", "booking": booking,
+                    "audit": existing_audit, "notification": repaired_notification, "duplicate": True,
+                }
+            booking_status, event_type = (
+                ("Auto Booked", "slot_auto_booked") if classification == "interview_confirmed"
+                else ("Rescheduled", "interview_rescheduled") if classification == "interview_rescheduled"
+                else ("Cancelled", "interview_cancelled")
+            )
+        # Older audit records predate the lifecycle table.  They are only
+        # trusted if the canonical candidate row still proves the exact slot.
+        existing_audit = mail_store.booking_audit_for_message(message["provider_message_id"], classification)
+        if existing_audit and existing_audit.get("auto_booked") and classification != "interview_cancelled":
+            try:
+                verified = _confirm_slot_still_stored({"id": existing_audit.get("booking_id")}, schedule)
+            except BookingValidationError:
+                logger.warning("Booking audit points at a missing slot; replay will use lifecycle recovery gmail_message_id=%s", message["provider_message_id"])
+            else:
+                interview_lifecycle.mark_applied(
+                    lifecycle_claim, booking_id=str(verified.get("id") or ""),
+                    state=(
+                        interview_lifecycle.InterviewState.RESCHEDULED
+                        if classification == "interview_rescheduled"
+                        else interview_lifecycle.InterviewState.BOOKED
+                    ),
+                )
+                return {"status": existing_audit.get("booking_status") or "Already Processed", "event_type": "notification_created",
+                        "booking": verified, "audit": existing_audit, "notification": notification, "duplicate": True}
+        # An intent with no booking id means a worker may have crashed after
+        # candidate persistence.  Recover its exact row, then complete audit
+        # and notification bookkeeping without assigning a second slot.
+        if lifecycle_claim.decision == interview_lifecycle.TransitionDecision.IDEMPOTENT and not lifecycle_claim.booking_id and schedule:
+            recovered = _recover_pending_lifecycle_slot(slots, result=result, message=message, schedule=schedule)
+            if recovered:
+                booking = _confirm_slot_still_stored(recovered, schedule)
+                if classification == "interview_confirmed":
+                    booking_status, event_type = "Auto Booked", "slot_auto_booked"
+                else:
+                    booking_status, event_type = "Rescheduled", "interview_rescheduled"
+                payment_status, duplicate_status, conflict_status = "PASSED", "PASSED", "PASSED"
+        if booking is None and classification == "interview_confirmed":
+            duplicate = next((
+                row for row in slots
+                if _same_lifecycle_slot(row, result=result, message=message, schedule=schedule)
+            ), None)
             if duplicate:
                 raise BookingValidationError("DUPLICATE_BOOKING", "This candidate already has the same interview booking.", payment_status="PASSED", duplicate_status="DUPLICATE")
             duplicate_status = "PASSED"
-            conflicts = candidate_store.find_interview_slot_conflicts(schedule["date"], schedule["time"], schedule["time_end"])
-            if conflicts:
-                raise BookingValidationError("SLOT_CONFLICT", "The interview overlaps an existing confirmed slot.", payment_status="PASSED", duplicate_status="PASSED", conflict_status="CONFLICT")
-            conflict_status = "PASSED"
+            # Different interview identities are allowed to overlap.  The
+            # system records external interview commitments, not an exclusive
+            # interviewer resource calendar; lifecycle identity is the only
+            # duplicate boundary here.
+            conflict_status = "NOT_REQUIRED"
             booking = _persisted(lambda: candidate_store.assign_interview_slot(
                 candidate_id=str(candidate["id"]), date=schedule["date"], time=schedule["time"],
                 time_end=schedule["time_end"], interview_round=interview_round,
@@ -802,13 +948,8 @@ def _execute_auto_booking(
                 ("Approved & Booked", "slot_manually_booked")
                 if manual_reviewer else ("Auto Booked", "slot_auto_booked")
             )
-        elif classification == "interview_rescheduled":
+        elif booking is None and classification == "interview_rescheduled":
             target = _resolve_existing_slot(slots, result=result, message=message, classification=classification)
-            conflicts = candidate_store.find_interview_slot_conflicts(
-                schedule["date"], schedule["time"], schedule["time_end"], exclude_candidate_id=str(target["id"]),
-            )
-            if conflicts:
-                raise BookingValidationError("SLOT_CONFLICT", "The rescheduled interview overlaps an existing confirmed slot.", payment_status="PASSED", conflict_status="CONFLICT")
             previous = dict(target)
             booking = _persisted(lambda: candidate_store.update_interview_slot(
                 candidate_id=str(target["id"]), date=schedule["date"], time=schedule["time"],
@@ -821,9 +962,9 @@ def _execute_auto_booking(
                 interview_booking_source="candidate_booked" if manual_reviewer else "ai_auto_booked",
                 **_booking_metadata(result, message, schedule),
             ))
-            duplicate_status, conflict_status = "PASSED", "PASSED"
+            duplicate_status, conflict_status = "PASSED", "NOT_REQUIRED"
             booking_status, event_type = "Rescheduled", "interview_rescheduled"
-        else:
+        elif booking is None:
             target = _resolve_existing_slot(slots, result=result, message=message, classification=classification)
             previous = dict(target)
             booking = candidate_store.cancel_interview_slot(candidate_id=str(target["id"]))
@@ -839,6 +980,15 @@ def _execute_auto_booking(
             )
         if booking_status in _PERSISTED_BOOKING_STATUSES:
             booking = _confirm_slot_still_stored(booking, schedule)
+        interview_lifecycle.mark_applied(
+            lifecycle_claim,
+            booking_id=str(booking.get("id") or ""),
+            state=(
+                interview_lifecycle.InterviewState.BOOKED if booking_status in {"Auto Booked", "Approved & Booked"}
+                else interview_lifecycle.InterviewState.RESCHEDULED if booking_status == "Rescheduled"
+                else interview_lifecycle.InterviewState.CANCELLED
+            ),
+        )
         audit = mail_store.record_booking_audit(
             analysis_id=analysis["id"], candidate_id=str(candidate["id"]),
             gmail_message_id=message["provider_message_id"], gmail_thread_id=message.get("provider_thread_id"),
