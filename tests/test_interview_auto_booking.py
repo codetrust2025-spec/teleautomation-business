@@ -581,9 +581,79 @@ def test_duplicate_gmail_message_does_not_mutate_booking_twice(monkeypatch):
     monkeypatch.setenv("AI_INTERVIEW_AUTO_BOOKING_ENABLED", "true")
     install_store_fakes(monkeypatch)
     monkeypatch.setattr(booking.mail_store, "booking_audit_for_message", lambda *args: {"id": "audit1", "auto_booked": True, "booking_id": "slot1", "booking_status": "Auto Booked"})
+    monkeypatch.setattr(booking.candidate_store, "assert_slot_persisted", lambda *_args, **_kwargs: {"id": "slot1", "slot_confirmed": True, "date": "2099-07-20", "time": "15:00", "time_end": "15:30"})
     monkeypatch.setattr(booking.candidate_store, "assign_interview_slot", lambda **kwargs: pytest.fail("must not book twice"))
     outcome = execute(result())
     assert outcome["duplicate"] is True
+
+
+def test_lifecycle_stale_replay_cannot_mutate_a_newer_interview(monkeypatch):
+    monkeypatch.setenv("AI_INTERVIEW_AUTO_BOOKING_ENABLED", "true")
+    install_store_fakes(monkeypatch)
+    incoming = booking.interview_lifecycle.LifecycleEvent.from_payload(
+        "c1", result(), {"provider_message_id": "old", "provider_thread_id": "gt1"},
+    )
+    monkeypatch.setattr(
+        booking.interview_lifecycle, "claim",
+        lambda *_args, **_kwargs: booking.interview_lifecycle.LifecycleClaim(
+            booking.interview_lifecycle.TransitionDecision.STOP_STALE, incoming, "lifecycle-1",
+        ),
+    )
+    monkeypatch.setattr(booking.candidate_store, "assign_interview_slot", lambda **_kwargs: pytest.fail("stale replay must not assign"))
+
+    outcome = execute(result())
+
+    assert outcome["status"] == "Blocked"
+    assert outcome["failure_code"] == "STALE_INTERVIEW_EVENT"
+
+
+def test_pending_lifecycle_retry_does_not_create_a_second_slot(monkeypatch):
+    monkeypatch.setenv("AI_INTERVIEW_AUTO_BOOKING_ENABLED", "true")
+    existing = {
+        "id": "slot1", "name": "Rahul", "slot_confirmed": True,
+        "date": "2099-07-20", "time": "15:00", "time_end": "15:30",
+    }
+    install_store_fakes(monkeypatch, rows=[existing])
+    incoming = booking.interview_lifecycle.LifecycleEvent.from_payload(
+        "c1", result(), {"provider_message_id": "gm1", "provider_thread_id": "gt1"},
+    )
+    monkeypatch.setattr(
+        booking.interview_lifecycle, "claim",
+        lambda *_args, **_kwargs: booking.interview_lifecycle.LifecycleClaim(
+            booking.interview_lifecycle.TransitionDecision.IDEMPOTENT, incoming, "lifecycle-1", "", "PENDING",
+        ),
+    )
+    monkeypatch.setattr(booking.candidate_store, "assign_interview_slot", lambda **_kwargs: pytest.fail("retry must not create a second slot"))
+
+    outcome = execute(result())
+
+    assert outcome["status"] == "Duplicate Ignored"
+
+
+def test_retry_recovers_persisted_slot_before_audit_without_assigning_again(monkeypatch):
+    monkeypatch.setenv("AI_INTERVIEW_AUTO_BOOKING_ENABLED", "true")
+    existing = {
+        "id": "slot1", "name": "Rahul", "slot_confirmed": True,
+        "date": "2099-07-20", "time": "15:00", "time_end": "15:30",
+        "interview_source_message_id": "gm1",
+    }
+    _candidate, audits = install_store_fakes(monkeypatch, rows=[existing])
+    incoming = booking.interview_lifecycle.LifecycleEvent.from_payload(
+        "c1", result(), {"provider_message_id": "gm1", "provider_thread_id": "gt1"},
+    )
+    claim = booking.interview_lifecycle.LifecycleClaim(
+        booking.interview_lifecycle.TransitionDecision.IDEMPOTENT, incoming, "lifecycle-1", "", "PENDING",
+    )
+    monkeypatch.setattr(booking.interview_lifecycle, "claim", lambda *_args, **_kwargs: claim)
+    monkeypatch.setattr(booking.interview_lifecycle, "mark_applied", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(booking.candidate_store, "assert_slot_persisted", lambda *_args, **_kwargs: dict(existing))
+    monkeypatch.setattr(booking.candidate_store, "assign_interview_slot", lambda **_kwargs: pytest.fail("crash retry must recover, not assign"))
+
+    outcome = execute(result())
+
+    assert outcome["status"] == "Auto Booked"
+    assert outcome["booking"]["id"] == "slot1"
+    assert audits[-1]["booking_id"] == "slot1"
 
 
 # ── the blocked row must carry why ──────────────────────────────────────────

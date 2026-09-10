@@ -529,6 +529,13 @@ def install_recruitment_mail_routes(app):
         _guard();require_fleet_admin(request)
         return {'status':'ok','audit':await asyncio.to_thread(store.list_booking_audit,candidate_id=candidate_id,booking_id=booking_id,limit=limit)}
 
+    @app.get('/api/mail-monitoring/interview-reconciliation')
+    async def interview_reconciliation_report(request:Request,candidate_id:str|None=None,limit:int=500):
+        """Read-only consistency report; it never retries or repairs bookings."""
+        _guard();require_fleet_admin(request)
+        from services.interview_state_reconciliation import load_current_report
+        return {'status':'ok','report':await asyncio.to_thread(load_current_report,candidate_id=candidate_id,limit=limit)}
+
     @app.post('/api/mail-monitoring/notifications/clear-all')
     async def clear_all_mail_notifications(request:Request):
         _guard();profile=require_fleet_admin(request)
