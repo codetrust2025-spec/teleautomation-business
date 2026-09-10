@@ -2975,28 +2975,34 @@ def process_message(mailbox: dict[str, Any], decoded: dict[str, Any], attachment
             return None
         verdict = calendar_invite_verdict(calendar_relevance)
         if verdict == "REVIEW":
-            # ESTABLISHED, but the model named a kind that contradicts it. That
-            # is not a rejection and it is not permission to book: an operator
-            # decides. Dropping these lost three real cancellations.
+            # The model contradicted itself, and the invitation does not need it
+            # to be decisive. Reaching this line already means
+            # `trusted_interview_result` accepted the .ics: a single RFC 5545
+            # event with a UID, METHOD REQUEST or CANCEL, an organiser aligned
+            # with an authenticated sender, this recipient present in ATTENDEE,
+            # and an explicit start with a timezone. That is the deterministic
+            # evidence a booking rests on, and it does not become weaker because
+            # the model paired NOT_ESTABLISHED with RECIPIENT_HIRING_PROCESS.
+            #
+            # Gangadhar's ServiceNow interview was lost to this: a Teams invite
+            # from a named organiser, the candidate an attendee, 18:30 India
+            # Standard Time, refused because those two fields disagreed.
+            #
+            # A confident marketing answer still ignores below, which is what
+            # keeps the Zoom workshop out -- it answers NOT_ESTABLISHED with
+            # PUBLIC_EVENT, never RECIPIENT_HIRING_PROCESS. Payment, duplicate,
+            # conflict and lifecycle checks are all downstream of here and
+            # unchanged, so this decides detection only.
             logger.warning(
-                "Calendar invite intent is self-contradictory kind=%s decision=%s subject=%r",
+                "Calendar invite intent is self-contradictory; booking on the invitation "
+                "kind=%s decision=%s subject=%r",
                 calendar_relevance.get("message_kind"), calendar_relevance.get("decision"),
                 str(decoded.get("subject") or "")[:120],
             )
             calendar_result = dict(calendar_result)
             calendar_result["recruitment_relevance_result"] = deepcopy(calendar_relevance)
-            calendar_result.update(
-                status="MANUAL_REVIEW_REQUIRED", primary_status="MANUAL_REVIEW_REQUIRED",
-                classification="needs_review", candidate_status="Needs Review",
-                should_create_review_record=True, requires_manual_review=True,
-                validation_status="NEEDS_REVIEW", ignore_reason=None,
-                reason=(
-                    "The relevance model established this recipient's hiring process but "
-                    f"labelled the message {calendar_relevance.get('message_kind')}. "
-                    "An operator must confirm before this invite is booked."
-                ),
-            )
-            result, model, duration = calendar_result, "rfc5545-authenticated-needs-review", 0
+            calendar_result["calendar_intent_contradictory"] = True
+            result, model, duration = calendar_result, "rfc5545-authenticated", 0
         elif verdict == "IGNORE":
             reason = "CALENDAR_INVITE_NOT_A_CANDIDATE_INTERVIEW"
             logger.info(

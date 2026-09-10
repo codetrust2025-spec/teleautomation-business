@@ -178,16 +178,20 @@ class TestWhatMustStillBlock:
         value = validated(requires_review=False, risk_flags=["SPAM_OR_SCAM"])
         assert value["requires_manual_review"] is True
 
-    def test_the_booking_gate_still_refuses_a_standing_veto(self, monkeypatch):
+    def test_the_model_flag_no_longer_vetoes_the_booking(self, monkeypatch):
+        """The flag is kept on the result for audit, but the gate ignores it.
+
+        Booking still rests on evidence: a validated source, confidence over
+        the threshold, and an explicit schedule for a medium-confidence result.
+        """
         from services import interview_auto_booking as booking
 
         monkeypatch.setenv("AI_INTERVIEW_AUTO_BOOKING_ENABLED", "true")
         value = validated(status="INTERVIEW_CONFIRMED", risk_flags=[])
+        assert value["requires_manual_review"] is True
         value["classification_source"] = "OLLAMA"
         value["ai_validation_status"] = "VALIDATED"
-        with pytest.raises(booking.BookingValidationError) as raised:
-            booking.validate_ai_for_booking(value, value["classification"])
-        assert raised.value.args[0] == "AI_REQUIRES_REVIEW"
+        booking.validate_ai_for_booking(value, value["classification"])
 
     def test_an_unsupported_status_is_not_promoted_at_all(self):
         """A mail whose source asserts nothing cannot reach the clearing path."""

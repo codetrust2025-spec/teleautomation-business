@@ -115,12 +115,16 @@ def test_medium_confidence_requires_a_complete_schedule():
     assert exc.value.args[0] == "MEDIUM_CONFIDENCE_INCOMPLETE"
 
 
-def test_a_model_request_for_manual_review_is_honoured():
+def test_a_model_request_for_manual_review_no_longer_vetoes_a_booking():
+    """The flag is the model's opinion of its own reading, not the evidence.
+
+    It refused a Karat interview reminder at confidence 1.0 carrying a full
+    schedule, and a Teams invite naming the candidate as an attendee. Every
+    check that rests on evidence still runs.
+    """
     value = result()
     value["requires_manual_review"] = True
-    with pytest.raises(booking.BookingValidationError) as exc:
-        booking.validate_ai_for_booking(value, "interview_confirmed")
-    assert exc.value.args[0] == "AI_REQUIRES_REVIEW"
+    booking.validate_ai_for_booking(value, "interview_confirmed")
 
 
 # ── 4. Only interview classifications can move a booking ─────────────────────
