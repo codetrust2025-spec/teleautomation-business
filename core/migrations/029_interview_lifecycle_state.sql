@@ -30,9 +30,8 @@ CREATE INDEX IF NOT EXISTS idx_interview_lifecycle_calendar
   ON interview_lifecycle_states(candidate_id, calendar_uid, calendar_sequence DESC)
   WHERE calendar_uid IS NOT NULL;
 
--- A state row is deliberately a projection.  This append-only transition
--- ledger retains every idempotency key so retrying an older mail can be
--- recognised even after a newer reschedule becomes the current state.
+-- A state row is deliberately a projection. This append-only transition
+-- ledger retains every idempotency key after a newer update becomes current.
 CREATE TABLE IF NOT EXISTS interview_lifecycle_transitions (
   id text PRIMARY KEY,
   interview_key text NOT NULL REFERENCES interview_lifecycle_states(interview_key) ON DELETE RESTRICT,
