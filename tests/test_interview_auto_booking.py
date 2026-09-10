@@ -317,7 +317,7 @@ def test_auto_booking_uses_the_canonical_mailbox_candidate_identity(monkeypatch)
     monkeypatch.setenv("AI_INTERVIEW_AUTO_BOOKING_ENABLED", "true")
     _candidate, audits = install_store_fakes(monkeypatch)
     monkeypatch.setattr(
-        booking.candidate_store, "canonical_candidate_identity_id",
+        booking.mail_store, "canonical_candidate_id",
         lambda candidate_id: "canonical-candidate" if candidate_id == "c1" else candidate_id,
     )
     canonical = {

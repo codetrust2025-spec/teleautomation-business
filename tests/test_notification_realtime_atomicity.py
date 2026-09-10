@@ -118,3 +118,14 @@ def test_reprocess_updates_existing_row_without_a_second_creation_event(monkeypa
     assert notification["id"] == "existing-notification"
     assert "_created_realtime_event" not in notification
     assert not any(sql.startswith("INSERT INTO mail_realtime_events") for sql in cursor.sql)
+
+
+def test_interview_alert_and_realtime_use_booking_canonical_person(monkeypatch):
+    cursor = Cursor(inserted=True)
+    install(monkeypatch, cursor)
+    monkeypatch.setattr(store, 'canonical_candidate_id', lambda _source: 'canonical-person')
+    event, analysis = inputs()
+    notification = store.create_monitoring_notification(event, analysis)
+    assert notification['candidate_id'] == 'canonical-person'
+    assert notification['_created_realtime_event']['candidate_id'] == 'canonical-person'
+    assert event['candidate_id'] == 'candidate-1'  # immutable source provenance

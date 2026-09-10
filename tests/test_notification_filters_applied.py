@@ -94,6 +94,21 @@ def test_an_absent_filter_adds_no_condition(captured):
     assert "priority=%s" not in where_clause(captured)
 
 
+def test_candidate_filter_includes_legacy_aliases_without_matching_other_people(captured, monkeypatch):
+    from services import recruitment_identity
+    monkeypatch.setattr(recruitment_identity, 'load_links', lambda: {'old': 'person', 'latest': 'person', 'unrelated': 'someone-else'})
+    store.list_notifications(filters={'candidate_id': 'old'})
+    assert ['latest', 'old', 'person'] in bound(captured)
+    assert 'candidate_id=ANY(%s)' in where_clause(captured)
+
+
+def test_booking_audit_filter_keeps_alias_history_visible(captured, monkeypatch):
+    from services import recruitment_identity
+    monkeypatch.setattr(recruitment_identity, 'load_links', lambda: {'old': 'person'})
+    store.list_booking_audit(candidate_id='person')
+    assert ['old', 'person'] in bound(captured)
+
+
 def test_an_empty_string_is_not_treated_as_a_filter(captured):
     """The screen sends "" for "All candidates". Binding that would match no
     row and empty the table."""

@@ -8,7 +8,7 @@ testable without turning an old email into a new booking.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from enum import Enum
 from hashlib import sha256
@@ -166,7 +166,8 @@ def decide(previous: LifecycleEvent | None, incoming: LifecycleEvent) -> Transit
         if incoming.calendar_sequence == previous.calendar_sequence:
             if previous.state == InterviewState.CANCELLED:
                 return TransitionDecision.STOP_STALE
-            if incoming.state == previous.state and incoming.schedule == previous.schedule:
+            same_action = incoming.classification == previous.classification
+            if same_action and incoming.schedule == previous.schedule:
                 return TransitionDecision.IDEMPOTENT
             # A cancellation at the same sequence is a monotonic terminal
             # transition; a conflicting confirmation/reschedule is not.
@@ -220,12 +221,30 @@ def claim(candidate_id: str, result: Mapping[str, Any], message: Mapping[str, An
     from core.db.connection import get_connection, use_postgres
     if not use_postgres():
         return LifecycleClaim(TransitionDecision.ALLOW, incoming, key)
+    from services.recruitment_identity import aliases, load_links
+    # Rows written before the stable-identity fix used a display/slot ID.
+    # Read those tombstones too; changing the lock identity cannot erase history.
+    keys = sorted({interview_key(alias, result, message) for alias in aliases(candidate_id, load_links())})
     with get_connection() as conn, conn.cursor() as cur:
-        cur.execute("SELECT * FROM interview_lifecycle_states WHERE interview_key=%s FOR UPDATE", (key,))
+        cur.execute("SELECT * FROM interview_lifecycle_states WHERE interview_key=ANY(%s) ORDER BY interview_key FOR UPDATE", (keys,))
         names = [column.name for column in cur.description]
-        row = cur.fetchone()
-        previous = _from_row(dict(zip(names, row))) if row else None
+        rows = [dict(zip(names, row)) for row in cur.fetchall()]
+        # The source calendar version wins, never the time a worker replayed it.
+        row = max(rows, key=lambda r: (
+            int(r.get("calendar_sequence") or 0),
+            bool(incoming.calendar_uid and r.get("lifecycle_state") == "CANCELLED"),
+            _sent_at(r.get("source_sent_at")) or datetime.min.replace(tzinfo=timezone.utc),
+        )) if rows else None
+        previous = _from_row(row) if row else None
         decision = decide(previous, incoming)
+        if decision in {TransitionDecision.STOP_STALE, TransitionDecision.STOP_CONFLICT, TransitionDecision.STOP_NEEDS_REVIEW}:
+            return LifecycleClaim(decision, incoming, key)
+        if decision == TransitionDecision.IDEMPOTENT and row:
+            return LifecycleClaim(
+                decision, replace(incoming, idempotency_key=previous.idempotency_key),
+                _text(row.get("interview_key")), _text(row.get("booking_id")),
+                _text(row.get("transition_status")),
+            )
         cur.execute("SELECT booking_id,transition_status FROM interview_lifecycle_transitions WHERE idempotency_key=%s", (incoming.idempotency_key,))
         known = cur.fetchone()
         if known:

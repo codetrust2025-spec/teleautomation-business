@@ -162,20 +162,8 @@ def now() -> datetime:
 
 def canonical_candidate_id(candidate_id: str) -> str:
     """Resolve a recruitment event to one strong, persisted person identity."""
-    value = str(candidate_id or "")
-    with get_connection() as conn, conn.cursor() as cur:
-        cur.execute(
-            "SELECT canonical_candidate_id FROM candidate_identity_links WHERE alias_candidate_id=%s",
-            (value,),
-        )
-        row = cur.fetchone()
-    if row and row[0]:
-        return str(row[0])
-    try:
-        from features import candidate_store
-        return candidate_store.canonical_candidate_identity_id(value)
-    except Exception:
-        return value
+    from services.recruitment_identity import canonical_candidate_id as resolve
+    return resolve(candidate_id)
 
 
 @contextmanager
@@ -1293,7 +1281,7 @@ def calendar_invite_recovery_discovery(*, limit: int = 500) -> dict[str, Any]:
 
     This deliberately does *not* lease, reprocess, or alter a message.  It is
     the safety valve before expanding a recovery list: an operator can see
-    whether an old invite was already represented by an audit/event, was
+    whether an old invite is represented by a persisted slot, was
     cancelled, or is merely a candidate for the narrowly configured recovery
     worker.
     """
@@ -1306,63 +1294,8 @@ def calendar_invite_recovery_discovery(*, limit: int = 500) -> dict[str, Any]:
     }
     if not use_postgres():
         return empty
-    with get_connection() as conn, conn.cursor() as cur:
-        cur.execute(
-            """SELECT m.id AS mailbox_message_id,m.provider_message_id,m.subject,
-                      m.sent_at,m.ignore_reason,m.processing_status,
-                      COALESCE(e.canonical_candidate_id,e.candidate_id,b.candidate_id)
-                        AS canonical_candidate_id,
-                      e.id AS event_id,e.primary_status AS event_status,
-                      r.state AS recovery_state,r.attempts AS recovery_attempts,
-                      audit.booking_id,audit.booking_status,audit.auto_booked,
-                      CASE
-                        WHEN audit.booking_id IS NOT NULL AND audit.auto_booked
-                          THEN 'ALREADY_REPRESENTED'
-                        WHEN e.primary_status='INTERVIEW_CANCELLED'
-                          THEN 'STALE_OR_CANCELLED'
-                        WHEN r.state IN ('AUTO_BOOKED','AUTO_RESCHEDULED','AUTO_CANCELLED','AUTO_IGNORE')
-                          THEN 'ALREADY_ASSESSED'
-                        ELSE 'RECOVERY_CANDIDATE'
-                      END AS discovery_state
-                 FROM mailbox_messages m
-                 JOIN candidate_mailboxes b ON b.id=m.mailbox_id
-                 LEFT JOIN LATERAL (
-                    SELECT id,candidate_id,canonical_candidate_id,primary_status
-                      FROM ai_recruitment_events
-                     WHERE mailbox_message_id=m.id
-                     ORDER BY updated_at DESC LIMIT 1
-                 ) e ON true
-                 LEFT JOIN LATERAL (
-                    SELECT booking_id,booking_status,auto_booked
-                      FROM interview_auto_booking_audit
-                     WHERE gmail_message_id=m.provider_message_id
-                     ORDER BY updated_at DESC LIMIT 1
-                 ) audit ON true
-                 LEFT JOIN recruitment_calendar_recovery r ON r.mailbox_message_id=m.id
-                WHERE m.processing_status='AUTO_IGNORE'
-                  AND m.ignore_reason=ANY(%s)
-                  AND EXISTS(
-                    SELECT 1 FROM mailbox_attachments a
-                     WHERE a.mailbox_message_id=m.id
-                       AND lower(COALESCE(a.filename,'')) LIKE '%%.ics'
-                  )
-                ORDER BY m.sent_at ASC LIMIT %s""",
-            (list(_CALENDAR_FALSE_IGNORE_REASONS), max(1, min(limit, 2000))),
-        )
-        records = _rows(cur)
-    summary = {"total": len(records), "recovery_candidates": 0, "already_represented": 0,
-               "stale_or_cancelled": 0, "already_assessed": 0}
-    state_counts = {
-        "RECOVERY_CANDIDATE": "recovery_candidates",
-        "ALREADY_REPRESENTED": "already_represented",
-        "STALE_OR_CANCELLED": "stale_or_cancelled",
-        "ALREADY_ASSESSED": "already_assessed",
-    }
-    for record in records:
-        bucket = state_counts.get(str(record.get("discovery_state") or ""))
-        if bucket:
-            summary[bucket] += 1
-    return {"summary": summary, "records": records}
+    from services.calendar_recovery_discovery import load_report
+    return load_report(limit=limit)
 
 
 # Only genuine offer documents identify a duplicate OFFER. Recurring documents
@@ -2317,6 +2250,12 @@ def create_monitoring_notification(
             return {}
 
         name, email = _candidate_snapshot(str(event["candidate_id"]), structured)
+        # Keep source provenance on the event, but use the same stable person
+        # as booking/lifecycle for new interview alert projections.
+        notification_candidate_id = (
+            canonical_candidate_id(str(event['candidate_id']))
+            if classification in _INTERVIEW_CLASSIFICATIONS else event['candidate_id']
+        )
         notification_id = _id()
         company = structured.get("company") or {}
         job = structured.get("job") or {}
@@ -2330,7 +2269,7 @@ def create_monitoring_notification(
           email_received_at,ai_confidence,ai_summary,ai_reason,recommended_action,priority,created_at,updated_at)
           VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now(),now())
           ON CONFLICT(gmail_message_id,classification) DO NOTHING RETURNING *""",
-          (notification_id,event['candidate_id'],name,email or recipient_email,mailbox_id,provider_id,thread_id,analysis['id'],event['id'],
+          (notification_id,notification_candidate_id,name,email or recipient_email,mailbox_id,provider_id,thread_id,analysis['id'],event['id'],
            classification,candidate_status,company.get('name') or event.get('company_name'),job.get('title') or event.get('job_title'),
            subject,sender_name,sender_email,sent_at,confidence,str(event.get('summary') or structured.get('summary') or '')[:1000],
            reason,action,priority))
@@ -2351,7 +2290,7 @@ def create_monitoring_notification(
         # durable realtime event for replay/tailing.
         realtime_payload = {
             "notification_id": notification["id"],
-            "candidate_id": event.get("candidate_id"),
+            "candidate_id": notification_candidate_id,
             "candidate_name": notification.get("candidate_name"),
             "company_name": notification.get("company_name"),
             "classification": classification,
@@ -2596,8 +2535,13 @@ def list_notifications(
     for field in sorted(exact):
         value = filters.get(field)
         if value not in (None, ""):
-            where.append(f"{field}=%s")
-            params.append(value)
+            if field == 'candidate_id':
+                from services.recruitment_identity import aliases, load_links
+                where.append('(candidate_id=%s OR candidate_id=ANY(%s))')
+                params.extend([value, sorted(aliases(str(value), load_links()))])
+            else:
+                where.append(f"{field}=%s")
+                params.append(value)
     for field in ("is_read", "is_reviewed"):
         if filters.get(field) is not None:
             where.append(f"{field}=%s")
@@ -3030,7 +2974,9 @@ def list_booking_audit(*, candidate_id: str | None = None, booking_id: str | Non
     where: list[str] = []
     params: list[Any] = []
     if candidate_id:
-        where.append("candidate_id=%s"); params.append(candidate_id)
+        from services.recruitment_identity import aliases, load_links
+        where.append('(candidate_id=%s OR candidate_id=ANY(%s))')
+        params.extend([candidate_id, sorted(aliases(candidate_id, load_links()))])
     if booking_id:
         where.append("booking_id=%s"); params.append(booking_id)
     clause = " WHERE " + " AND ".join(where) if where else ""

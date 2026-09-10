@@ -51,3 +51,76 @@ def test_unidentified_old_mail_cannot_overwrite_a_newer_outcome():
     old = event(uid="", sent_at="2026-09-09T11:00:00Z", message_id="old")
     assert decide(previous, old) == TransitionDecision.STOP_STALE
 
+
+def test_equivalent_delivery_after_persisted_booked_state_is_idempotent():
+    from dataclasses import replace
+    previous = replace(event(), state=InterviewState.BOOKED)
+    assert decide(previous, event(message_id='resent')) == TransitionDecision.IDEMPOTENT
+
+
+def _claim_db(monkeypatch, rows, known=None):
+    from types import SimpleNamespace
+    from core.db import connection
+    from services import recruitment_identity
+    class Cursor:
+        def __init__(self):
+            self.calls = []
+            self.description = [SimpleNamespace(name=k) for k in rows[0]]
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def execute(self, sql, params=()): self.calls.append((sql, params))
+        def fetchall(self): return [tuple(r.values()) for r in rows]
+        def fetchone(self): return known
+    cursor = Cursor()
+    class Connection:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def cursor(self): return cursor
+    monkeypatch.setattr(connection, 'use_postgres', lambda: True)
+    monkeypatch.setattr(connection, 'get_connection', Connection)
+    monkeypatch.setattr(recruitment_identity, 'load_links', lambda: {'old-alias': 'person'})
+    return cursor
+
+
+def _state_row(*, state='BOOKED', sequence=0, source='old-key', sent='2026-09-09T10:00:00Z'):
+    from services.interview_lifecycle import interview_key
+    return dict(interview_key=interview_key('old-alias', {'calendar': {'uid': 'uid-1'}}, {}),
+                candidate_id='old-alias', classification='interview_cancelled' if state == 'CANCELLED' else 'interview_confirmed',
+                lifecycle_state=state, calendar_uid='uid-1', calendar_sequence=sequence,
+                source_message_id='old-message', source_sent_at=sent,
+                schedule={'date': '2026-09-11', 'time': '14:00', 'time_end': '15:00'},
+                idempotency_key=source, booking_id='existing-slot', transition_status='APPLIED')
+
+
+def _claim_payload():
+    return {'classification': 'interview_confirmed', 'calendar': {'uid': 'uid-1', 'sequence': 0},
+            'interview': {'date': '2026-09-11', 'time': '14:00', 'end_time': '15:00'}}
+
+
+def test_real_claim_recovers_alias_slot_and_transition_without_writes(monkeypatch):
+    from services.interview_lifecycle import claim
+    row = _state_row()
+    cursor = _claim_db(monkeypatch, [row])
+    result = claim('person', _claim_payload(), {'provider_message_id': 'resend'})
+    assert result.decision == TransitionDecision.IDEMPOTENT
+    assert result.booking_id == 'existing-slot'
+    assert result.incoming.idempotency_key == 'old-key'
+    assert result.key == row['interview_key']
+    assert len(cursor.calls) == 1
+    assert 'FOR UPDATE' in cursor.calls[0][0]
+    assert row['interview_key'] in cursor.calls[0][1][0]
+
+
+def test_real_claim_does_not_let_old_audit_bypass_alias_cancellation(monkeypatch):
+    from services.interview_lifecycle import claim
+    cursor = _claim_db(monkeypatch, [_state_row(state='CANCELLED', sequence=1)], known=('old-slot', 'APPLIED'))
+    result = claim('person', _claim_payload(), {'provider_message_id': 'old-message'})
+    assert result.decision == TransitionDecision.STOP_STALE
+    assert len(cursor.calls) == 1  # no historical transition lookup or mutation
+
+
+def test_alias_cancel_wins_same_sequence_even_if_another_alias_has_later_timestamp(monkeypatch):
+    from services.interview_lifecycle import claim
+    _claim_db(monkeypatch, [_state_row(state='CANCELLED'), _state_row(sent='2026-09-10T10:00:00Z')])
+    assert claim('person', _claim_payload(), {}).decision == TransitionDecision.STOP_STALE
+

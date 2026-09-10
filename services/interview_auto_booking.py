@@ -732,7 +732,7 @@ def execute_auto_booking(
     booking_mailbox = dict(mailbox)
     raw_candidate_id = str(mailbox.get("candidate_id") or "")
     try:
-        canonical_candidate_id = candidate_store.canonical_candidate_identity_id(raw_candidate_id)
+        canonical_candidate_id = mail_store.canonical_candidate_id(raw_candidate_id)
     except Exception as exc:
         raise BookingValidationError(
             "CANDIDATE_MAPPING_FAILED", "The mailbox candidate identity could not be resolved."
