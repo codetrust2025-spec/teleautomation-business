@@ -168,11 +168,17 @@ class TestWhatMustStillBlock:
         assert value["requires_manual_review"] is True
         assert "manual_review_cleared_from" not in value
 
-    def test_model_disagreement_still_forces_review(self):
+    def test_model_disagreement_still_blocks_the_transition(self):
+        """It no longer asks a person, but it still accepts nothing.
+
+        The outcome moved from review to automatic retry; what has not moved
+        is that an unresolved disagreement validates no transition.
+        """
         value = validated(risk_flags=["MODEL_DISAGREEMENT"])
-        assert value["status"] == "MANUAL_REVIEW_REQUIRED"
-        assert value["requires_manual_review"] is True
+        assert value["status"] == "AI_RETRY_PENDING"
+        assert value["requires_manual_review"] is False
         assert value["backend_transition_validated"] is False
+        assert value["backend_validation_reason"] == "MODEL_DISAGREEMENT"
 
     def test_a_real_risk_flag_still_forces_review(self):
         value = validated(requires_review=False, risk_flags=["SPAM_OR_SCAM"])

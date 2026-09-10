@@ -207,5 +207,5 @@ class TestWhatMustStillBeIgnored:
         value = model_result()
         value["risk_flags"] = ["MODEL_DISAGREEMENT"]
         agent.validate_result(value, EY, [], relevance=ESTABLISHED)
-        assert value["status"] == "MANUAL_REVIEW_REQUIRED"
+        assert value["status"] == "AI_RETRY_PENDING"
         assert value["backend_validation_reason"] == "MODEL_DISAGREEMENT"

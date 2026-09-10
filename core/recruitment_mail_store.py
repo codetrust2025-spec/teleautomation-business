@@ -152,6 +152,21 @@ _STATUS_RANK = {
 }
 
 
+def stage_rank(status: str | None) -> int | None:
+    """How far along the hiring process a raw AI status claims the candidate is.
+
+    The same ordering `advance_candidate_status` uses, exposed so a caller can
+    compare two readings of one mail without reaching into the private tables.
+    `None` means the status has no place in the progression -- a review or
+    retry marker, or something unrecognised -- and must not be ranked against
+    anything.
+    """
+    classification = _STATUS_CLASSIFICATION.get(str(status or "").upper())
+    if classification in (None, "needs_review", "ai_retry_pending"):
+        return None
+    return _STATUS_RANK.get(_CLASSIFICATION_STATUS.get(classification, ""))
+
+
 def _id() -> str:
     return str(uuid.uuid4())
 
