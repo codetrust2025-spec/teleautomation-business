@@ -448,7 +448,11 @@ def test_validation_enforces_evidence_and_manual_review_confidence():
     medium=structured("OFFER_INDICATION",.85,"we are pleased to offer you")
     source=message("We are pleased to offer you","Details follow.")
     agent.validate_result(medium,source,[])
-    assert medium["status"] == "MANUAL_REVIEW_REQUIRED"
+    # Medium confidence keeps its reading and is recorded, but is not
+    # auto-validated, so no candidate advances and nothing books on it.
+    assert medium["status"] != "MANUAL_REVIEW_REQUIRED"
+    assert medium["requires_manual_review"] is False
+    assert medium["validation_status"] != "AUTO_VALIDATED"
     assert medium["confidence"] == .85
     # Evidence that is not verbatim is never trusted -- that part is unchanged
     # and is what this test exists for. What changed is where the message goes
@@ -471,13 +475,23 @@ def test_validation_enforces_evidence_and_manual_review_confidence():
     assert unprovable["backend_transition_validated"] is False
 
 
-def test_low_confidence_result_requires_review_without_status_overwrite():
+def test_medium_confidence_result_keeps_its_reading_without_a_status_overwrite():
+    """0.79 is above the review threshold, so this is the medium band.
+
+    The reading is kept whole -- both the classification and the status, where
+    previously the status was overwritten with MANUAL_REVIEW_REQUIRED. Nothing
+    is auto-validated, so no candidate advances and `interview_auto_booking`
+    never sees an actionable classification here.
+    """
     low=structured("SELECTED",.79,"you have been selected")
     agent.validate_result(low,message("You have been selected","Details."),[])
-    assert low["status"] == "MANUAL_REVIEW_REQUIRED"
+    assert low["status"] == "SELECTED"
     assert low["classification"] == "job_selection_confirmed"
-    assert low["requires_manual_review"] is True
-    assert low["should_create_review_record"] is True
+    assert low["requires_manual_review"] is False
+    assert low["validation_status"] != "AUTO_VALIDATED"
+
+    from services.interview_auto_booking import ACTIONABLE
+    assert low["classification"] not in ACTIONABLE
 
 
 def test_non_outcome_ai_status_is_discarded(monkeypatch):
