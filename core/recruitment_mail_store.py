@@ -1288,6 +1288,83 @@ def complete_calendar_invite_recovery(message_id: str, *, state: str, reason: st
         )
 
 
+def calendar_invite_recovery_discovery(*, limit: int = 500) -> dict[str, Any]:
+    """Read-only inventory of historical calendar ignores.
+
+    This deliberately does *not* lease, reprocess, or alter a message.  It is
+    the safety valve before expanding a recovery list: an operator can see
+    whether an old invite was already represented by an audit/event, was
+    cancelled, or is merely a candidate for the narrowly configured recovery
+    worker.
+    """
+    empty = {
+        "summary": {
+            "total": 0, "recovery_candidates": 0, "already_represented": 0,
+            "stale_or_cancelled": 0, "already_assessed": 0,
+        },
+        "records": [],
+    }
+    if not use_postgres():
+        return empty
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT m.id AS mailbox_message_id,m.provider_message_id,m.subject,
+                      m.sent_at,m.ignore_reason,m.processing_status,
+                      COALESCE(e.canonical_candidate_id,e.candidate_id,b.candidate_id)
+                        AS canonical_candidate_id,
+                      e.id AS event_id,e.primary_status AS event_status,
+                      r.state AS recovery_state,r.attempts AS recovery_attempts,
+                      audit.booking_id,audit.booking_status,audit.auto_booked,
+                      CASE
+                        WHEN audit.booking_id IS NOT NULL AND audit.auto_booked
+                          THEN 'ALREADY_REPRESENTED'
+                        WHEN e.primary_status='INTERVIEW_CANCELLED'
+                          THEN 'STALE_OR_CANCELLED'
+                        WHEN r.state IN ('AUTO_BOOKED','AUTO_RESCHEDULED','AUTO_CANCELLED','AUTO_IGNORE')
+                          THEN 'ALREADY_ASSESSED'
+                        ELSE 'RECOVERY_CANDIDATE'
+                      END AS discovery_state
+                 FROM mailbox_messages m
+                 JOIN candidate_mailboxes b ON b.id=m.mailbox_id
+                 LEFT JOIN LATERAL (
+                    SELECT id,candidate_id,canonical_candidate_id,primary_status
+                      FROM ai_recruitment_events
+                     WHERE mailbox_message_id=m.id
+                     ORDER BY updated_at DESC LIMIT 1
+                 ) e ON true
+                 LEFT JOIN LATERAL (
+                    SELECT booking_id,booking_status,auto_booked
+                      FROM interview_auto_booking_audit
+                     WHERE gmail_message_id=m.provider_message_id
+                     ORDER BY updated_at DESC LIMIT 1
+                 ) audit ON true
+                 LEFT JOIN recruitment_calendar_recovery r ON r.mailbox_message_id=m.id
+                WHERE m.processing_status='AUTO_IGNORE'
+                  AND m.ignore_reason=ANY(%s)
+                  AND EXISTS(
+                    SELECT 1 FROM mailbox_attachments a
+                     WHERE a.mailbox_message_id=m.id
+                       AND lower(COALESCE(a.filename,'')) LIKE '%%.ics'
+                  )
+                ORDER BY m.sent_at ASC LIMIT %s""",
+            (list(_CALENDAR_FALSE_IGNORE_REASONS), max(1, min(limit, 2000))),
+        )
+        records = _rows(cur)
+    summary = {"total": len(records), "recovery_candidates": 0, "already_represented": 0,
+               "stale_or_cancelled": 0, "already_assessed": 0}
+    state_counts = {
+        "RECOVERY_CANDIDATE": "recovery_candidates",
+        "ALREADY_REPRESENTED": "already_represented",
+        "STALE_OR_CANCELLED": "stale_or_cancelled",
+        "ALREADY_ASSESSED": "already_assessed",
+    }
+    for record in records:
+        bucket = state_counts.get(str(record.get("discovery_state") or ""))
+        if bucket:
+            summary[bucket] += 1
+    return {"summary": summary, "records": records}
+
+
 # Only genuine offer documents identify a duplicate OFFER. Recurring documents
 # such as a resume, or a new interview invite, must never suppress a distinct
 # event just because the same file was attached to an earlier email.

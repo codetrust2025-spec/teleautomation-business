@@ -480,6 +480,14 @@ def install_recruitment_mail_routes(app):
         from services.interview_state_reconciliation import load_current_report
         return {'status':'ok','report':await asyncio.to_thread(load_current_report,candidate_id=candidate_id,limit=limit)}
 
+    @app.get('/api/mail-monitoring/calendar-recovery-discovery')
+    async def calendar_recovery_discovery(request:Request,limit:int=500):
+        """Read-only inventory; it cannot enqueue or reprocess historical mail."""
+        _guard();require_fleet_admin(request)
+        return {'status':'ok','report':await asyncio.to_thread(
+            store.calendar_invite_recovery_discovery, limit=limit,
+        )}
+
     @app.post('/api/mail-monitoring/notifications/clear-all')
     async def clear_all_mail_notifications(request:Request):
         _guard();profile=require_fleet_admin(request)
