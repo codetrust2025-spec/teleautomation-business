@@ -124,6 +124,9 @@ describe('operations backend routes are reachable from the UI', () => {
     /^\/auth\/login/, /^\/auth\/logout/, /\{full_path/,
     /oauth\/google\/callback/,   // provider redirect target, not fetched
     /pubsub/,                    // Gmail push delivery endpoint
+    // Read-only production runbook endpoint; deliberately not a dashboard
+    // control, because reconciliation must never auto-repair live records.
+    /^\/api\/mail-monitoring\/interview-reconciliation$/,
   ]
 
   // The client builds parameterised routes as template literals, so the literal
