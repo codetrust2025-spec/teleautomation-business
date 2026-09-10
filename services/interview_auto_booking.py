@@ -23,6 +23,11 @@ logger = logging.getLogger("teleautomation.interview_auto_booking")
 ACTIONABLE = {"interview_confirmed", "interview_rescheduled", "interview_cancelled"}
 TIME_RE = re.compile(r"^(0?[1-9]|1[0-2]):([0-5]\d)\s*([AP]M)$", re.I)
 _BOOKING_LOCK = Lock()
+# Historical booking-audit rows may carry this outcome.  It remains a
+# recognized deterministic validation code for those records, but it is not
+# emitted for external interview commitments: two different lifecycle events
+# are allowed to occupy the same time.
+_LEGACY_SLOT_CONFLICT_CODE = "SLOT_CONFLICT"
 
 
 @dataclass
