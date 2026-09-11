@@ -58,9 +58,17 @@ def test_plain_mail_first_calendar_sibling_second_is_also_duplicate(monkeypatch)
 
 
 def test_same_name_is_not_canonical_candidate_identity(monkeypatch):
-    install_store_fakes(monkeypatch, rows=[SLOT])
-    monkeypatch.setattr(booking.candidate_store, 'candidate_identity_ids', lambda cid: ['other-canonical'])
-    assert booking._candidate_slots({'id': 'other-canonical', 'name': SLOT['name']}) == []
+    from core.db import connection
+    first = {**SLOT, 'phone': '9000000001', 'service_type': 'profile_service'}
+    second = {**SLOT, 'id': 'other-canonical', 'phone': '9000000002', 'service_type': 'profile_service'}
+    alias = {**second, 'id': 'same-person-alias'}
+    monkeypatch.setattr(connection, 'use_postgres', lambda: False)
+    monkeypatch.setattr(booking.candidate_store, '_load', lambda **kwargs: {'candidates': [first, second, alias]})
+    monkeypatch.setattr(booking.candidate_store, '_with_computed', lambda row: dict(row))
+    # Exercise the real identity resolver, not a fake that conceals its legacy
+    # name-only fallback. Phone-linked historical bookings remain visible.
+    assert 'slot-1' in booking.candidate_store.candidate_identity_ids('other-canonical')
+    assert {r['id'] for r in booking._candidate_slots(second)} == {'other-canonical', 'same-person-alias'}
 
 
 @pytest.mark.parametrize('calendars', [False, True])

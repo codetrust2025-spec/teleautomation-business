@@ -4066,13 +4066,16 @@ def get_candidate_detail(cid: str) -> dict | None:
     return collapsed[0] if collapsed else source
 
 
-def candidate_identity_ids(cid: str) -> list[str]:
+def candidate_identity_ids(cid: str, *, include_name_matches: bool = True) -> list[str]:
     """Return every legacy row id belonging to one displayed candidate.
 
     Mailboxes may have been connected before duplicate profile rows were
     collapsed in the candidate list. Include exact canonical-name profile rows
     as well as explicit, phone, email, and database identity links so all Gmail
     accounts for that one person remain visible.
+
+    Booking safety gates disable name-only matching: distinct people may have
+    the same name. Display grouping keeps its existing compatibility default.
     """
     linked_ids = {str(cid)}
     try:
@@ -4111,7 +4114,7 @@ def candidate_identity_ids(cid: str) -> list[str]:
             or (email_key and '@' in email_key and row_email==email_key)
             or (explicit and (row_id==explicit or row_explicit==explicit))
             or row_explicit==str(cid)
-            or (source_is_profile and row_is_profile and source_name_key and row_name_key==source_name_key)
+            or (include_name_matches and source_is_profile and row_is_profile and source_name_key and row_name_key==source_name_key)
         ):
             linked_ids.add(row_id)
     return sorted(linked_ids)

@@ -77,7 +77,7 @@ def person(monkeypatch):
     monkeypatch.setattr(candidate_store, "_with_computed", lambda r: dict(r))
     monkeypatch.setattr(
         candidate_store, "candidate_identity_ids",
-        lambda cid: sorted(r["id"] for r in PUJITHA))
+        lambda cid, **kwargs: sorted(r["id"] for r in PUJITHA))
     # What the screen shows, and what this function used to be handed.
     monkeypatch.setattr(
         candidate_store, "list_candidates",

@@ -11,8 +11,9 @@ allowed for different interviews. Removed the upstream schedule-only duplicate
 fallback: exact times, company names and job titles alone are not event proof.
 Source-proven Teams siblings work in either arrival order (plain mail or ICS
 first); conflicting non-empty UIDs stay independent. No data is rewritten.
-Booking reads remain uncollapsed but are scoped to persisted canonical aliases,
-not name equality. Missing thread metadata uses source-message identity; legacy
+Booking reads remain uncollapsed but require persisted identity links or exact
+phone/email/explicit profile identity, not name equality. Display grouping keeps
+its compatibility default. Missing thread metadata uses source-message identity; legacy
 unthreaded tombstones remain readable only for that exact source message.
 
 Read-only inspection of Persistent Systems' invitation/reminder found matching

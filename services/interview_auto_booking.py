@@ -374,7 +374,7 @@ def _candidate_slots(candidate: dict[str, Any]) -> list[dict[str, Any]]:
     rows are identical to what this function returned before -- the collapse
     and the display filters are what is dropped, and nothing else.
     """
-    identity_ids = set(candidate_store.candidate_identity_ids(str(candidate["id"])))
+    identity_ids = set(candidate_store.candidate_identity_ids(str(candidate["id"]), include_name_matches=False))
     stored = candidate_store._load().get("candidates") or []
     return [
         row for row in (candidate_store._with_computed(item) for item in stored)
