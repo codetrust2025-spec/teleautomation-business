@@ -401,7 +401,7 @@ def install_recruitment_mail_routes(app):
               (SELECT COALESCE(sum(messages_fetched),0) FROM mailbox_sync_jobs) mailbox_messages_fetched_total,
               (SELECT count(*) FROM ai_recruitment_events e WHERE {predicate}) ai_selection_offer_request_total,
               (SELECT count(*) FROM ai_recruitment_events e WHERE {predicate} AND e.confidence>=0.9) ai_selection_offer_high_confidence_total,
-              (SELECT count(*) FROM ai_recruitment_events e WHERE {predicate} AND e.primary_status='MANUAL_REVIEW_REQUIRED' AND e.review_status='PENDING') ai_manual_review_total,
+              (SELECT count(*) FROM mailbox_messages WHERE processing_status='AI_RETRY_PENDING') ai_retry_pending_total,
               (SELECT count(*) FROM mailbox_messages WHERE processing_status='AI_PROCESSING_FAILED') ai_processing_failure_total,
               (SELECT COALESCE(avg(processing_duration_ms),0) FROM ai_recruitment_events) ai_processing_duration_ms_avg,
               (SELECT count(*) FROM mailbox_sync_jobs WHERE status='QUEUED') queue_depth,
@@ -414,7 +414,7 @@ def install_recruitment_mail_routes(app):
               (SELECT count(*) FROM ai_recruitment_events WHERE review_status IN('FALSE_POSITIVE','IGNORED')) false_positive_total,
               (SELECT count(*) FROM mail_monitoring_notifications) notification_created_total,
               (SELECT count(*) FROM mail_realtime_events) notification_delivery_event_total,
-              (SELECT count(*) FROM mailbox_messages WHERE processing_status LIKE 'DUPLICATE%%') duplicate_messages_prevented_total""",params*9);names=[d.name for d in cur.description];values=dict(zip(names,cur.fetchone()))
+              (SELECT count(*) FROM mailbox_messages WHERE processing_status LIKE 'DUPLICATE%%') duplicate_messages_prevented_total""",params*8);names=[d.name for d in cur.description];values=dict(zip(names,cur.fetchone()))
         from core.recruitment_realtime import connection_count
         values['websocket_connection_count']=connection_count()
         return {'status':'ok','metrics':values}
@@ -499,24 +499,10 @@ def install_recruitment_mail_routes(app):
     @app.post('/api/mail-monitoring/notifications/{notification_id}/{action}')
     async def mail_notification_action(notification_id:str,action:str,request:Request,body:dict|None=None):
         _guard();profile=require_fleet_admin(request);body=body or {}
-        if action not in {'read','unread','reviewed','dismiss','false-detection','correct','rerun'}:
+        if action in {'reviewed','false-detection','correct','rerun'}:
+            raise HTTPException(410,'Mail decisions and retries are automated; operator decision actions are unavailable')
+        if action not in {'read','unread','dismiss'}:
             raise HTTPException(404,'Unknown notification action')
-        if action=='rerun':
-            context=await asyncio.to_thread(store.notification_reprocess_context,notification_id)
-            if not context:raise HTTPException(404,'Notification not found')
-            from services.recruitment_mail_agent import process_message
-            mailbox={key:context.get(key) for key in ('id','candidate_id','email_address','credential_ciphertext')}
-            decoded={'provider_message_id':context.get('provider_message_id'),'provider_thread_id':context.get('provider_thread_id'),
-              'sender_name':context.get('sender_name'),'sender_email':context.get('sender_email'),'recipient_email':context.get('recipient_email'),
-              'subject':context.get('subject'),'sent_at':context.get('sent_at'),'body':context.get('body_text') or '',
-              'html_body':context.get('html_body_text') or '',
-              'authentication_results':context.get('authentication_results'),
-              'received_spf':context.get('received_spf'),'rfc_message_id':context.get('rfc_message_id'),
-              'message_direction':context.get('message_direction'),'gmail_label_ids':context.get('gmail_label_ids'),
-              'to_metadata':context.get('to_metadata')}
-            event=await asyncio.to_thread(process_message,mailbox,decoded,context.get('attachments') or [],reprocess=True)
-            store.audit(actor=profile.get('username') or 'admin',role='admin',action='MAIL_AI_RERUN',candidate_id=context.get('candidate_id'),source_id=notification_id,new={'event_id':event.get('id') if event else None})
-            return {'status':'ok','event':event}
         try:
             row=await asyncio.to_thread(store.update_notification,notification_id,action,
                 reviewer=profile.get('username') or 'admin',notes=str(body.get('notes') or '')[:2000],changes=body.get('changes') or {})

@@ -78,7 +78,7 @@ export function mailStatusTone(item = {}) {
   if (/final round cleared|interview confirmed|rescheduled/.test(status)) return "info";
   if (/hr confirmation|document verification|documents requested|compensation confirmation|booking blocked|blocked/.test(status)) return "warning";
   if (/processing failed|cancelled|rejected|failed/.test(status)) return "danger";
-  if (/needs review|review required|pending review|review only/.test(status)) return "review";
+  if (/ai.retry.pending|automatic retry/.test(status)) return "warning";
   return "neutral";
 }
 
@@ -88,7 +88,7 @@ export function mailStatusTone(item = {}) {
 export function blockingReason(item = {}) {
   if (!item.booking_block_reason && !item.booking_block_reason_code) return null;
   return {
-    text: item.booking_block_reason || "Booking requires manual review",
+    text: item.booking_block_reason || "Booking awaits automatic validation",
     code: item.booking_block_reason_code || "",
     internal: item.booking_failure_code || "",
   };
@@ -149,7 +149,7 @@ export function MailNotificationBell({ compact = false }) {
     } catch { /* API fallback will retry */ }
   }, []);
   const live = useMailLive((event) => {
-    if (["notification_created", "notification_updated", "important_mail_detected", "mail_needs_review", "connected"].includes(event?.event)) load();
+    if (["notification_created", "notification_updated", "important_mail_detected", "mail_retry_pending", "connected"].includes(event?.event)) load();
     if (event?.event === "notification_created") {
       setToast(event); window.setTimeout(() => setToast(null), 6000);
     }
@@ -193,8 +193,8 @@ export function MailNotificationBell({ compact = false }) {
 // Read-only. The panel reports what the pipeline decided and offers the two
 // ways of acting on it that live outside this screen -- opening the booking and
 // joining the meeting. It writes nothing: the correction, re-run, dismiss and
-// confirm controls were removed from *this* panel, and the endpoints and
-// handlers behind them are untouched and still served for every other caller.
+// confirm controls are retired. Legacy decision-writing endpoints return 410;
+// read/unread tracking remains separate from interview state.
 function NotificationDetail({ item, onClose }) {
   // Mounted only while open, so the dialog is open for its whole life.
   const dialogRef = useDialogA11y(true, onClose);
@@ -236,7 +236,7 @@ function NotificationDetail({ item, onClose }) {
         </details>
         <details className="mail-detail__aside" open>
           <summary>Recommended action</summary>
-          <p>{item.recommended_action || "Review the candidate and email before taking action."}</p>
+          <p>{item.recommended_action || "Processed automatically; no operator decision is required."}</p>
         </details>
       </div>
       <footer>
@@ -251,7 +251,7 @@ export function MailMonitoringNotifications() {
   const { confirm } = useConfirm();
   const [items, setItems] = useState([]);
   const [total, setTotal] = useState(0);
-  const [summary, setSummary] = useState({ new_offers: 0, selections: 0, joining_confirmations: 0, auto_booked_interviews: 0, needs_review: 0, unread: 0 });
+  const [summary, setSummary] = useState({ new_offers: 0, selections: 0, joining_confirmations: 0, auto_booked_interviews: 0, ai_retry_pending: 0, unread: 0 });
   const [selected, setSelected] = useState(null);
   const [clearing, setClearing] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -283,7 +283,7 @@ export function MailMonitoringNotifications() {
     if (["notification_created", "notification_updated"].includes(event?.event) && event?.notification_id) {
       pendingRenders.current.set(String(event.notification_id), event);
     }
-    if (["notification_created","notification_updated","important_mail_detected","mail_needs_review","connected"].includes(event?.event)) load({ silent:true });
+    if (["notification_created","notification_updated","important_mail_detected","mail_retry_pending","connected"].includes(event?.event)) load({ silent:true });
   });
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
@@ -387,10 +387,10 @@ export function MailMonitoringNotifications() {
     } finally { setClearing(false); }
   };
   return <section className="mail-monitoring-page">
-    <header className="mail-monitoring-page__head"><div><p className="mail-eyebrow">AI MAIL MONITORING</p><h1>Mail Monitoring Notifications</h1><p>Persistent candidate job-status alerts with live delivery and administrator review.</p></div><div className="mail-monitoring-page__actions"><button type="button" className="mail-clear-all" disabled={!(summary.visible_total ?? total) || clearing} onClick={clearAll}>{clearing ? "Clearing…" : "Clear all notifications"}</button><span className="mail-live mail-live--live">Live</span></div></header>
+    <header className="mail-monitoring-page__head"><div><p className="mail-eyebrow">AI MAIL MONITORING</p><h1>Mail Monitoring Notifications</h1><p>Candidate job-status alerts with live delivery and automatic validation.</p></div><div className="mail-monitoring-page__actions"><button type="button" className="mail-clear-all" disabled={!(summary.visible_total ?? total) || clearing} onClick={clearAll}>{clearing ? "Clearing…" : "Clear all notifications"}</button><span className="mail-live mail-live--live">Live</span></div></header>
     <div className="mail-summary mail-summary--compact">
       <button onClick={() => { setPage(0);setFilters({ search:"", classification:"", priority:"", read:"" }); }}><strong>{summary.visible_total || 0}</strong><span>All</span></button>
-      <button onClick={() => { setPage(0);setFilters((value) => ({ ...value, priority:"review_required", read:"" })); }}><strong>{summary.needs_review || 0}</strong><span>Needs review</span></button>
+      <button onClick={() => { setPage(0);setFilters((value) => ({ ...value, priority:"retry_pending", read:"" })); }}><strong>{summary.ai_retry_pending || 0}</strong><span>AI retry pending</span></button>
       <button onClick={() => { setPage(0);setFilters((value) => ({ ...value, read:"false", priority:"" })); }}><strong>{summary.unread || 0}</strong><span>Unread</span></button>
     </div>
     <div className="mail-filters mail-filters--compact">
@@ -428,7 +428,7 @@ export function MailMonitoringNotifications() {
         {CLASSIFICATION_GROUPS.map((group) => <option value={group.value} key={group.value}>{group.label}</option>)}
       </select>
     </div>
-    <div className={`mail-table-wrap${loading ? " is-loading" : ""}`}>{loading && <OverlayLoader label="Loading notifications…" />}<table className={`mail-table${grouped ? " mail-table--grouped" : ""}`}><thead><tr><th>Candidate</th><th>Company</th><th>Detected status</th><th>Email subject</th><th>Confidence</th><th>Mail received</th><th>Tool detected</th><th>Review</th><th>Action</th></tr></thead>
+    <div className={`mail-table-wrap${loading ? " is-loading" : ""}`}>{loading && <OverlayLoader label="Loading notifications…" />}<table className={`mail-table${grouped ? " mail-table--grouped" : ""}`}><thead><tr><th>Candidate</th><th>Company</th><th>Detected status</th><th>Email subject</th><th>Confidence</th><th>Mail received</th><th>Tool detected</th><th>Automation</th><th>Action</th></tr></thead>
       {/* One <tbody> per candidate when grouped, so the parent is a real table
           section rather than a row pretending to be a heading. The row itself is
           the same in both modes - only the candidate cell differs, because in
@@ -461,7 +461,7 @@ export function MailMonitoringNotifications() {
           className="mail-status__reason"
           title={reason.internal ? `${reason.text} (${reason.code} / ${reason.internal})` : `${reason.text} (${reason.code})`}
         >Reason: {reason.text}</span>;
-      })()}</td><td>{item.email_subject || "(no subject)"}</td><td>{confidence(item.ai_confidence)}</td><td>{when(item.email_received_at)}</td><td>{when(item.created_at)}</td><td>{item.is_reviewed ? "Reviewed" : "Pending"}</td><td onClick={(event) => event.stopPropagation()}><button onClick={() => openNotification(item)}>Open</button><button onClick={() => act(item,item.is_read ? "unread" : "read")}>{item.is_read ? "Unread" : "Read"}</button><button onClick={() => act(item,"dismiss")}>Dismiss</button></td></tr>)}
+      })()}</td><td>{item.email_subject || "(no subject)"}</td><td>{confidence(item.ai_confidence)}</td><td>{when(item.email_received_at)}</td><td>{when(item.created_at)}</td><td>{human(item.booking_status || item.automation_state || "AUTOMATED")}</td><td onClick={(event) => event.stopPropagation()}><button onClick={() => openNotification(item)}>Open</button><button onClick={() => act(item,item.is_read ? "unread" : "read")}>{item.is_read ? "Unread" : "Read"}</button><button onClick={() => act(item,"dismiss")}>Dismiss</button></td></tr>)}
       </tbody>)}
       {!loading && !items.length && <tbody><tr><td colSpan={9} className="mail-empty">No notifications match these filters.</td></tr></tbody>}
     </table></div>

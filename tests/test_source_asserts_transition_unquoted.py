@@ -130,6 +130,7 @@ class TestTheReminderSurvivesAsAnAutomaticRetry:
         assert value["should_create_review_record"] is False
         assert value["requires_manual_review"] is False
         assert value["backend_transition_validated"] is False
+        assert value["ignore_reason"] == "TRANSITION_UNQUOTED"
 
     def test_it_records_why(self):
         value = validated()

@@ -61,9 +61,9 @@ class TestAParaphraseGoesToReview:
         result = validated(
             "INTERVIEW_CONFIRMED", .95, PARAPHRASE, REMINDER_SUBJECT, REMINDER_BODY,
         )
-        assert result["status"] == "MANUAL_REVIEW_REQUIRED"
-        assert result["candidate_status"] == "Needs Review"
-        assert result["classification"] == "needs_review"
+        assert result["status"] == "AI_RETRY_PENDING"
+        assert result["candidate_status"] == "AI Retry Pending"
+        assert result["classification"] == "ai_retry_pending"
 
     def test_it_says_why(self):
         result = validated(
@@ -76,8 +76,9 @@ class TestAParaphraseGoesToReview:
         result = validated(
             "INTERVIEW_CONFIRMED", .95, PARAPHRASE, REMINDER_SUBJECT, REMINDER_BODY,
         )
-        assert result["requires_manual_review"] is True
-        assert result["should_create_review_record"] is True
+        assert result["requires_manual_review"] is False
+        assert result["should_create_review_record"] is False
+        assert result["automation_decision"] == "AI_RETRY_PENDING"
 
     def test_it_cannot_auto_book(self):
         """No verified verbatim evidence entails it, so nothing may be booked."""

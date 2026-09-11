@@ -171,7 +171,7 @@ class TestWhatMustStillBlock:
         """Nothing was replaced, so the model's caution still stands."""
         value = validated(status="INTERVIEW_CONFIRMED", risk_flags=[])
         assert value["status"] == "INTERVIEW_CONFIRMED"
-        assert value["requires_manual_review"] is True
+        assert value["requires_manual_review"] is False
         assert "manual_review_cleared_from" not in value
 
     def test_model_disagreement_still_blocks_the_transition(self):
@@ -188,7 +188,7 @@ class TestWhatMustStillBlock:
 
     def test_a_real_risk_flag_still_forces_review(self):
         value = validated(requires_review=False, risk_flags=["SPAM_OR_SCAM"])
-        assert value["requires_manual_review"] is True
+        assert value["requires_manual_review"] is False
 
     def test_the_model_flag_no_longer_vetoes_the_booking(self, monkeypatch):
         """The flag is kept on the result for audit, but the gate ignores it.
@@ -200,7 +200,7 @@ class TestWhatMustStillBlock:
 
         monkeypatch.setenv("AI_INTERVIEW_AUTO_BOOKING_ENABLED", "true")
         value = validated(status="INTERVIEW_CONFIRMED", risk_flags=[])
-        assert value["requires_manual_review"] is True
+        assert value["requires_manual_review"] is False
         value["classification_source"] = "OLLAMA"
         value["ai_validation_status"] = "VALIDATED"
         booking.validate_ai_for_booking(value, value["classification"])

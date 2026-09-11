@@ -43,7 +43,7 @@ def test_genuinely_unreadable_times_still_fail(raw):
 def test_validation_writes_the_normalised_time_back():
     import inspect
     from services import recruitment_mail_agent as agent
-    src = inspect.getsource(agent.validate_result)
+    src = inspect.getsource(agent._validate_result)
     assert "_normalise_interview_time" in src
     assert 'interview["time"] = normalised_time' in src
     # the raw regex rejection must be gone
@@ -53,5 +53,5 @@ def test_validation_writes_the_normalised_time_back():
 def test_a_missing_time_still_invalidates_the_interview():
     import inspect
     from services import recruitment_mail_agent as agent
-    src = inspect.getsource(agent.validate_result)
+    src = inspect.getsource(agent._validate_result)
     assert "time_valid = False" in src

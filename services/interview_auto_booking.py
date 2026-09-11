@@ -374,12 +374,11 @@ def _candidate_slots(candidate: dict[str, Any]) -> list[dict[str, Any]]:
     rows are identical to what this function returned before -- the collapse
     and the display filters are what is dropped, and nothing else.
     """
-    identity_ids = set(candidate_store.candidate_identity_ids(str(candidate["id"])))
-    name = str(candidate.get("name") or "").strip().casefold()
+    identity_ids = set(candidate_store.candidate_identity_ids(str(candidate["id"]), include_name_matches=False))
     stored = candidate_store._load().get("candidates") or []
     return [
         row for row in (candidate_store._with_computed(item) for item in stored)
-        if str(row.get("id")) in identity_ids or str(row.get("name") or "").strip().casefold() == name
+        if str(row.get("id")) in identity_ids
     ]
 
 
@@ -439,6 +438,7 @@ def _resolve_existing_slot(
                 "BOOKING_NOT_FOUND",
                 "The only active interview booking belongs to a different calendar event.",
             )
+        _guard_existing_slot_order(slots[0], result=result, message=message)
         return slots[0]
     interview = result.get("interview") or {}
     company = (result.get("company") or {}).get("name")
@@ -487,7 +487,28 @@ def _resolve_existing_slot(
             "BOOKING_AMBIGUOUS",
             "Multiple active interview slots match this candidate; the source email does not identify one safely.",
         )
+    _guard_existing_slot_order(ranked[0][1], result=result, message=message)
     return ranked[0][1]
+
+
+def _guard_existing_slot_order(row, *, result, message):
+    """A no-UID historical cancellation cannot target a newer booked source.
+
+    The lifecycle key of a no-ICS mail differs from its calendar sibling. The
+    target's persisted source is therefore an additional precedence barrier.
+    Matching calendar revisions continue to use UID/SEQUENCE, not receipt time.
+    """
+    incoming_uid = _calendar_uid(result)
+    stored_uid = str(row.get('interview_calendar_uid') or '')
+    if incoming_uid and stored_uid:
+        if not _same_text(incoming_uid, stored_uid):
+            raise BookingValidationError('BOOKING_NOT_FOUND', 'Calendar event identity differs from the target booking.')
+        return
+    source = mail_store.booking_source_message(str(row.get('interview_source_message_id') or ''))
+    before = interview_lifecycle._sent_at((source or {}).get('sent_at'))
+    incoming = interview_lifecycle._sent_at(message.get('sent_at'))
+    if before and (incoming is None or incoming < before):
+        raise BookingValidationError('STALE_INTERVIEW_EVENT', 'This transition predates the source of the target booking.')
 
 
 def _booking_metadata(result: dict[str, Any], message: dict[str, Any], schedule: dict[str, str] | None) -> dict[str, str]:
@@ -548,13 +569,15 @@ def _same_lifecycle_slot(
     Interview commitments are deliberately allowed to overlap.  A date/time
     comparison alone therefore cannot be a duplicate guard: it would reject a
     second, genuinely different invite for the candidate.  Calendar UID is
-    authoritative; without one, match the source message or the same fallback
-    identity used by the lifecycle store (candidate scope is provided by the
-    caller, then thread plus exact schedule).
+    authoritative when both sources carry one. Otherwise require message or
+    source-event identity, never just company, role, or equal times. Candidate
+    identity is scoped by the caller; SEQUENCE precedence is handled by the
+    lifecycle guard before this duplicate check.
     """
     uid = _calendar_uid(result)
-    if uid:
-        return _same_text(row.get("interview_calendar_uid"), uid)
+    stored_uid = str(row.get("interview_calendar_uid") or "").strip()
+    if uid and stored_uid:
+        return _same_text(stored_uid, uid)
     source_id = str(message.get("provider_message_id") or "").strip()
     if source_id and _same_text(row.get("interview_source_message_id"), source_id):
         return True
@@ -566,21 +589,34 @@ def _same_lifecycle_slot(
     thread_id = str(message.get("provider_thread_id") or "").strip()
     if thread_id and _same_text(row.get("interview_source_thread_id"), thread_id) and same_schedule:
         return True
-    # No UID, no shared message, no shared thread -- and yet the identical
-    # start and end on the identical day for the same candidate.
-    #
-    # Pujitha's Persistent Systems interview was booked twice for
-    # 2026-09-11 02:30-04:00. The first came from a Google calendar invite
-    # carrying a UID; the second from a "your AI interview starts in 30
-    # minutes" reminder, which has no UID and opens its own thread, so every
-    # identity test above missed and the reminder booked the interview it was
-    # reminding about. Two slots, one interview.
-    #
-    # Overlap stays allowed, because that is how two genuinely different
-    # interviews coexist; this is the narrower case of the same candidate
-    # being committed to the very same minutes twice, which is one commitment
-    # however many mails announce it.
-    return same_schedule
+    if same_schedule:
+        incoming_meetings = _source_teams_meetings(message)
+        if incoming_meetings:
+            source = mail_store.booking_source_message(str(row.get("interview_source_message_id") or ""))
+            if (source and _same_text(source.get("subject"), message.get("subject"))
+                    and incoming_meetings.intersection(_source_teams_meetings(source))):
+                return True
+    # Identical times, titles, or public job links cannot establish that two
+    # independent messages describe the same interview.
+    return False
+
+
+def _source_teams_meetings(message):
+    """Exact Teams meeting identities in raw MIME alternatives, not AI fields."""
+    from html import unescape
+    from urllib.parse import unquote, urlsplit
+    text = unescape(' '.join(str(message.get(k) or '') for k in (
+        'body', 'html_body', 'body_text', 'html_body_text')))
+    found = set()
+    for url in re.findall(r'''https?://[^\s<>"']+''', text):
+        parsed = urlsplit(unquote(url))
+        if parsed.hostname not in {'teams.microsoft.com', 'teams.live.com'}:
+            continue
+        # Help links, Teams home pages, and reusable generic URLs prove nothing.
+        path = parsed.path.rstrip('/')
+        if re.fullmatch(r'/l/meetup-join/19:meeting_[^/]+/0', path):
+            found.add((parsed.hostname, path))
+    return found
 
 
 def _recover_pending_lifecycle_slot(
@@ -981,7 +1017,7 @@ def _execute_auto_booking(
         if lifecycle_claim.decision in {
             interview_lifecycle.TransitionDecision.STOP_STALE,
             interview_lifecycle.TransitionDecision.STOP_CONFLICT,
-            interview_lifecycle.TransitionDecision.STOP_NEEDS_REVIEW,
+            interview_lifecycle.TransitionDecision.STOP_RETRY_PENDING,
         }:
             raise BookingValidationError(
                 "STALE_INTERVIEW_EVENT",

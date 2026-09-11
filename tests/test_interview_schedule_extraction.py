@@ -220,7 +220,7 @@ class TestEndToEndThroughValidateResult:
 
         validate_result(row, message)
 
-        assert row["classification"] == "needs_review"
+        assert row["classification"] == "ai_retry_pending"
         assert row["interview"]["timezone"] is None
         assert "INTERVIEW_SCHEDULE_UNREADABLE" in row["risk_flags"]
 
@@ -233,7 +233,7 @@ class TestEndToEndThroughValidateResult:
 
         validate_result(row, message)
 
-        assert row["classification"] == "needs_review"
+        assert row["classification"] == "ai_retry_pending"
         assert row["interview"]["date"] is None
 
 

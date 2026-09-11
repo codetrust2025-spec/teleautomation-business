@@ -36,8 +36,41 @@ ACTIONABLE_CLASSIFICATIONS = frozenset({
 })
 LEGACY_UNCERTAIN_STATUSES = frozenset({
     "MANUAL_REVIEW_REQUIRED", "NEEDS_REVIEW", "REVIEW_REQUIRED",
-    "VALIDATION_FAILED", "AI_FAILED_TERMINAL",
+    "VALIDATION_FAILED", "AI_FAILED_TERMINAL", "IGNORED_LOW_CONFIDENCE",
+    "OFFER_NEEDS_REVIEW", "JOINING_NEEDS_REVIEW", "SELECTION_NEEDS_REVIEW",
 })
+
+
+def normalize_analysis(value: dict[str, Any]) -> dict[str, Any]:
+    """Close every legacy validator exit without approving its evidence.
+
+    Raw model payloads/audit history are retained by the caller. This changes
+    the operational destination only: an unresolved reading must be retried,
+    never approved by an operator and never silently treated as marketing.
+    """
+    status = _text(value.get('status') or value.get('primary_status'))
+    pending = (
+        status in LEGACY_UNCERTAIN_STATUSES | {'AI_RETRY_PENDING'}
+        or _text(value.get('validation_status')) in LEGACY_UNCERTAIN_STATUSES
+        or classification_of(value) in {'needs_review', 'ai_retry_pending'}
+        or bool(value.get('requires_manual_review') or value.get('manual_review_required'))
+    )
+    if pending:
+        reason = (value.get('ignore_reason') or value.get('backend_validation_reason')
+                  or next(iter(value.get('risk_flags') or []), None) or 'UNRESOLVED_AI_DECISION')
+        value.update(status='AI_RETRY_PENDING', primary_status='AI_RETRY_PENDING',
+                     classification='ai_retry_pending', candidate_status='AI Retry Pending',
+                     automation_decision='AI_RETRY_PENDING', automation_state='AI_RETRY_PENDING',
+                     validation_status='RETRY_PENDING', ai_status='AI_RETRY_PENDING',
+                     requires_manual_review=False, manual_review_required=False,
+                     should_create_review_record=False, is_selection_or_offer_related=False,
+                     backend_transition_validated=False, lifecycle_event='NONE', interview_event='NONE',
+                     ignore_reason=reason,
+                     recommended_action='Automatic evidence validation will retry; no operator action is required.')
+    else:
+        value['automation_decision'] = decision_for(value).value
+        value['requires_manual_review'] = False
+    return value
 
 
 def _text(value: Any) -> str:

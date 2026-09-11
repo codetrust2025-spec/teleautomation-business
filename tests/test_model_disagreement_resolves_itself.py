@@ -263,7 +263,7 @@ class TestTheMailIsNotLostOnTheWayOut:
         assert "MANUAL_REVIEW_REQUIRED" not in block.split("primary_status=")[-1]
 
     def test_the_validator_no_longer_forces_a_review_on_disagreement(self):
-        source = inspect.getsource(agent.validate_result)
+        source = inspect.getsource(agent._validate_result)
         block = source[source.index('if "MODEL_DISAGREEMENT" in'):]
         block = block[:block.index("return") + 6]
         assert "AI_RETRY_PENDING" in block
@@ -329,14 +329,14 @@ class TestTheConfidenceBandDoesNotUndoAnyOfThis:
         assert chosen["confidence"] >= 0.75
 
     def test_the_medium_band_no_longer_overwrites_the_status(self):
-        source = inspect.getsource(agent.validate_result)
+        source = inspect.getsource(agent._validate_result)
         band = source[source.index("elif confidence < auto_threshold:"):]
         band = band[:band.index('value["requires_manual_review"] = bool(')]
         assert 'status="MANUAL_REVIEW_REQUIRED"' not in band
         assert "requires_manual_review=True" not in band
 
     def test_below_the_review_threshold_retries_rather_than_asking(self):
-        source = inspect.getsource(agent.validate_result)
+        source = inspect.getsource(agent._validate_result)
         band = source[source.index("if confidence < review_threshold:"):]
         band = band[:band.index("elif confidence < auto_threshold:")]
         assert "AI_RETRY_PENDING" in band
@@ -349,7 +349,7 @@ class TestTheConfidenceBandDoesNotUndoAnyOfThis:
         Checked against the code rather than the prose, since the comment in
         that band explains the rule and would otherwise match.
         """
-        source = inspect.getsource(agent.validate_result)
+        source = inspect.getsource(agent._validate_result)
         band = source[source.index("elif confidence < auto_threshold:"):]
         band = band[:band.index('value["requires_manual_review"] = bool(')]
         code = "\n".join(
@@ -358,7 +358,7 @@ class TestTheConfidenceBandDoesNotUndoAnyOfThis:
 
     def test_an_actionable_interview_without_a_schedule_still_cannot_be_recorded(self):
         """It must not become a confirmed interview nobody can book."""
-        source = inspect.getsource(agent.validate_result)
+        source = inspect.getsource(agent._validate_result)
         band = source[source.index("elif confidence < auto_threshold:"):]
         band = band[:band.index('value["requires_manual_review"] = bool(')]
         assert "MEDIUM_CONFIDENCE_INCOMPLETE_SCHEDULE" in band

@@ -1680,7 +1680,7 @@ function MonitoringOverview({
           </small>
         </div>
         <button type="button" onClick={() => onOpen("reviews")}>
-          {metrics.automation_pending ?? metrics.needs_review ?? 0} retrying
+          {metrics.automation_pending ?? 0} retrying
         </button>
       </aside>
     </section>
@@ -1868,8 +1868,6 @@ export default function RecruitmentMailPanelRedesign() {
   const [tab, setTab] = useState("mailboxes");
   const [metrics, setMetrics] = useState({
     automation_pending: 0,
-    // Legacy API alias. The visible UI uses automation_pending only.
-    needs_review: 0,
     selected: 0,
     offers_received: 0,
     offers_accepted: 0,
@@ -2346,7 +2344,7 @@ export default function RecruitmentMailPanelRedesign() {
     {
       tone: "amber",
       icon: "△",
-      value: metrics.automation_pending ?? metrics.needs_review ?? 0,
+      value: metrics.automation_pending ?? 0,
       title: "AI Retry Pending",
       subtitle: "Retries automatically",
       group: "automation_pending",

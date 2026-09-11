@@ -117,6 +117,6 @@ class TestBookingRemainsGated:
     def test_a_proposed_interview_is_not_a_confirmed_one(self):
         assert "INTERVIEW_PROPOSED" != "INTERVIEW_CONFIRMED"
         import inspect
-        src = inspect.getsource(agent.validate_result)
+        src = inspect.getsource(agent._validate_result)
         # The downgrade sets requires_manual_review so it cannot silently book.
         assert "requires_manual_review=True" in src

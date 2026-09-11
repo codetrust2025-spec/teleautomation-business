@@ -300,7 +300,7 @@ class TestAMislabelledQuoteIsNotAnInventedOne:
 
     def test_the_gate_and_the_classifier_now_judge_evidence_the_same_way(self):
         relevance_gate = inspect.getsource(agent._validate_relevance_result)
-        classifier = inspect.getsource(agent.validate_result)
+        classifier = inspect.getsource(agent._validate_result)
         for source in (relevance_gate, classifier):
             assert "_canonicalise_evidence_source" in source
             assert "_evidence_supported" in source

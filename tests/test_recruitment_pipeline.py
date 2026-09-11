@@ -464,7 +464,7 @@ def test_validation_enforces_evidence_and_manual_review_confidence():
     agent.validate_result(unsupported,message("Congratulations","You have been selected."),[])
     assert unsupported["backend_transition_validated"] is False
     assert unsupported["ignore_reason"] == "EVIDENCE_NOT_VERBATIM"
-    assert unsupported["status"] == "MANUAL_REVIEW_REQUIRED"
+    assert unsupported["status"] == "AI_RETRY_PENDING"
     assert unsupported["is_selection_or_offer_related"] is False
     assert unsupported["is_job_outcome"] is False
     assert unsupported["lifecycle_event"] == "NONE"
