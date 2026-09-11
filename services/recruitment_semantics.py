@@ -651,6 +651,28 @@ def classify_context(
         r"(?:\binterview\b.{0,80}\b(?:cancelled|canceled|called off)\b|\b(?:cancelled|canceled|called off)\b.{0,80}\binterview\b)",
         lowered,
     ))
+    # A slot the candidate did not attend. The booking it refers to is spent
+    # whatever happens next, so it must not keep standing as an upcoming
+    # interview -- and it must never be read as scheduling a new one.
+    #
+    # Pujitha's Persistent Systems interview was announced missed at 22:40 and
+    # the confirmed slot stayed. Nothing here had vocabulary for it: the mail
+    # says "reschedule your interview" while the pattern below requires
+    # "rescheduled", so the model's INTERVIEW_RESCHEDULED reading had nothing
+    # to corroborate it and the mail was parked, then ignored. The same thing
+    # happened on 19 August and 27 August.
+    #
+    # Deliberately narrow. "Don't miss your interview" is a reminder and
+    # "you missed our webinar" is not this candidate's interview, so the
+    # subject must say the slot itself was missed or abandoned.
+    interview_missed = bool(re.search(
+        r"(?:\byou (?:have )?missed your interview\b"
+        r"|\bmissed your interview slot\b"
+        r"|\binterview slot missed\b"
+        r"|\byou left your interview mid-?way\b"
+        r"|\byou did not (?:attend|join) your interview\b)",
+        lowered,
+    ))
     interview_rescheduled = bool(re.search(
         r"(?:\binterview\b.{0,100}\b(?:rescheduled|moved|postponed)\b|\b(?:rescheduled|moved|postponed)\b.{0,100}\binterview\b)",
         lowered,
@@ -673,6 +695,15 @@ def classify_context(
     # Preserve the stronger structured calendar interpretation. It already
     # requires interview/round language plus an invitation and schedule; the
     # schedule never establishes relevance on its own.
+    if interview_missed:
+        # The times such a mail carries are the slot that was missed and the
+        # deadline to rebook by. Neither schedules anything, so this must not
+        # read as a confirmation or a reschedule however the sentence around
+        # them is phrased -- the booking it refers to is released, and only a
+        # genuinely new invitation books again.
+        interview_confirmed = False
+        interview_rescheduled = False
+        interview_cancelled = True
     if interview_confirmed:
         assertions.add("INTERVIEW_CONFIRMED")
         assertions.add("INTERVIEW_UPDATE")
@@ -680,6 +711,10 @@ def classify_context(
         assertions.add("INTERVIEW_RESCHEDULED")
     if interview_cancelled:
         assertions.add("INTERVIEW_CANCELLED")
+        if interview_missed:
+            assertions.discard("INTERVIEW_CONFIRMED")
+            assertions.discard("INTERVIEW_UPDATE")
+            assertions.discard("INTERVIEW_RESCHEDULED")
 
     # Explicit invitation + schedule semantics or post-selection outcome take precedence over document
     # checklist fields embedded in the same recruiter message.

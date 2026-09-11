@@ -533,14 +533,29 @@ def _same_lifecycle_slot(
     source_id = str(message.get("provider_message_id") or "").strip()
     if source_id and _same_text(row.get("interview_source_message_id"), source_id):
         return True
-    thread_id = str(message.get("provider_thread_id") or "").strip()
-    return bool(
-        thread_id
-        and _same_text(row.get("interview_source_thread_id"), thread_id)
-        and str(row.get("date") or "")[:10] == schedule["date"]
+    same_schedule = (
+        str(row.get("date") or "")[:10] == schedule["date"]
         and str(row.get("time") or "")[:5] == schedule["time"]
         and str(row.get("time_end") or "")[:5] == schedule["time_end"]
     )
+    thread_id = str(message.get("provider_thread_id") or "").strip()
+    if thread_id and _same_text(row.get("interview_source_thread_id"), thread_id) and same_schedule:
+        return True
+    # No UID, no shared message, no shared thread -- and yet the identical
+    # start and end on the identical day for the same candidate.
+    #
+    # Pujitha's Persistent Systems interview was booked twice for
+    # 2026-09-11 02:30-04:00. The first came from a Google calendar invite
+    # carrying a UID; the second from a "your AI interview starts in 30
+    # minutes" reminder, which has no UID and opens its own thread, so every
+    # identity test above missed and the reminder booked the interview it was
+    # reminding about. Two slots, one interview.
+    #
+    # Overlap stays allowed, because that is how two genuinely different
+    # interviews coexist; this is the narrower case of the same candidate
+    # being committed to the very same minutes twice, which is one commitment
+    # however many mails announce it.
+    return same_schedule
 
 
 def _recover_pending_lifecycle_slot(
