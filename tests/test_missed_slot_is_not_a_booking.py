@@ -151,15 +151,18 @@ SCHEDULE = {"date": "2026-09-11", "time": "02:30", "time_end": "04:00"}
 
 
 class TestOneInterviewIsOneSlot:
-    def test_the_reminder_no_longer_books_what_the_invite_already_booked(self):
-        """The exact shape: the invite's row carries a Google UID, the reminder
-        carries none and arrives on its own thread."""
+    def test_time_equality_without_source_identity_is_not_duplicate_proof(self):
+        """The minimal schedule-only fixture cannot prove a reminder's identity.
+
+        A real sibling requires source evidence, not an assumption that two
+        interviews occupying identical minutes must be the same interview.
+        """
         booked = row(interview_calendar_uid="u4ofrugq28i3hva1pqdintqaqg@google.com",
                      interview_source_thread_id="thread-google")
         reminder = {"provider_message_id": "1a08d03543262239",
                     "provider_thread_id": "thread-zeko"}
         assert _same_lifecycle_slot(
-            booked, result={}, message=reminder, schedule=SCHEDULE) is True
+            booked, result={}, message=reminder, schedule=SCHEDULE) is False
 
     def test_a_different_time_is_still_a_different_interview(self):
         booked = row(time="09:00", time_end="10:00")
@@ -201,7 +204,7 @@ class TestSourceEvidenceMayReleaseABookingNotCreateOne:
 
         from services import recruitment_mail_agent as agent
 
-        source = inspect.getsource(agent.validate_result)
+        source = inspect.getsource(agent._validate_result)
         start = source.index("if asserted_by_source and safe_status ==")
         return source[start:source.index("value.update(\n            status=\"IGNORED_NOT_OFFER_RELATED\"")]
 

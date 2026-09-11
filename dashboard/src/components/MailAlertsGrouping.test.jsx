@@ -166,7 +166,7 @@ describe("the mails underneath are not deduplicated", () => {
       "Invitation - Digital Employment BGV",
     ]);
     expect(cells.map((c) => c[4])).toEqual(["95%", "100%", "85%"]);
-    expect(cells.map((c) => c[7])).toEqual(["Reviewed", "Pending", "Pending"]);
+    expect(cells.map((c) => c[7])).toEqual(["AUTOMATED", "AUTOMATED", "AUTOMATED"]);
   });
 
   it("keeps two mails that share a candidate and a company as two rows", async () => {

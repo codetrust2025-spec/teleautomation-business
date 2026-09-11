@@ -29,7 +29,7 @@ CANONICAL_CLASSIFICATIONS = {
     "joining_date_updated", "onboarding_started", "background_verification",
     "document_verification", "compensation_confirmation", "interview_update",
     "interview_shortlisted", "interview_confirmed", "interview_rescheduled",
-    "interview_cancelled", "candidate_rejected", "needs_review",
+    "interview_cancelled", "candidate_rejected",
     "not_relevant", "ai_retry_pending", "final_round_cleared", "hr_confirmation",
 }
 
@@ -109,8 +109,8 @@ _STATUS_CLASSIFICATION = {
     "INTERVIEW_RESCHEDULED": "interview_rescheduled",
     "INTERVIEW_CANCELLED": "interview_cancelled",
     "CANDIDATE_REJECTED": "candidate_rejected",
-    "MANUAL_REVIEW_REQUIRED": "needs_review",
-    "IGNORED_LOW_CONFIDENCE": "needs_review",
+    "MANUAL_REVIEW_REQUIRED": "ai_retry_pending",
+    "IGNORED_LOW_CONFIDENCE": "ai_retry_pending",
     "IGNORED_NOT_OFFER_RELATED": "not_relevant",
     "AI_RETRY_PENDING": "ai_retry_pending",
 }
@@ -135,7 +135,7 @@ _CLASSIFICATION_STATUS = {
     "interview_rescheduled": "Interview Rescheduled",
     "interview_cancelled": "Interview Cancelled",
     "candidate_rejected": "Rejected",
-    "needs_review": "Needs Review",
+    "needs_review": "AI Retry Pending",
     "ai_retry_pending": "AI Retry Pending",
     "not_relevant": "Profile Active",
 }
@@ -1064,14 +1064,14 @@ def mark_message_status(message_id:str,status:str,*,reason:str|None=None,cleanup
     # weakening ingestion's primary persistence boundary.
     normalized = str(status or "").upper()
     if normalized in {
-        "IGNORED_NOT_OFFER_RELATED", "IGNORED_LOW_CONFIDENCE",
+        "IGNORED_NOT_OFFER_RELATED",
         "DUPLICATE_CONTENT", "DUPLICATE_OFFER_EVENT", "DUPLICATE_OFFER_ATTACHMENT",
     }:
         record_automation_state(
             mailbox_message_id=message_id, event_id=None, state="AUTO_IGNORE",
             reason=reason or normalized, details={"source_status": normalized},
         )
-    elif normalized in {"AI_RETRY_PENDING", "VALIDATION_FAILED", "MANUAL_REVIEW_REQUIRED"}:
+    elif normalized in {"AI_RETRY_PENDING", "VALIDATION_FAILED", "MANUAL_REVIEW_REQUIRED", "IGNORED_LOW_CONFIDENCE"}:
         record_automation_state(
             mailbox_message_id=message_id, event_id=None, state="AI_RETRY_PENDING",
             reason=reason or normalized, details={"source_status": normalized},
@@ -1578,8 +1578,8 @@ def create_event(candidate_id: str, message_id: str, result: dict[str,Any], *, m
         attach_calendar_identity(already['id'],result.get('calendar_uid'),result.get('calendar_sequence'))
         return already
     event_id=_id(); interview=result.get('interview') or {}; offer=result.get('offer') or {}; company=result.get('company') or {}; job=result.get('job') or {}; recruiter=result.get('recruiter') or {}
-    validation_status=str(result.get('validation_status') or 'NEEDS_REVIEW').upper()
-    review_state='AUTO_VALIDATED' if validation_status=='AUTO_VALIDATED' else 'PENDING'
+    validation_status=str(result.get('validation_status') or 'RETRY_PENDING').upper()
+    review_state='AUTOMATED'
     candidate_event={"primary_status":result.get("primary_status"),"confidence":result.get("confidence"),"structured_result":result,"review_status":review_state,"validation_status":validation_status,"visible_in_offer_review":True}
     visible=should_show_in_selection_offer_review(candidate_event)
     original_status=result.get('primary_status')
@@ -1661,8 +1661,8 @@ def create_or_reprocess_event(candidate_id: str, message_id: str, result: dict[s
         return event
     previous=existing_rows[0];company=result.get('company') or {};job=result.get('job') or {};offer=result.get('offer') or {};recruiter=result.get('recruiter') or {}
     with get_connection() as conn,conn.cursor() as cur:
-        validation_status=str(result.get('validation_status') or 'NEEDS_REVIEW').upper()
-        review_state='AUTO_VALIDATED' if validation_status=='AUTO_VALIDATED' else 'PENDING'
+        validation_status=str(result.get('validation_status') or 'RETRY_PENDING').upper()
+        review_state='AUTOMATED'
         cur.execute("""UPDATE ai_recruitment_events SET original_primary_status=COALESCE(original_primary_status,primary_status),
           primary_status=%s,confidence=%s,company_name=%s,company_domain=%s,job_title=%s,recruiter_name=%s,recruiter_email=%s,
           joining_date=%s,structured_result=%s::jsonb,summary=%s,requires_manual_review=%s,review_status=%s,
@@ -1988,14 +1988,31 @@ def review_offer(case_id:str, action:str, reviewer:str, notes:str='')->dict[str,
 def canonical_classification(result: dict[str, Any] | None = None, status: str | None = None) -> str:
     result = result or {}
     explicit = str(result.get("classification") or "").strip().lower()
+    if explicit == 'needs_review':
+        return 'ai_retry_pending'
     if explicit in CANONICAL_CLASSIFICATIONS:
         return explicit
-    return _STATUS_CLASSIFICATION.get(str(status or result.get("primary_status") or result.get("status") or "").upper(), "needs_review")
+    return _STATUS_CLASSIFICATION.get(str(status or result.get("primary_status") or result.get("status") or "").upper(), "ai_retry_pending")
+
+
+def booking_source_message(provider_message_id: str) -> dict[str, Any] | None:
+    """Read source proof for an existing slot, never infer from model prose.
+
+    Ambiguous provider IDs cannot establish identity. Database errors propagate
+    so an unavailable proof store cannot turn a retry into a second booking.
+    """
+    if not provider_message_id or not use_postgres():
+        return None
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute('SET TRANSACTION READ ONLY')
+        cur.execute('SELECT subject,body_text,html_body_text,sent_at FROM mailbox_messages WHERE provider_message_id=%s LIMIT 2', (provider_message_id,))
+        rows = _rows(cur)
+    return rows[0] if len(rows) == 1 else None
 
 
 def notification_priority(classification: str, *, confidence: float, requires_review: bool = False) -> str:
     if requires_review or confidence < float(__import__('os').getenv('OLLAMA_CONFIDENCE_THRESHOLD', '0.75')):
-        return "review_required"
+        return "retry_pending"
     if classification in {"job_selection_confirmed", "offer_received", "joining_confirmed", "offer_accepted", "onboarding_started", "interview_confirmed", "interview_rescheduled", "interview_cancelled", "final_round_cleared"}:
         return "high"
     if classification in {"background_verification", "document_verification", "compensation_confirmation", "joining_date_updated", "hr_confirmation"}:
@@ -2061,7 +2078,7 @@ def record_analysis(
         cur.execute("""UPDATE mail_ai_analyses SET ai_status=%s,validation_status=%s,
           email_intent=%s,document_type=%s,evidence_summary=%s WHERE id=%s RETURNING *""",(
           value.get('ai_status') or ('RETRY_PENDING' if processing_status=='RETRY_PENDING' else 'ANALYZED'),
-          value.get('validation_status') or 'NEEDS_REVIEW',value.get('email_intent'),value.get('document_type'),
+          value.get('validation_status') or 'RETRY_PENDING',value.get('email_intent'),value.get('document_type'),
           value.get('evidence_summary') or value.get('summary'),row['id']))
         return _rows(cur)[0]
 
@@ -2098,7 +2115,7 @@ def _agreeing_candidate_status(result: dict[str, Any], classification: str) -> s
     """
     proposed = str(result.get("candidate_status") or "").strip()
     canonical = _CLASSIFICATION_STATUS[classification]
-    if not proposed:
+    if not proposed or proposed == 'Needs Review':
         return canonical
     owners = _CLASSIFICATIONS_BY_STATUS_LABEL.get(proposed)
     if owners is not None and classification not in owners:
@@ -2488,10 +2505,13 @@ def finalize_detection(event: dict[str, Any], *, result: dict[str, Any], model: 
     except Exception:
         mapping_confirmed = False
     if not mapping_confirmed:
-        classification="needs_review";candidate_status="Needs Review"
-        result.update(classification=classification,candidate_status=candidate_status,requires_manual_review=True,
+        classification="ai_retry_pending";candidate_status="AI Retry Pending"
+        result.update(classification=classification,candidate_status=candidate_status,requires_manual_review=False,
+                      validation_status='RETRY_PENDING',automation_decision='AI_RETRY_PENDING',
                       reason="Candidate mapping could not be confirmed",risk_flags=list(dict.fromkeys((result.get('risk_flags') or [])+['CANDIDATE_MAPPING_ISSUE'])))
-    validation_status=str(result.get('validation_status') or event.get('validation_status') or 'NEEDS_REVIEW').upper()
+        record_automation_state(mailbox_message_id=event['mailbox_message_id'], event_id=event['id'],
+                                state='AI_RETRY_PENDING', reason='CANDIDATE_MAPPING_ISSUE')
+    validation_status=str(result.get('validation_status') or event.get('validation_status') or 'RETRY_PENDING').upper()
     processing_status='RETRY_PENDING' if validation_status=='RETRY_PENDING' else 'CLASSIFIED'
     analysis = record_analysis(event["mailbox_message_id"], event["candidate_id"], result, model=model, processing_status=processing_status)
     with get_connection() as conn, conn.cursor() as cur:
@@ -2502,11 +2522,11 @@ def finalize_detection(event: dict[str, Any], *, result: dict[str, Any], model: 
         event = _rows(cur)[0]
     event['validation_status']=validation_status
     status_updated = apply_candidate_job_status(event, classification, candidate_status)
-    if not status_updated and classification not in {"needs_review","not_relevant","interview_update"}:
+    if not status_updated and classification not in {"needs_review","ai_retry_pending","not_relevant","interview_update"}:
         with get_connection() as conn,conn.cursor() as cur:
             cur.execute("SELECT status,status_rank FROM candidate_job_status WHERE candidate_id=%s",(event['candidate_id'],));current=cur.fetchone()
         if current and current[0] != candidate_status and int(current[1] or 0) > _STATUS_RANK.get(candidate_status,0):
-            event['requires_manual_review']=True
+            event['requires_manual_review']=False
             event['status_conflict']=True
     notification = create_monitoring_notification(event, analysis)
     event["classification"] = classification
@@ -2612,6 +2632,8 @@ def list_notifications(
                 from services.recruitment_identity import aliases, load_links
                 where.append('(candidate_id=%s OR candidate_id=ANY(%s))')
                 params.extend([value, sorted(aliases(str(value), load_links()))])
+            elif field == 'priority' and value == 'retry_pending':
+                where.append("priority IN ('retry_pending','review_required')")
             else:
                 where.append(f"{field}=%s")
                 params.append(value)
@@ -2718,7 +2740,7 @@ BOOKED_BOOKING_STATUSES = ("Auto Booked", "Approved & Booked", "Rescheduled")
 
 # Not "Cancelled": nobody cancelled these. The booking they named is simply not
 # there any more, and a human has to decide what that means.
-RELEASED_BOOKING_STATUS = "Needs Review"
+RELEASED_BOOKING_STATUS = "AI_RETRY_PENDING"
 
 
 def reconcile_booking_claims(rows):
@@ -2730,6 +2752,18 @@ def reconcile_booking_claims(rows):
     Mail Alerts cannot disagree with Confirmed Slots and Daily Ops whatever put
     them out of step.
     """
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        # Compatibility projection only; retain historical source/audit rows.
+        if row.get('priority') == 'review_required':
+            row['priority'] = 'retry_pending'
+        if row.get('classification') == 'needs_review':
+            row['classification'] = 'ai_retry_pending'
+        if row.get('candidate_status') == 'Needs Review':
+            row['candidate_status'] = 'AI Retry Pending'
+        if row.get('booking_status') in {'Needs Review', 'MANUAL_REVIEW_REQUIRED'}:
+            row['booking_status'] = 'AI_RETRY_PENDING'
     claims = [
         row for row in (rows or [])
         if isinstance(row, dict)
@@ -2825,7 +2859,7 @@ def notification_summary() -> dict[str, Any]:
           count(*) FILTER(WHERE classification='joining_confirmed' AND dismissed_at IS NULL) joining_confirmations,
           count(*) FILTER(WHERE classification='interview_confirmed' AND booking_status='Auto Booked' AND dismissed_at IS NULL) auto_booked_interviews,
           count(*) FILTER(WHERE booking_status IN('Blocked','Processing Failed') AND dismissed_at IS NULL) booking_blocked,
-          count(*) FILTER(WHERE priority='review_required' AND NOT is_reviewed AND dismissed_at IS NULL) needs_review,
+          count(*) FILTER(WHERE (priority IN ('review_required','retry_pending') OR booking_status='AI_RETRY_PENDING') AND dismissed_at IS NULL) ai_retry_pending,
           count(*) FILTER(WHERE classification IN ('offer_received','offer_accepted','job_selection_confirmed') AND dismissed_at IS NULL) job_confirmed_count,
           count(*) FILTER(WHERE classification IN ('interview_confirmed','interview_rescheduled','interview_cancelled') AND dismissed_at IS NULL) interview_booking_count
           FROM mail_monitoring_notifications
@@ -2845,6 +2879,8 @@ def clear_notifications(*, reviewer: str) -> int:
 
 
 def update_notification(notification_id: str, action: str, *, reviewer: str, notes: str = "", changes: dict[str, Any] | None = None) -> dict[str, Any]:
+    if action not in {'read', 'unread', 'dismiss'}:
+        raise ValueError('Notification decisions are automated')
     changes = dict(changes or {})
     corrected_event: dict[str, Any] | None = None
     with get_connection() as conn, conn.cursor() as cur:

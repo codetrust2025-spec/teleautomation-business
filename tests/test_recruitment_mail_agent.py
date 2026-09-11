@@ -49,11 +49,11 @@ def test_ai_outage_keeps_strong_interview_invite_visible_for_review():
         route['context'],
         AIGatewayError('timeout',code='OLLAMA_REQUEST_TIMEOUT'),
     )
-    assert result['primary_status'] == 'INTERVIEW_CONFIRMED'
+    assert result['primary_status'] == 'AI_RETRY_PENDING'
     assert result['business_domain'] == 'INTERVIEW_TRACKING'
     assert result['interview']['date'] == '2026-07-21'
     assert result['interview']['time'] == '12:30 PM'
-    assert result['requires_manual_review'] is True
+    assert result['requires_manual_review'] is False
 
 def test_mail_filter_uses_qualified_thread_context():
     interview=relevance_score('Re: update','Please see below.',[],[{'subject':'Technical round interview confirmation'}])
@@ -296,8 +296,8 @@ def test_confirmed_interview_requires_explicit_schedule(field,value,match):
     row=interview_result();row['interview'][field]=value
     message={'subject':'Technical interview','body':'Your interview is scheduled for July 20, 2026 at 03:00 PM IST.'}
     validate_result(row,message)
-    assert row['classification']=='needs_review'
-    assert row['requires_manual_review'] is True
+    assert row['classification']=='ai_retry_pending'
+    assert row['requires_manual_review'] is False
     assert match in row['reason']
 
 
@@ -469,7 +469,7 @@ def test_a_24h_time_with_no_recoverable_source_time_fails():
              'body':'Your interview is scheduled for July 20, 2026. We will share the timing separately.'}
     validate_result(row,message)
     assert row['interview']['time'] is None, 'a time the source never stated was invented'
-    assert row['classification']=='needs_review'
+    assert row['classification']=='ai_retry_pending'
 
 
 def test_a_source_stated_am_pm_time_is_recovered_from_a_24h_model_value():

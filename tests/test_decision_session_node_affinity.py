@@ -147,7 +147,7 @@ class TestNothingElseChanged:
         transition. Where it sends the mail -- automatic retry rather than a
         person -- is settled in test_model_disagreement_resolves_itself.py.
         """
-        source = inspect.getsource(agent.validate_result)
+        source = inspect.getsource(agent._validate_result)
         assert 'if "MODEL_DISAGREEMENT" in' in source
         marker = source.index('if "MODEL_DISAGREEMENT" in')
         block = source[marker:marker + 700]

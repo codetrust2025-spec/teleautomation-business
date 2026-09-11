@@ -9,7 +9,7 @@ def test_every_requested_classification_is_stable():
         'offer_revoked','joining_confirmed','joining_date_updated','onboarding_started',
         'background_verification','document_verification','compensation_confirmation',
         'interview_update','interview_shortlisted','interview_confirmed','interview_rescheduled',
-            'interview_cancelled','candidate_rejected','needs_review','ai_retry_pending','not_relevant',
+            'interview_cancelled','candidate_rejected','ai_retry_pending','not_relevant',
         'final_round_cleared','hr_confirmation',
     }
 
@@ -28,7 +28,7 @@ def test_priority_and_review_thresholds(monkeypatch):
     assert store.notification_priority('offer_received',confidence=.94)=='high'
     assert store.notification_priority('document_verification',confidence=.90)=='medium'
     assert store.notification_priority('candidate_rejected',confidence=.90)=='informational'
-    assert store.notification_priority('offer_received',confidence=.70)=='review_required'
+    assert store.notification_priority('offer_received',confidence=.70)=='retry_pending'
 
 
 def test_auto_booking_migration_is_additive_and_idempotent():

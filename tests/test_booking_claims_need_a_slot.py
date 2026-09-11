@@ -35,7 +35,7 @@ class TestTheClaimStatusesAreTheBookedOnes:
 
     def test_a_released_claim_is_not_a_cancellation(self):
         """Nobody cancelled these. The booking is simply not there."""
-        assert ms.RELEASED_BOOKING_STATUS == "Needs Review"
+        assert ms.RELEASED_BOOKING_STATUS == "AI_RETRY_PENDING"
         assert ms.RELEASED_BOOKING_STATUS not in ms.BOOKED_BOOKING_STATUSES
 
     def test_a_released_claim_is_not_counted_as_auto_booked(self):
@@ -68,7 +68,7 @@ class TestNothingReportsABookingTheRosterLacks:
     def test_a_claim_on_a_missing_slot_is_released(self, roster, status):
         rows = [{"id": "n1", "booking_status": status, "booking_id": "emptied-1"}]
         ms.reconcile_booking_claims(rows)
-        assert rows[0]["booking_status"] == "Needs Review"
+        assert rows[0]["booking_status"] == "AI_RETRY_PENDING"
         assert rows[0]["booking_claim_released"] is True
 
     @pytest.mark.parametrize("status", ["Auto Booked", "Approved & Booked", "Rescheduled"])
@@ -81,9 +81,9 @@ class TestNothingReportsABookingTheRosterLacks:
     def test_a_claim_on_a_deleted_candidate_is_released(self, roster):
         rows = [{"id": "n1", "booking_status": "Auto Booked", "booking_id": "gone"}]
         ms.reconcile_booking_claims(rows)
-        assert rows[0]["booking_status"] == "Needs Review"
+        assert rows[0]["booking_status"] == "AI_RETRY_PENDING"
 
-    @pytest.mark.parametrize("status", ["Cancelled", "Blocked", "Processing Failed", "Needs Review"])
+    @pytest.mark.parametrize("status", ["Cancelled", "Blocked", "Processing Failed", "AI_RETRY_PENDING"])
     def test_statuses_that_claim_nothing_are_untouched(self, roster, status):
         """These do not assert a slot, so there is nothing to release."""
         rows = [{"id": "n1", "booking_status": status, "booking_id": "emptied-1"}]
@@ -103,7 +103,7 @@ class TestNothingReportsABookingTheRosterLacks:
         ]
         ms.reconcile_booking_claims(rows)
         assert [row["booking_status"] for row in rows] == [
-            "Auto Booked", "Needs Review", "Cancelled",
+            "Auto Booked", "AI_RETRY_PENDING", "Cancelled",
         ]
 
     def test_an_empty_list_is_fine(self, roster):

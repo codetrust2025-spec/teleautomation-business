@@ -133,9 +133,9 @@ class TestAnUnreadableScheduleDowngradesInsteadOfVanishing:
         row = interview_result()
         row["interview"]["timezone"] = ""
         validate_result(row, INTERVIEW_MESSAGE)
-        assert row["status"] == "MANUAL_REVIEW_REQUIRED"
-        assert row["should_create_review_record"] is True
-        assert row["requires_manual_review"] is True
+        assert row["status"] == "AI_RETRY_PENDING"
+        assert row["should_create_review_record"] is False
+        assert row["requires_manual_review"] is False
 
     def test_auto_booking_can_no_longer_pick_it_up(self):
         """execute_auto_booking fires on interview_confirmed / _rescheduled
@@ -143,7 +143,7 @@ class TestAnUnreadableScheduleDowngradesInsteadOfVanishing:
         row = interview_result()
         row["interview"]["time"] = "sometime tomorrow"
         validate_result(row, INTERVIEW_MESSAGE)
-        assert row["classification"] == "needs_review"
+        assert row["classification"] == "ai_retry_pending"
         assert row["classification"] not in {"interview_confirmed", "interview_rescheduled"}
 
     def test_the_unusable_field_is_cleared(self):

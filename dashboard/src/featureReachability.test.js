@@ -119,6 +119,13 @@ function backendRoutes() {
 
 describe('operations backend routes are reachable from the UI', () => {
   const NON_UI = [
+    // Retired operator approval hub. Read-only history remains available by
+    // API; these routes must no longer require a manual dashboard workflow.
+    /^\/api\/offer-verification(?:\/|$)/,
+    /^\/api\/ai-recruitment\/(?:review|dashboard|metrics)$/,
+    /^\/api\/ai-recruitment\/events\/\{event_id\}\/\{action\}$/,
+    /^\/api\/selection-tracking\/stats$/,
+    /^\/api\/candidates\/\{candidate_id\}\/recruitment-events$/,
     /^\/internal\//, /^\/health$/, /^\/version$/, /^\/$/, /^\/ws/, /^\/openapi/,
     /^\/docs/, /^\/webhook/, /^\/static/, /^\/favicon/, /^\/login$/, /^\/logout$/,
     /^\/auth\/login/, /^\/auth\/logout/, /\{full_path/,
@@ -149,7 +156,7 @@ describe('operations backend routes are reachable from the UI', () => {
     // Locked to the state verified on 2026-08-15. This must not grow: a new
     // entry means a feature became unreachable. Shrinking it is an improvement
     // and the baseline should be lowered to match.
-    expect(unreferenced.length).toBeLessThanOrEqual(BASELINE_UNREFERENCED)
+    expect(unreferenced.length, unreferenced.join('\n')).toBeLessThanOrEqual(BASELINE_UNREFERENCED)
   })
 })
 

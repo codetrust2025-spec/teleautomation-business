@@ -112,14 +112,14 @@ class TestEveryBookingIsVisible:
 
 
 class TestTheDuplicateThatGotThrough:
-    def test_the_same_slot_is_now_a_duplicate(self, person):
-        """The reminder carries no calendar UID and its own thread, which is
-        how it missed the row the invitation had written."""
-        reminder = {"provider_message_id": "1a08d03543262239",
-                    "provider_thread_id": "1a08d03543262239"}
+    def test_the_hidden_slot_is_found_when_source_identity_matches(self, person):
+        """Visibility supplies the row; identity, not time equality, dedupes it."""
+        reminder = {"provider_message_id": "calendar-sibling",
+                    "provider_thread_id": "different-thread"}
         booked = next(s for s in booking._candidate_slots(person) if s["id"] == "e6c21a3fec")
         assert booking._same_lifecycle_slot(
-            booked, result={}, message=reminder, schedule=SLOT) is True
+            booked, result={"calendar": {"uid": booked["interview_calendar_uid"]}},
+            message=reminder, schedule=SLOT) is True
 
     def test_and_it_was_invisible_before(self, person):
         """Proof the fix is what exposes it: the collapsed list never contained
@@ -132,10 +132,10 @@ class TestOverlapsAreStillAllowed:
         {"date": "2026-09-11", "time": "03:00", "time_end": "04:30"},
         {"date": "2026-09-11", "time": "02:30", "time_end": "03:15"},
         {"date": "2026-09-11", "time": "01:00", "time_end": "03:00"},
+        {"date": "2026-09-11", "time": "02:30", "time_end": "04:00"},
     ])
     def test_a_different_interview_may_overlap(self, person, other):
-        """39 same-day different-time pairs exist in production and must
-        keep coexisting; only the identical minutes are one commitment."""
+        """Different interviews coexist, including identical start/end times."""
         booked = next(s for s in booking._candidate_slots(person) if s["id"] == "e6c21a3fec")
         assert booking._same_lifecycle_slot(
             booked, result={}, message={"provider_thread_id": "other"}, schedule=other) is False

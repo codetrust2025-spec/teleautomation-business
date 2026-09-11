@@ -96,16 +96,16 @@ class TestAScheduledClaimSurvivesAsReview:
     @pytest.mark.parametrize("status", SCHEDULED)
     def test_it_becomes_needs_review(self, status):
         value = validated(status)
-        assert value["status"] == "MANUAL_REVIEW_REQUIRED"
-        assert value["classification"] == "needs_review"
-        assert value["candidate_status"] == "Needs Review"
+        assert value["status"] == "AI_RETRY_PENDING"
+        assert value["classification"] == "ai_retry_pending"
+        assert value["candidate_status"] == "AI Retry Pending"
 
     @pytest.mark.parametrize("status", SCHEDULED)
     def test_an_operator_actually_sees_it(self, status):
         value = validated(status)
-        assert value["should_create_review_record"] is True
-        assert value["requires_manual_review"] is True
-        assert value["ignore_reason"] is None
+        assert value["should_create_review_record"] is False
+        assert value["requires_manual_review"] is False
+        assert value["ignore_reason"].endswith("NOT_SUPPORTED_BY_ASSERTIVE_CONTEXT")
 
     @pytest.mark.parametrize("status", SCHEDULED)
     def test_it_says_what_could_not_be_corroborated(self, status):

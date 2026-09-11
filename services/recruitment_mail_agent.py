@@ -1224,6 +1224,18 @@ def validate_result(
     *, deterministic_context: dict[str, Any] | None = None,
     relevance: dict[str, Any] | None = None,
 ) -> None:
+    """Validate evidence, then expose only an automated operational decision."""
+    _validate_result(value, message, attachments, deterministic_context=deterministic_context, relevance=relevance)
+    from services.recruitment_automation import normalize_analysis
+    normalize_analysis(value)
+
+
+def _validate_result(
+    value: dict[str, Any], message: dict[str, Any] | None = None,
+    attachments: list[dict[str, Any]] | None = None,
+    *, deterministic_context: dict[str, Any] | None = None,
+    relevance: dict[str, Any] | None = None,
+) -> None:
     from jsonschema import Draft202012Validator
     # Backward-compatible normalization for v1 responses while the configured
     # model transitions to the canonical lowercase classification contract.
@@ -1763,7 +1775,9 @@ def validate_result(
             value["ignore_reason"] = None
             value["validation_status"] = "MEDIUM_CONFIDENCE"
     else:
-        value["requires_manual_review"] = bool(value.get("requires_manual_review") or value.get("risk_flags"))
+        # The obsolete UI flag cannot veto a source-entailed transition. Real
+        # risk flags still fail closed and are normalized into automatic retry.
+        value["requires_manual_review"] = bool(value.get("risk_flags"))
         value["ignore_reason"] = None
         value["validation_status"] = "NEEDS_REVIEW" if value["requires_manual_review"] else "AUTO_VALIDATED"
     # A date the model mis-spelled in one auxiliary field is a formatting slip,
@@ -2489,7 +2503,8 @@ def _manual_review_from_strong_context(
         ) if is_interview else
         {key: None for key in ("date", "time", "end_time", "duration_minutes", "timezone", "mode", "round", "location", "meeting_link")}
     )
-    return {
+    from services.recruitment_automation import normalize_analysis
+    return normalize_analysis({
         "schema_version": "selection_offer_event_v1",
         "is_recruitment_related": True,
         "is_selection_or_offer_related": True,
@@ -2497,7 +2512,7 @@ def _manual_review_from_strong_context(
         "status": status,
         "primary_status": status,
         "confidence": confidence,
-        "ignore_reason": None,
+        "ignore_reason": failure_code,
         "candidate": {"name": None, "email": message.get("recipient_email")},
         "company": {
             "name": routing_context.get("company_name"),
@@ -2526,7 +2541,7 @@ def _manual_review_from_strong_context(
         "attachments": [],
         "evidence": evidence[:8],
         "risk_flags": list(dict.fromkeys(
-            list(routing_context.get("risk_flags") or []) + ["AI_UNAVAILABLE_MANUAL_REVIEW"]
+            list(routing_context.get("risk_flags") or []) + ["AI_UNAVAILABLE"]
         )),
         "requires_manual_review": True,
         "manual_review_required": True,
@@ -2541,11 +2556,11 @@ def _manual_review_from_strong_context(
         "fallback_confidence": confidence,
         "summary": (
             f"Fallback evidence indicates {status.replace('_', ' ').lower()}. "
-            f"AI validation unavailable ({failure_code}); administrator review is required."
+            f"AI validation unavailable ({failure_code}); automatic retry is pending."
         ),
         "ai_diagnostic_message": fallback_reason,
-        "recommended_action": "Administrator must verify the source email before confirming this outcome.",
-    }
+        "recommended_action": "Automatic evidence validation will retry.",
+    })
 
 
 def _requires_independent_validation(result: dict[str, Any], routing_context: dict[str, Any] | None = None) -> bool:
@@ -2901,6 +2916,11 @@ def _analyze_on_one_node(message: dict[str, Any], attachment_texts: list[dict[st
         relevance["model"] = relevance_model
 
         if relevance.get("decision") != "ESTABLISHED":
+            unresolved = (
+                relevance.get("message_kind") in {"UNKNOWN", "RECIPIENT_HIRING_PROCESS"}
+                or float(relevance.get("confidence") or 0) < float(os.getenv("OLLAMA_CONFIDENCE_THRESHOLD", "0.75"))
+                or not relevance.get("evidence")
+            )
             result = _neutral_non_alert_result(
                 message, deterministic_context,
                 reason=str(relevance.get("reason") or "Recruitment relevance was not established."),
@@ -2910,6 +2930,11 @@ def _analyze_on_one_node(message: dict[str, Any], attachment_texts: list[dict[st
                 ai_validation_status="VALIDATED",
                 recruitment_relevance_result=deepcopy(relevance),
             )
+            if unresolved:
+                result.update(status='AI_RETRY_PENDING', primary_status='AI_RETRY_PENDING',
+                              ignore_reason='RECRUITMENT_RELEVANCE_UNRESOLVED')
+                from services.recruitment_automation import normalize_analysis
+                normalize_analysis(result)
             result["_decision_trace"] = {
                 "deterministic_context": {
                     "semantic_context": deepcopy(deterministic_context),
@@ -3236,6 +3261,10 @@ def process_message(mailbox: dict[str, Any], decoded: dict[str, Any], attachment
         result = _failure_review_result(decoded, RuntimeError("Critical employment attachment extraction failed"))
         result["reason"] = "A potentially important employment attachment could not be extracted"
         result["risk_flags"] = ["ATTACHMENT_EXTRACTION_FAILED"]
+    # Includes infrastructure fallback and attachment failures which do not
+    # pass through validate_result. No manual exit may bypass the retry queue.
+    from services.recruitment_automation import normalize_analysis
+    normalize_analysis(result)
     if str(result.get("classification_source") or "").upper() == "OLLAMA":
         relevance = result.get("recruitment_relevance_result") or {}
         if (
@@ -3354,7 +3383,7 @@ def process_message(mailbox: dict[str, Any], decoded: dict[str, Any], attachment
     }
     _publish("mail_classified", **common)
     if not suppress_notification:
-        _publish("mail_needs_review" if common["classification"] == "needs_review" else "important_mail_detected", **common)
+        _publish("mail_retry_pending" if common["classification"] == "ai_retry_pending" else "important_mail_detected", **common)
     if event.get("candidate_status_updated"):
         _publish("candidate_status_updated", **common)
     if notification:

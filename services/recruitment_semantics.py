@@ -347,7 +347,15 @@ def _is_question(text: str) -> bool:
 def _is_job_ad(subject: str, body: str, sender_email: str) -> bool:
     combined = f"{subject}\n{body[:8000]}".casefold()
     portal = any(token in sender_email.casefold() for token in ("naukri", "foundit", "monster", "indeed", "shine", "timesjobs"))
-    ad_language = any(re.search(pattern, combined, re.I) for pattern in _JOB_AD_PATTERNS)
+    # A job-description link is also part of a candidate-specific ATS invite.
+    # Exempt only that phrase, and only with a concrete schedule and meeting
+    # invitation. All other vacancy/portal/marketing guards remain in force.
+    concrete_invitation = _is_assertive_interview_invitation(subject, body)
+    ad_language = any(
+        re.search(pattern, combined, re.I)
+        for pattern in _JOB_AD_PATTERNS
+        if not (pattern == r"\bjob description\b" and concrete_invitation)
+    )
     many_requirements = sum(token in combined for token in ("experience", "skills", "location", "notice period", "ctc", "job description")) >= 3
     return ad_language or (portal and many_requirements) or _is_job_portal_notification(combined, sender_email)
 
@@ -413,7 +421,7 @@ def _is_assertive_interview_invitation(subject: str, body: str) -> bool:
         and re.search(r"\bl[1-5]\s+(?:discussion|round)\b", title, re.I)
     )
     meeting_details = bool(re.search(
-        r"\b(?:microsoft teams|teams meeting|google meet|zoom meeting|meeting id|passcode)\b|https?://(?:teams\.microsoft\.com|meet\.google\.com|[^\s/]*zoom\.us)/",
+        r"\b(?:microsoft teams|teams meeting|google meet|zoom meeting|meeting id|passcode)\b|https?://(?:teams\.microsoft\.com|meet\.google\.com|[^\s/]*zoom\.us)/|\binterview meeting link\s*:\s*https://portal\.risebird\.io/candidate/interviewdetails\?",
         direct,
         re.I,
     ))

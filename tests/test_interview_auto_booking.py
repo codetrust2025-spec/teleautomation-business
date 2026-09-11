@@ -247,7 +247,8 @@ def install_store_fakes(monkeypatch, *, rows=None, payment_reason=None, conflict
     monkeypatch.setattr(booking.mail_store, "attach_booking_to_notification", lambda *args, **kwargs: {"id": "n1", **kwargs})
     monkeypatch.setattr(booking.mail_store, "audit", lambda **kwargs: None)
     monkeypatch.setattr(booking.candidate_store, "get_candidate", lambda _cid: candidate)
-    monkeypatch.setattr(booking.candidate_store, "candidate_identity_ids", lambda _cid: ["c1"])
+    monkeypatch.setattr(booking.candidate_store, "candidate_identity_ids", lambda _cid: [
+        "c1", *[str(row['id']) for row in (rows or []) if row.get('name') == 'Rahul']])
     monkeypatch.setattr(booking.candidate_store, "list_candidates", lambda **kwargs: list(rows or []))
     # `_candidate_slots` reads the stored rows now rather than the collapsed
     # display list, because the collapse returns one row per person and hid 117

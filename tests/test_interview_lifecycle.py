@@ -21,6 +21,14 @@ def test_exact_retry_is_idempotent():
     assert decide(first, first) == TransitionDecision.IDEMPOTENT
 
 
+def test_missing_thread_never_makes_time_equality_a_lifecycle_identity():
+    from services.interview_lifecycle import interview_key
+    value = {'interview': {'date': '2099-09-11', 'time': '12:00', 'end_time': '12:45'}}
+    first = interview_key('candidate', value, {'provider_message_id': 'one'})
+    assert first != interview_key('candidate', value, {'provider_message_id': 'two'})
+    assert first == interview_key('candidate', value, {'provider_message_id': 'one'})
+
+
 def test_old_calendar_sequence_cannot_rewind_a_reschedule():
     current = event(classification="interview_rescheduled", sequence=3, time="16:00", message_id="m-3")
     stale = event(sequence=1, time="14:00", message_id="m-1")
@@ -123,4 +131,20 @@ def test_alias_cancel_wins_same_sequence_even_if_another_alias_has_later_timesta
     from services.interview_lifecycle import claim
     _claim_db(monkeypatch, [_state_row(state='CANCELLED'), _state_row(sent='2026-09-10T10:00:00Z')])
     assert claim('person', _claim_payload(), {}).decision == TransitionDecision.STOP_STALE
+
+
+def test_legacy_unthreaded_tombstones_require_same_source_proof(monkeypatch):
+    from hashlib import sha256
+    from services.interview_lifecycle import claim
+    row = _state_row(state='CANCELLED')
+    row.update(calendar_uid='', interview_key=sha256('\x1f'.join(
+        ('fallback', 'old-alias', '', '2026-09-11', '14:00', '15:00')).encode()).hexdigest())
+    cursor = _claim_db(monkeypatch, [row])
+    value = _claim_payload(); value['calendar'] = {}
+    outcome = claim('person', value, {'provider_message_id': 'old-message', 'sent_at': '2026-09-09T10:00:00Z'})
+    assert outcome.decision == TransitionDecision.STOP_STALE
+    sql, params = cursor.calls[0]
+    assert 'AND source_message_id=%s' in sql
+    assert row['interview_key'] in params[1]
+    assert params[2] == 'old-message'
 

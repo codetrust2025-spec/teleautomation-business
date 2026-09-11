@@ -36,9 +36,9 @@ describe("mail monitoring notifications", () => {
     expect(mailStatusTone({ candidate_status: "Interview Automatically Booked" })).toBe("success");
     expect(mailStatusTone({ candidate_status: "Automatic Booking Blocked" })).toBe("warning");
     expect(mailStatusTone({ booking_status: "Processing Failed" })).toBe("danger");
-    expect(mailStatusTone({ candidate_status: "Needs Review" })).toBe("review");
+    expect(mailStatusTone({ candidate_status: "AI Retry Pending" })).toBe("warning");
     expect(mailStatusTone({ candidate_status: "Already Booked — Duplicate Ignored" })).toBe("success");
-    expect(mailStatusTone({ candidate_status: "Historical Interview — Review Only" })).toBe("review");
+    expect(mailStatusTone({ candidate_status: "Historical Interview Skipped" })).toBe("neutral");
     expect(mailStatusTone({ candidate_status: "Historical Interview Skipped" })).toBe("neutral");
   });
 
@@ -77,7 +77,7 @@ describe("mail monitoring notifications", () => {
     expect(screen.getByText("Offer Received")).toBeInTheDocument();
   });
 
-  it("renders summary, filters, pagination and manual review actions", async () => {
+  it("renders summary and evidence without manual decision actions", async () => {
     renderNotifications();
     expect(await screen.findByRole("heading", { name: "Mail Monitoring Notifications" })).toBeInTheDocument();
     expect(await screen.findByText("Formal employment offer")).toBeInTheDocument();
@@ -105,7 +105,7 @@ describe("mail monitoring notifications", () => {
     await screen.findByText(/We are pleased to offer you the role/);
 
     // The panel reports; it does not edit. Every control that wrote from here
-    // is gone -- the endpoints behind them are untouched and still served.
+    // is gone. Read/unread tracking does not change the interview decision.
     for (const name of [
       "Re-run AI", "Save correction", "Confirm & reviewed", "False detection",
       "View audit history", "View email", "View payment",
@@ -159,6 +159,7 @@ describe("mail monitoring notifications", () => {
         && !String(url).endsWith("/read") && !String(url).endsWith("/unread"),
     );
     expect(writes).toEqual([]);
+    expect(screen.queryByRole("columnheader", { name: "Review" })).not.toBeInTheDocument();
   });
 
   it("clears the complete notification list after confirmation", async () => {
@@ -246,7 +247,7 @@ describe("blocked booking reasons", () => {
 
   it("falls back to manual review when only a code arrives", () => {
     expect(blockingReason({ booking_block_reason_code: "MANUAL_REVIEW_REQUIRED" })).toEqual({
-      text: "Booking requires manual review",
+      text: "Booking awaits automatic validation",
       code: "MANUAL_REVIEW_REQUIRED",
       internal: "",
     });

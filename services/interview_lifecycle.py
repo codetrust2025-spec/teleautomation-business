@@ -25,7 +25,7 @@ class InterviewState(str, Enum):
     RESCHEDULED = "RESCHEDULED"
     CANCELLED = "CANCELLED"
     BLOCKED = "BLOCKED"
-    NEEDS_REVIEW = "NEEDS_REVIEW"
+    AI_RETRY_PENDING = "AI_RETRY_PENDING"
     FAILED = "FAILED"
 
 
@@ -34,11 +34,11 @@ class TransitionDecision(str, Enum):
     IDEMPOTENT = "IDEMPOTENT"
     STOP_STALE = "STOP_STALE"
     STOP_CONFLICT = "STOP_CONFLICT"
-    STOP_NEEDS_REVIEW = "STOP_NEEDS_REVIEW"
+    STOP_RETRY_PENDING = "STOP_RETRY_PENDING"
 
 
 ACTIONABLE = frozenset({"interview_confirmed", "interview_rescheduled", "interview_cancelled"})
-TERMINAL = frozenset({InterviewState.CANCELLED, InterviewState.BLOCKED, InterviewState.NEEDS_REVIEW})
+TERMINAL = frozenset({InterviewState.CANCELLED, InterviewState.BLOCKED, InterviewState.AI_RETRY_PENDING})
 
 
 def _text(value: Any) -> str:
@@ -86,6 +86,10 @@ def interview_key(candidate_id: str, result: Mapping[str, Any], message: Mapping
     uid = calendar_uid(result)
     if uid:
         material = ("calendar", candidate, uid)
+    elif not _text(message.get("provider_thread_id")):
+        # Missing thread metadata must not collapse unrelated messages into a
+        # candidate/time-only lifecycle (and inherit each other's tombstones).
+        material = ("message", candidate, _text(message.get("provider_message_id")), *_schedule(result))
     else:
         material = ("fallback", candidate, _text(message.get("provider_thread_id")), *_schedule(result))
     return sha256("\x1f".join(material).encode("utf-8")).hexdigest()
@@ -137,7 +141,7 @@ class LifecycleEvent:
             "interview_confirmed": InterviewState.READY_TO_BOOK,
             "interview_rescheduled": InterviewState.RESCHEDULED,
             "interview_cancelled": InterviewState.CANCELLED,
-        }.get(classification, InterviewState.NEEDS_REVIEW)
+        }.get(classification, InterviewState.AI_RETRY_PENDING)
         return cls(
             candidate_id=_text(candidate_id), classification=classification, state=state or inferred,
             calendar_uid=calendar_uid(result), calendar_sequence=calendar_sequence(result),
@@ -155,7 +159,7 @@ def decide(previous: LifecycleEvent | None, incoming: LifecycleEvent) -> Transit
     event is never revived by an equal/older confirmation or reschedule.
     """
     if incoming.classification not in ACTIONABLE:
-        return TransitionDecision.STOP_NEEDS_REVIEW
+        return TransitionDecision.STOP_RETRY_PENDING
     if previous is None:
         return TransitionDecision.ALLOW
     if incoming.idempotency_key == previous.idempotency_key:
@@ -200,7 +204,7 @@ def _from_row(row: Mapping[str, Any]) -> LifecycleEvent:
             schedule = {}
     return LifecycleEvent(
         candidate_id=_text(row.get("candidate_id")), classification=_text(row.get("classification")),
-        state=InterviewState(_text(row.get("lifecycle_state")) or InterviewState.NEEDS_REVIEW),
+        state=InterviewState("AI_RETRY_PENDING" if _text(row.get("lifecycle_state")) == "NEEDS_REVIEW" else (_text(row.get("lifecycle_state")) or InterviewState.AI_RETRY_PENDING)),
         calendar_uid=_text(row.get("calendar_uid")).casefold(), calendar_sequence=int(row.get("calendar_sequence") or 0),
         source_message_id=_text(row.get("source_message_id")), sent_at=_sent_at(row.get("source_sent_at")),
         schedule=(_text(schedule.get("date"))[:10], _text(schedule.get("time"))[:5], _text(schedule.get("time_end"))[:5]),
@@ -225,8 +229,15 @@ def claim(candidate_id: str, result: Mapping[str, Any], message: Mapping[str, An
     # Rows written before the stable-identity fix used a display/slot ID.
     # Read those tombstones too; changing the lock identity cannot erase history.
     keys = sorted({interview_key(alias, result, message) for alias in aliases(candidate_id, load_links())})
+    legacy_keys = []
+    if not incoming.calendar_uid and not _text(message.get("provider_thread_id")):
+        legacy_keys = sorted({sha256("\x1f".join(("fallback", _text(alias), "", *_schedule(result))).encode("utf-8")).hexdigest()
+                              for alias in aliases(candidate_id, load_links())})
     with get_connection() as conn, conn.cursor() as cur:
-        cur.execute("SELECT * FROM interview_lifecycle_states WHERE interview_key=ANY(%s) ORDER BY interview_key FOR UPDATE", (keys,))
+        # Read old unthreaded keys only with exact source-message proof. Keep
+        # historical tombstones without letting equal times join strangers.
+        cur.execute("SELECT * FROM interview_lifecycle_states WHERE interview_key=ANY(%s) OR (interview_key=ANY(%s) AND source_message_id=%s) ORDER BY interview_key FOR UPDATE",
+                    (keys, legacy_keys, incoming.source_message_id))
         names = [column.name for column in cur.description]
         rows = [dict(zip(names, row)) for row in cur.fetchall()]
         # The source calendar version wins, never the time a worker replayed it.
@@ -237,7 +248,7 @@ def claim(candidate_id: str, result: Mapping[str, Any], message: Mapping[str, An
         )) if rows else None
         previous = _from_row(row) if row else None
         decision = decide(previous, incoming)
-        if decision in {TransitionDecision.STOP_STALE, TransitionDecision.STOP_CONFLICT, TransitionDecision.STOP_NEEDS_REVIEW}:
+        if decision in {TransitionDecision.STOP_STALE, TransitionDecision.STOP_CONFLICT, TransitionDecision.STOP_RETRY_PENDING}:
             return LifecycleClaim(decision, incoming, key)
         if decision == TransitionDecision.IDEMPOTENT and row:
             return LifecycleClaim(

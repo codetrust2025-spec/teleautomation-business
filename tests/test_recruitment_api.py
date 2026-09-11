@@ -16,12 +16,12 @@ def test_dashboard_query_does_not_use_reserved_day_alias():
 
 def test_mail_reprocess_paths_preserve_trust_metadata():
     """The worker-owned notification reprocess retains every trust field."""
-    source = Path("core/recruitment_mail_api.py").read_text(encoding="utf-8")
+    source = Path("workers/recruitment_mail_worker.py").read_text(encoding="utf-8")
     for field in (
         "authentication_results", "received_spf", "rfc_message_id",
         "message_direction", "gmail_label_ids", "to_metadata",
     ):
-        assert source.count(f"'{field}':context.get('{field}')") >= 1
+        assert source.count(f"'{field}':row.get('{field}')") >= 1
 
 def app_client(monkeypatch):
     monkeypatch.delenv('DASHBOARD_PASSWORD',raising=False)
@@ -135,7 +135,7 @@ def test_notification_list_and_summary_are_persistent_api_fallbacks(monkeypatch)
     assert summary.json()['summary']=={'unread':1,'new_offers':1}
 
 
-def test_notification_correction_is_audited(monkeypatch):
+def test_notification_correction_is_retired_without_mutation(monkeypatch):
     monkeypatch.setenv('AI_INTERVIEW_OFFER_TRACKING_ENABLED','true')
     audits=[]
     monkeypatch.setattr(recruitment_mail_api.store,'update_notification',lambda *args,**kwargs:{'id':'n1','candidate_id':'c1','classification':'joining_confirmed'})
@@ -144,8 +144,8 @@ def test_notification_correction_is_audited(monkeypatch):
         'notes':'Confirmed from the source email',
         'changes':{'classification':'joining_confirmed','candidate_status':'Joining Confirmed'},
     })
-    assert response.status_code==200
-    assert audits[0]['action']=='MAIL_NOTIFICATION_CORRECT'
+    assert response.status_code==410
+    assert audits == []
 
 
 def pubsub_payload(message_id='push-1'):
