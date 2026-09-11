@@ -1,0 +1,102 @@
+/**
+ * The body production actually stores, not a tidy fixture.
+ *
+ * The first pass was tested against hand-written HTML with <p> and <b>. What
+ * `mailbox_messages.body_text` holds for this mail is 644 characters on a
+ * single line with no newline anywhere, and a Teams URL split across four
+ * fragments by the sending client's 76-column wrap, the breaks turned into
+ * spaces by the text extraction.
+ *
+ * Read verbatim from production, message f8ae1940-c841-40ab-94a2-f2da38586379.
+ */
+import React from "react";
+import { afterEach, describe, expect, it } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
+import { OriginalEmail, rejoinWrappedUrl } from "./OriginalEmail.jsx";
+
+const STORED_BODY = "Dear Gangadhar, As discussed, your Virtual Interview is scheduled at 3.30 PM - 4.15 PM on 15th Sep 2026 (Tuesday). Please join the link before 5 minutes. Interview Scheduled 15th Sep 2026 (Tuesday) at 3.30 PM. Interview link https://teams.microsoft.com/l/meetup-join/19%3ameeting_NzIxMGU1YWMtMGU2NC00Z Dk1LTljZTEtZDNiOTc2MmVkODI5%40thread.v2/0?context=%7b%22Tid%22%3a%22404b1967 -6507-45ab-8a6d-7374a3f478be%22%2c%22Oid%22%3a%221b922d1c-ee13-4d54-81f2-31e c3c111a81%22%7d Thanks & Regards Prathima Kamisetti HR Technical Recruiter || 9845303472 VHS Professional Services Pvt ltd 3/1, Langford Road, Shantinagar, Richmond Town, Bangalore 560025.";
+
+const WHOLE_URL = "https://teams.microsoft.com/l/meetup-join/19%3ameeting_NzIxMGU1YWMtMGU2NC00ZDk1LTljZTEtZDNiOTc2MmVkODI5%40thread.v2/0?context=%7b%22Tid%22%3a%22404b1967-6507-45ab-8a6d-7374a3f478be%22%2c%22Oid%22%3a%221b922d1c-ee13-4d54-81f2-31ec3c111a81%22%7d";
+
+function view(body = STORED_BODY) {
+  return render(<OriginalEmail
+    email={{
+      subject: "Virtual Technical Interview Scheduled_TCS",
+      sender_name: "prathima.kamisetti",
+      recipient_email: "gangadhar.nagaraje.it@gmail.com",
+      sent_at: "2026-09-11T07:22:01Z", body,
+    }}
+    formatWhen={() => "11 Sept 2026, 12:52 pm"}
+  />);
+}
+
+describe("the body production actually stores", () => {
+  afterEach(cleanup);
+
+  it("has no newline at all, which is why paragraphs cannot be recovered", () => {
+    // Stated as a fact about the input, so the day ingestion starts keeping
+    // newlines this fails and the renderer can be given real paragraphs.
+    expect(STORED_BODY).not.toContain("\n");
+  });
+
+  it("no longer leaves the tracking string on screen", () => {
+    const { container } = view();
+    const shown = container.querySelector(".gmail-view__body").textContent;
+    for (const fragment of ["%40thread.v2", "%22Tid%22", "%22Oid%22", "context="]) {
+      expect(shown).not.toContain(fragment);
+    }
+  });
+
+  it("gives the link the whole URL, not the first fragment", () => {
+    // The visible defect was the raw tail. The worse one was silent: the href
+    // stopped at the first space, so the link did not open the meeting.
+    view();
+    const link = screen.getByRole("link", { name: "Join Microsoft Teams meeting" });
+    expect(link).toHaveAttribute("href", WHOLE_URL);
+  });
+
+  it("keeps the sentence after the link out of the URL", () => {
+    const { container } = view();
+    expect(container.textContent).toContain("Thanks & Regards");
+    expect(screen.getByRole("link", { name: "Join Microsoft Teams meeting" })
+      .getAttribute("href")).not.toContain("Thanks");
+  });
+
+  it("still links the recruiter's number", () => {
+    view();
+    expect(screen.getByRole("link", { name: "9845303472" }))
+      .toHaveAttribute("href", "tel:9845303472");
+  });
+
+  it("renders it as one paragraph, because that is what was stored", () => {
+    const { container } = view();
+    expect(container.querySelectorAll(".gmail-view__body p")).toHaveLength(1);
+  });
+});
+
+describe("rejoining a wrapped URL", () => {
+  const join = (text) => {
+    const m = /https?:\/\/\S+/.exec(text);
+    return rejoinWrappedUrl(text, m.index, m[0]).url;
+  };
+
+  it("absorbs only fragments carrying a percent-escape", () => {
+    expect(join("go https://x.example/a%20b c%2Fd then Thanks & Regards"))
+      .toBe("https://x.example/a%20bc%2Fd");
+  });
+
+  it("stops at ordinary prose", () => {
+    expect(join("see https://x.example/path Thanks & Regards Prathima"))
+      .toBe("https://x.example/path");
+  });
+
+  it("stops at a following sentence even when it has an ampersand", () => {
+    expect(join("link https://x.example/a Terms & Conditions apply"))
+      .toBe("https://x.example/a");
+  });
+
+  it("leaves an unwrapped URL exactly as it was", () => {
+    expect(join("https://teams.microsoft.com/l/meetup-join/abc%40thread.v2"))
+      .toBe("https://teams.microsoft.com/l/meetup-join/abc%40thread.v2");
+  });
+});

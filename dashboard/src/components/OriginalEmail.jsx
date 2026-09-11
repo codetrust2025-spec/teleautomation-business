@@ -49,6 +49,44 @@ export function linkLabel(href, text) {
 }
 
 const URL_RE = /\bhttps?:\/\/[^\s<>"')\]]+/gi;
+//: A percent-escape run. Nothing an English sentence contains.
+const PERCENT_ESCAPED = /%[0-9a-f]{2}/i;
+const URL_CHARS = /^[A-Za-z0-9%._~:/?#[\]@!$&'()*+,;=-]+$/;
+
+/** Rejoin a URL the sending mail client wrapped across lines.
+ *
+ * Outlook hard-wraps at 76 columns and the text extraction turns those breaks
+ * into spaces, so the stored body carries a Teams link as four fragments:
+ *
+ *   ...meeting_NzIxMGU1YWMtMGU2NC00Z Dk1LTljZTEt...%22Tid%22%3a%22404b1967
+ *   -6507-45ab...%22Oid%22%3a%22...81f2-31e c3c111a81%22%7d
+ *
+ * Matching to the first space labelled fragment one as the meeting and left
+ * the other three on screen as the raw tracking string this view exists to
+ * hide -- and, worse, made the link itself a truncated URL that does not open
+ * the meeting.
+ *
+ * A fragment is only absorbed if it carries a percent-escape, which a
+ * following sentence does not: "Thanks & Regards" is left alone where
+ * "%22Oid%22%3a" is taken.
+ */
+export function rejoinWrappedUrl(text, start, matched) {
+  let end = start + matched.length;
+  let url = matched;
+  const rest = String(text);
+  while (end < rest.length) {
+    const gap = /^\s+/.exec(rest.slice(end));
+    if (!gap) break;
+    const after = rest.slice(end + gap[0].length);
+    const token = /^\S+/.exec(after);
+    if (!token) break;
+    const piece = token[0].replace(/[.,;:]+$/, "");
+    if (!PERCENT_ESCAPED.test(piece) || !URL_CHARS.test(piece)) break;
+    url += piece;
+    end += gap[0].length + piece.length;
+  }
+  return { url, end };
+}
 const MAIL_RE = /\b[\w.+-]+@[\w-]+\.[\w.-]+\b/gi;
 // Indian mobile numbers as recruiters write them, and ordinary +country forms.
 const PHONE_RE = /(?:\+\d{1,3}[\s-]?)?\b\d{5}[\s-]?\d{5}\b|\+\d{1,3}[\s-]?\d{3,5}[\s-]?\d{3,5}/g;
@@ -67,6 +105,12 @@ export function linkifyText(text, keyPrefix = "t") {
     for (let m = re.exec(source); m; m = re.exec(source)) {
       // First match wins, so an address inside a URL is not linked twice.
       if (marks.some((mark) => m.index < mark.end && mark.start < m.index + m[0].length)) continue;
+      if (kind === "url") {
+        const { url, end } = rejoinWrappedUrl(source, m.index, m[0]);
+        marks.push({ start: m.index, end, value: url, kind });
+        re.lastIndex = end;
+        continue;
+      }
       marks.push({ start: m.index, end: m.index + m[0].length, value: m[0], kind });
     }
   }
