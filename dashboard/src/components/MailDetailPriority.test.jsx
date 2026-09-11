@@ -29,7 +29,7 @@ function rule(selector) {
 
 describe('the email comes first', () => {
   it('is rendered above the metric grid', () => {
-    const email = jsx.indexOf('className="mail-detail__original"')
+    const email = jsx.indexOf('<OriginalEmail')
     const metrics = jsx.indexOf('<dl>')
     expect(email).toBeGreaterThan(-1)
     expect(metrics).toBeGreaterThan(-1)
@@ -37,11 +37,11 @@ describe('the email comes first', () => {
   })
 
   it('sits directly under the dialog header', () => {
-    expect(jsx).toMatch(/<\/header>\s*<section className="mail-detail__original"/)
+    expect(jsx).toMatch(/<\/header>\s*<OriginalEmail/)
   })
 
   it('is followed by the summary, then the two AI sections', () => {
-    const email = jsx.indexOf('className="mail-detail__original"')
+    const email = jsx.indexOf('<OriginalEmail')
     const summary = jsx.indexOf('<strong>Summary</strong>')
     const reason = jsx.indexOf('<summary>Detection reason</summary>')
     const action = jsx.indexOf('<summary>Recommended action</summary>')
@@ -52,44 +52,56 @@ describe('the email comes first', () => {
 })
 
 describe('the body is not clipped', () => {
-  it('no longer caps the whole section', () => {
+  it('no longer caps the whole view', () => {
     // The cap here was what squeezed the body down to a couple of lines.
-    expect(rule('\\.mail-detail__original')).not.toMatch(/max-height/)
+    expect(rule('\\.gmail-view')).not.toMatch(/max-height/)
   })
 
   it('caps the body alone, and generously', () => {
-    const body = rule('\\.mail-detail__email-body')
+    const body = rule('\\.gmail-view__body')
     expect(body).toMatch(/max-height:\s*min\(46vh,\s*520px\)/)
-    expect(body).toMatch(/overflow:\s*auto/)
+    expect(body).toMatch(/overflow-y:\s*auto/)
   })
 
-  it('gives an ordinary email room to need no scrolling', () => {
-    expect(rule('\\.mail-detail__email-body')).toMatch(/min-height:\s*180px/)
+  it('needs no reserved height now that it renders real paragraphs', () => {
+    // The old `min-height: 180px` propped open a <pre> block. Real paragraphs
+    // size themselves, so a three-line email is three lines tall rather than
+    // three lines followed by a gap.
+    expect(rule('\\.gmail-view__body')).not.toMatch(/min-height/)
   })
 
   it('wraps long lines instead of running off sideways', () => {
-    // <pre> sets white-space: pre itself, overriding what it inherits.
-    const body = rule('\\.mail-detail__email-body')
-    expect(body).toMatch(/white-space:\s*pre-wrap/)
+    // A meeting URL is one unbroken token; without this it pushes the dialog.
+    const body = rule('\\.gmail-view__body')
     expect(body).toMatch(/overflow-wrap:\s*anywhere/)
+    expect(body).toMatch(/overflow-x:\s*hidden/)
   })
 })
 
+const originalEmailJsx = fs.readFileSync(
+  path.join(__dirname, 'OriginalEmail.jsx'), 'utf8',
+)
+
 describe('the header lines stay put', () => {
-  it('keeps From, To, Received and Subject in the markup', () => {
-    for (const label of ['From:', 'To:', 'Received:', 'Subject:']) {
-      expect(jsx).toContain(`<b>${label}</b>`)
+  it('still says who it is from, to whom, when, and about what', () => {
+    // The four facts survived the redesign. They are laid out as an email
+    // header now rather than as labelled From:/To:/Received:/Subject: lines.
+    for (const part of [
+      'gmail-view__subject', 'gmail-view__sender',
+      'gmail-view__recipient', 'gmail-view__received',
+    ]) {
+      expect(originalEmailJsx).toContain(part)
     }
   })
 
-  it('leaves the meta outside the scrolling body', () => {
-    // Both are children of the section; only the body scrolls, so the meta
-    // cannot scroll out of view the way it used to.
-    const meta = jsx.indexOf('className="mail-detail__email-meta"')
-    const body = jsx.indexOf('className="mail-detail__email-body"')
-    expect(meta).toBeGreaterThan(-1)
-    expect(meta).toBeLessThan(body)
-    expect(rule('\\.mail-detail__email-meta')).not.toMatch(/overflow/)
+  it('leaves the header outside the scrolling body', () => {
+    // Only the body scrolls, so the sender and the date cannot scroll out of
+    // view the way the old meta line could.
+    const header = originalEmailJsx.indexOf('gmail-view__from')
+    const body = originalEmailJsx.indexOf('gmail-view__body')
+    expect(header).toBeGreaterThan(-1)
+    expect(header).toBeLessThan(body)
+    expect(rule('\\.gmail-view__from')).not.toMatch(/overflow/)
   })
 })
 
@@ -116,14 +128,14 @@ describe('the lower AI sections fold away', () => {
 
 describe('responsive', () => {
   it('shortens the body on narrow viewports', () => {
-    expect(css).toMatch(/@media \(max-width: 900px\) \{\s*\.mail-detail__email-body \{[^}]*max-height:\s*40vh/)
+    expect(css).toMatch(/@media \(max-width: 900px\) \{\s*\.gmail-view__body \{[^}]*max-height:\s*40vh/)
   })
 
   it('declares that override after the base rule so it wins', () => {
     // Equal specificity: source order decides. The first attempt put this
     // above the base rule, where it did nothing.
-    const base = css.indexOf('\n.mail-detail__email-body {')
-    const override = css.search(/@media \(max-width: 900px\) \{\s*\.mail-detail__email-body/)
+    const base = css.indexOf('\n.gmail-view__body {')
+    const override = css.search(/@media \(max-width: 900px\) \{\s*\.gmail-view__body/)
     expect(base).toBeGreaterThan(-1)
     expect(override).toBeGreaterThan(base)
   })

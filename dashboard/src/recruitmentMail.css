@@ -2222,13 +2222,6 @@
   line-height: 1.35;
 }
 
-.mail-detail__email-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 12px;
-  color: #94a3b8;
-  font-size: 11px;
-}
 /* The email is the thing being judged, so it gets the room.
  *
  * The 260px cap used to sit on this whole section, so the label and the
@@ -2236,34 +2229,104 @@
  * the height — leaving about two lines of the email visible. The cap now
  * belongs to the body alone: the meta stays put, and only a genuinely long
  * email scrolls. */
-.mail-detail__original {
-  margin: 12px 0 0;
-  border: 1px solid var(--border-color, rgba(148, 163, 184, 0.18));
-  border-radius: 8px;
-  padding: 12px 14px;
-  background: rgba(15, 23, 42, 0.55);
-  color: #cbd5e1;
+/* ── The original email, read the way mail is read ───────────────────────────
+   No card, no border, no monospace block. The email is the thing being judged,
+   so it gets the page: a subject line, who it is from, when it arrived, and a
+   body with its own paragraphs and emphasis intact.
+
+   Still the dark modal it lives in. Copying Gmail's white sheet here would put
+   a bright rectangle in the middle of a dark dialog and cost more than the
+   familiarity gains. */
+.gmail-view {
+  margin: 14px 0 0;
+}
+.gmail-view__subject {
+  margin: 0 0 12px;
+  color: #e2e8f0;
+  font-size: 19px;
+  font-weight: 500;
+  line-height: 1.35;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+.gmail-view__from {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.gmail-view__avatar {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: #7c3aed;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1;
+}
+.gmail-view__identity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  min-width: 0;
+}
+.gmail-view__sender {
+  color: #e2e8f0;
+  font-size: 13.5px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.gmail-view__recipient {
+  color: #94a3b8;
   font-size: 12px;
-  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
-.mail-detail__original > strong {
-  display: block;
-  margin-bottom: 6px;
+.gmail-view__received {
+  color: #94a3b8;
+  font-size: 12px;
+  white-space: nowrap;
 }
-.mail-detail__email-body {
-  margin: 10px 0 0;
+.gmail-view__body {
   /* Tall enough that an ordinary email needs no scrolling at all, capped so a
      very long one cannot bury the summary below it. */
-  min-height: 180px;
   max-height: min(46vh, 520px);
-  overflow: auto;
-  font-family: inherit;
-  font-size: 12.5px;
-  line-height: 1.6;
-  /* <pre> defaults to white-space: pre, which overrides what it inherits, so
-     long lines ran off sideways instead of wrapping. */
-  white-space: pre-wrap;
+  overflow-y: auto;
+  /* A long unbroken token -- a meeting URL, a tracking id -- must wrap rather
+     than push the dialog sideways. */
+  overflow-x: hidden;
+  color: #cbd5e1;
+  font-size: 13.5px;
+  line-height: 1.65;
   overflow-wrap: anywhere;
+}
+.gmail-view__body p {
+  margin: 0 0 12px;
+}
+.gmail-view__body p:last-child {
+  margin-bottom: 0;
+}
+.gmail-view__body strong {
+  color: #f1f5f9;
+  font-weight: 700;
+}
+.gmail-view__body a {
+  color: #93c5fd;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+.gmail-view__body a:hover,
+.gmail-view__body a:focus-visible {
+  text-decoration: underline;
+}
+.gmail-view__empty {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 13px;
 }
 .mail-detail__aside {
   margin-top: 10px;
@@ -2282,9 +2345,20 @@
 /* After the base rule, not before it: same specificity, so source order is
    what decides which one applies. */
 @media (max-width: 900px) {
-  .mail-detail__email-body {
-    min-height: 140px;
+  .gmail-view__body {
     max-height: 40vh;
+    font-size: 13px;
+  }
+  .gmail-view__subject {
+    font-size: 17px;
+  }
+  /* The timestamp drops under the name rather than squeezing it. */
+  .gmail-view__from {
+    grid-template-columns: auto 1fr;
+  }
+  .gmail-view__received {
+    grid-column: 2;
+    white-space: normal;
   }
 }
 
