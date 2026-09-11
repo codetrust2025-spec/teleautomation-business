@@ -196,6 +196,13 @@ def evidence_entails_transition(status: str, text: str) -> bool:
             before = source[max(0, match.start() - 45):match.start()]
             if re.search(r"\b(?:not|never|no)\b[^.!?\n]{0,35}$", before, re.I):
                 continue
+            # The schedule assertion spans the interview and its predicate;
+            # negation can be inside that span ("your client interview is not
+            # scheduled"), not just before it.
+            if proposed == "INTERVIEW_CONFIRMED" and re.search(
+                r"\b(?:not|never|no)\b", match.group(), re.I,
+            ):
+                continue
             if proposed.startswith("OFFER_"):
                 sentence = source[max(0, match.start() - 180):min(len(source), match.end() + 180)]
                 if re.search(
