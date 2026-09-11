@@ -96,9 +96,69 @@ describe("mail monitoring notifications", () => {
       expect.objectContaining({ method: "POST" }),
     ));
     expect(await screen.findByText("23 Jul 2026, 5:30 pm IST")).toBeInTheDocument();
-    expect(await screen.findByRole("button", { name: "Re-run AI" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Start payment follow-up" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Save correction" })).toBeInTheDocument();
+  });
+
+  it("offers only the two actions that live outside this screen", async () => {
+    renderNotifications();
+    fireEvent.click(await screen.findByLabelText(
+      "Open email notification: Formal employment offer"));
+    await screen.findByText(/We are pleased to offer you the role/);
+
+    // The panel reports; it does not edit. Every control that wrote from here
+    // is gone -- the endpoints behind them are untouched and still served.
+    for (const name of [
+      "Re-run AI", "Save correction", "Confirm & reviewed", "False detection",
+      "View audit history", "View email", "View payment",
+      "Start payment follow-up", "View / contact candidate",
+    ]) {
+      expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
+    }
+    // Scoped to the panel: the list's own filter dropdowns are comboboxes too,
+    // and they are not part of this change.
+    const panel = document.querySelector(".mail-detail");
+    expect(panel.querySelector("textarea")).toBeNull();
+    expect(panel.querySelector("select")).toBeNull();
+    expect(panel.querySelector("input")).toBeNull();
+  });
+
+  it("still opens the booking and the meeting from the panel", async () => {
+    vi.stubGlobal("fetch", vi.fn((url) => {
+      if (String(url).includes("/config")) return response({ enabled: true });
+      if (String(url).includes("/summary")) return response({ summary: { unread: 1 } });
+      if (String(url).includes("/api/ai-recruitment/events/event-1")) {
+        return response({ event: { received_email: { subject: "Formal employment offer", body: "We are pleased to offer you the role." } } });
+      }
+      if (String(url).includes("/notifications")) {
+        return response({
+          notifications: [{
+            ...notification,
+            booking_id: "booking-1",
+            meeting_link: "https://teams.microsoft.com/l/meetup-join/test",
+          }],
+          total: 1,
+        });
+      }
+      return response({ status: "ok" });
+    }));
+    renderNotifications();
+    fireEvent.click(await screen.findByLabelText(
+      "Open email notification: Formal employment offer"));
+    await screen.findByText(/We are pleased to offer you the role/);
+    const footer = document.querySelector(".mail-detail footer");
+    const labels = [...footer.querySelectorAll("button")].map((node) => node.textContent);
+    expect(labels).toEqual(["View booking", "Open meeting link"]);
+  });
+
+  it("writes nothing when the panel is merely opened and closed", async () => {
+    renderNotifications();
+    fireEvent.click(await screen.findByLabelText(
+      "Open email notification: Formal employment offer"));
+    await screen.findByText(/We are pleased to offer you the role/);
+    const writes = fetch.mock.calls.filter(
+      ([url, options]) => options?.method === "POST"
+        && !String(url).endsWith("/read") && !String(url).endsWith("/unread"),
+    );
+    expect(writes).toEqual([]);
   });
 
   it("clears the complete notification list after confirmation", async () => {

@@ -194,22 +194,14 @@ export function MailNotificationBell({ compact = false }) {
   </div>;
 }
 
-function NotificationDetail({ item, onClose, onChanged }) {
+// Read-only. The panel reports what the pipeline decided and offers the two
+// ways of acting on it that live outside this screen -- opening the booking and
+// joining the meeting. It writes nothing: the correction, re-run, dismiss and
+// confirm controls were removed from *this* panel, and the endpoints and
+// handlers behind them are untouched and still served for every other caller.
+function NotificationDetail({ item, onClose }) {
   // Mounted only while open, so the dialog is open for its whole life.
   const dialogRef = useDialogA11y(true, onClose);
-  const [note, setNote] = useState(item.review_notes || "");
-  const [classification, setClassification] = useState(item.classification);
-  const [candidateStatus, setCandidateStatus] = useState(item.candidate_status || "Needs Review");
-  const act = async (action, changes) => {
-    await request(`/api/mail-monitoring/notifications/${item.id}/${action}`, { method: "POST", body: JSON.stringify({ notes: note, changes }) });
-    onChanged(); if (action !== "read" && action !== "unread") onClose();
-  };
-  const viewAudit = async () => {
-    const params = new URLSearchParams(item.booking_id ? { booking_id: item.booking_id } : { candidate_id: item.candidate_id });
-    const body = await request(`/api/mail-monitoring/booking-audit?${params}`);
-    const rows = body.audit || [];
-    window.alert(rows.length ? rows.map((row) => `${when(row.created_at)} — ${row.booking_status}${row.failure_message ? ` — ${row.failure_message}` : ""}`).join("\n") : "No booking audit history found.");
-  };
   const originalEmail = item.event_detail?.received_email;
   // Empty when the invite is already IST, so the extra line appears only when
   // the reader actually has to convert something.
@@ -237,7 +229,7 @@ function NotificationDetail({ item, onClose, onChanged }) {
               </>
             : <p>{item.detail_error || "The original email body is unavailable."}</p>}
       </section>
-      <dl><div><dt>Email</dt><dd>{item.email_subject || "No subject"}</dd></div><div><dt>From</dt><dd>{item.sender_name || item.sender_email || "Unknown"}</dd></div><div><dt>Mail received</dt><dd>{when(item.email_received_at)}</dd></div><div><dt>Tool detected</dt><dd>{when(item.created_at)}</dd></div><div><dt>AI confidence</dt><dd>{confidence(item.ai_confidence)}</dd></div>{item.booking_status && <div><dt>Booking</dt><dd>{item.booking_status}</dd></div>}{item.interview_date && <div><dt>Interview</dt><dd>{formatScheduleDateTime(item.interview_date, item.interview_time, item.interview_timezone)}</dd></div>}{istInterviewTime && <div><dt>IST Time</dt><dd>{istInterviewTime}</dd></div>}{item.interview_round && <div><dt>Round</dt><dd>{item.interview_round}</dd></div>}{(() => {
+      <dl><div><dt>Email</dt><dd>{item.email_subject || "No subject"}</dd></div><div><dt>From</dt><dd>{item.sender_name || item.sender_email || "Unknown"}</dd></div><div><dt>Mail received</dt><dd>{when(item.email_received_at)}</dd></div><div><dt>Tool detected</dt><dd>{when(item.created_at)}</dd></div><div><dt>AI confidence</dt><dd>{confidence(item.ai_confidence)}</dd></div>{item.interview_date && <div><dt>Interview</dt><dd>{formatScheduleDateTime(item.interview_date, item.interview_time, item.interview_timezone)}</dd></div>}{istInterviewTime && <div><dt>IST Time</dt><dd>{istInterviewTime}</dd></div>}{item.interview_round && <div><dt>Round</dt><dd>{item.interview_round}</dd></div>}{(() => {
         const reason = blockingReason(item);
         if (!reason) return null;
         return <>
@@ -258,20 +250,9 @@ function NotificationDetail({ item, onClose, onChanged }) {
           <p>{item.recommended_action || "Review the candidate and email before taking action."}</p>
         </details>
       </div>
-      <label>Review note<textarea value={note} onChange={(event) => setNote(event.target.value)} maxLength={2000} /></label>
-      <div className="mail-detail__correction"><select value={classification} onChange={(event) => setClassification(event.target.value)}>{TRACKED_CLASSIFICATIONS.map((value) => <option value={value} key={value}>{human(value)}</option>)}</select><input value={candidateStatus} onChange={(event) => setCandidateStatus(event.target.value)} maxLength={80} /></div>
       <footer>
         {item.booking_id && <button type="button" onClick={() => { onClose(); navigate("daily-ops", { bookingId: item.booking_id, candidateId: item.candidate_id }); }}>View booking</button>}
-        <button type="button" onClick={() => { sessionStorage.setItem("cand-open-pending", JSON.stringify({ candidate_id:item.candidate_id, candidate_name:item.candidate_name, action:"contact" })); navigate("candidates", { candidateId: item.candidate_id }); }}>View / contact candidate</button>
-        <button type="button" onClick={() => { sessionStorage.setItem("cand-open-pending", JSON.stringify({ candidate_id:item.candidate_id, candidate_name:item.candidate_name, action:"payment-follow-up" })); navigate("candidates", { candidateId: item.candidate_id, action: "payment-follow-up" }); }}>Start payment follow-up</button>
-        {item.booking_status && <button type="button" onClick={() => { sessionStorage.setItem("cand-open-pending", JSON.stringify({ candidate_id:item.candidate_id, candidate_name:item.candidate_name, action:"payment-follow-up" })); navigate("candidates", { candidateId: item.candidate_id, action: "payment-follow-up" }); }}>View payment</button>}
-        {item.gmail_message_id && <button type="button" onClick={() => window.open(`https://mail.google.com/mail/u/?authuser=${encodeURIComponent(item.candidate_email || "")}#all/${encodeURIComponent(item.gmail_message_id)}`, "_blank", "noopener,noreferrer")}>View email</button>}
         {/^https?:\/\//i.test(item.meeting_link || "") && <button type="button" onClick={() => window.open(item.meeting_link, "_blank", "noopener,noreferrer")}>Open meeting link</button>}
-        {item.booking_audit_id && <button type="button" onClick={viewAudit}>View audit history</button>}
-        <button type="button" onClick={() => act("false-detection")}>False detection</button>
-        <button type="button" onClick={() => act("rerun")}>Re-run AI</button>
-        <button type="button" onClick={() => act("correct", { classification, candidate_status: candidateStatus })}>Save correction</button>
-        <button type="button" className="mail-primary" onClick={() => act("reviewed")}>Confirm & reviewed</button>
       </footer>
     </section>
   </div>;
@@ -496,6 +477,6 @@ export function MailMonitoringNotifications() {
       {!loading && !items.length && <tbody><tr><td colSpan={9} className="mail-empty">No notifications match these filters.</td></tr></tbody>}
     </table></div>
     {total > 20 && <footer className="mail-pagination"><span>{total} {grouped ? "candidates" : "notifications"}</span><button disabled={page===0} onClick={() => setPage((value) => value-1)}>Previous</button><span>Page {page+1}</span><button disabled={(page+1)*20>=total} onClick={() => setPage((value) => value+1)}>Next</button></footer>}
-    {selected && <NotificationDetail item={selected} onClose={() => setSelected(null)} onChanged={load} />}
+    {selected && <NotificationDetail item={selected} onClose={() => setSelected(null)} />}
   </section>;
 }
