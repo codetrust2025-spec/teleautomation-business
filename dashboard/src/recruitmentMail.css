@@ -2241,7 +2241,12 @@
   margin: 14px 0 0;
 }
 .gmail-view__subject {
-  margin: 0 0 12px;
+  /* Measured against the Gmail reading pane rather than chosen by eye. The
+     subject, the sender row and the first line of the body sit on an even
+     rhythm of about one and a half body lines -- 42px for a 22.3px line. The
+     first pass had the subject 4px tight and the sender row 6px loose, which
+     grouped the sender with the body instead of with the header. */
+  margin: 0 0 16px;
   color: #e2e8f0;
   font-size: 19px;
   font-weight: 500;
@@ -2254,7 +2259,7 @@
   grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 10px;
-  margin-bottom: 14px;
+  margin-bottom: 8px;
 }
 .gmail-view__avatar {
   display: grid;
