@@ -152,8 +152,8 @@ _TRANSITION_ASSERTIONS: dict[str, tuple[str, ...]] = {
         r"\byou (?:have been|are) invited (?:for|to) (?:an )?interview\b",
     ),
     "INTERVIEW_CONFIRMED": (
-        r"\byour (?:l[1-5] )?(?:technical |managerial |hr |virtual )?interview.{0,120}\b(?:is |has been )?(?:scheduled|confirmed|arranged|booked)\b",
-        r"\b(?:scheduled|confirmed|arranged|booked).{0,120}\byour (?:l[1-5] )?(?:technical |managerial |hr |virtual )?interview\b",
+        r"\byour (?:l[1-5] )?(?:technical |managerial |hr |virtual |client )?interview.{0,120}\b(?:is |has been )?(?:scheduled|confirmed|arranged|booked)\b",
+        r"\b(?:scheduled|confirmed|arranged|booked).{0,120}\byour (?:l[1-5] )?(?:technical |managerial |hr |virtual |client )?interview\b",
         r"\binvitation.{0,100}\bl[1-5]\s+(?:discussion|round)\b",
         r"\bl[1-5]\s+(?:discussion|round)\b.{0,100}\b(?:candidate|interview for|discussion with)\b",
         # A reminder asserts the interview exists as firmly as the mail that
@@ -426,7 +426,14 @@ def _is_assertive_interview_invitation(subject: str, body: str) -> bool:
         re.I,
     ))
     subject_is_interview = bool(re.search(rf"\b(?:{interview})\b", title, re.I))
-    return invitation or calendar_round_invitation or (subject_is_interview and meeting_details)
+    # Recruiters also use generic subjects such as "JD and Invite". A positive
+    # source assertion ("Your Client interview scheduled ...") plus this
+    # function's date/time and meeting gates is stronger evidence than an
+    # incidental job-description section. Reuse the negation-aware assertion
+    # vocabulary; do not turn a JD, proposed time, or Teams link alone into an
+    # interview. Public-event title and other advertising guards still apply.
+    asserted_schedule = meeting_details and evidence_entails_transition("INTERVIEW_CONFIRMED", body)
+    return invitation or calendar_round_invitation or (subject_is_interview and meeting_details) or asserted_schedule
 
 
 def extract_interview_schedule(subject: str, body: str, *, sent_at: Any = None) -> dict[str, Any]:
