@@ -191,7 +191,7 @@ def test_validate_result_still_rejects_a_schedule_the_source_never_stated():
 
     validate_result(row, message)
     assert row["interview"]["time"] is None, "a time absent from the source was invented"
-    assert row["classification"] == "ai_retry_pending"
+    assert row["classification"] == "interview_update"
     assert row["requires_manual_review"] is False
 
 
@@ -204,4 +204,4 @@ def test_validate_result_still_rejects_an_ambiguous_numeric_date():
                "body": f"Your interview is scheduled for {quote}."}
     validate_result(row, message)
     assert row["interview"]["date"] is None, "an ambiguous numeric date was guessed"
-    assert row["classification"] == "ai_retry_pending"
+    assert row["classification"] == "interview_update"

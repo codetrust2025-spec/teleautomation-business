@@ -1487,6 +1487,37 @@ def _validate_result(
         # recipient's own hiring process, so a newsletter promising an
         # "interview preparation guide" still proves nothing and stays quietly
         # ignored.
+        # Interview activity with nothing bookable in it.
+        #
+        # Measured on production: "Time to schedule your interview with
+        # Accenture!" and "Action Required: Select Your Preferred Interview
+        # Slots" are real, and the candidate has to act on them -- but neither
+        # carries a time, so there is nothing to book and re-reading cannot
+        # invent one. Parked for review they sat unseen; ignored they would
+        # vanish, which is how an interview goes missing.
+        #
+        # INTERVIEW_UPDATE is where they belong and it already exists: it is
+        # not in `interview_auto_booking.ACTIONABLE`, so it cannot book, and
+        # `advance_candidate_status` excludes it, so it cannot move a stage. It
+        # is visible and it commits nothing.
+        #
+        # The relevance gate is the only discriminator available, and it is not
+        # a clean one: "TCS || JD || ServiceNow developer" comes back
+        # ESTABLISHED / RECIPIENT_HIRING_PROCESS exactly as the Accenture mail
+        # does, so a JD discussion lands here too. That is the direction to err
+        # -- it books nothing, and separating them would need a subject keyword
+        # rule, which is the shortcut this file has been removing.
+        # Only when there is no time in it. A claim that *does* carry a
+        # schedule the source has not corroborated is a different thing: a
+        # later read may quote it, so `normalize_analysis` sends that one back
+        # for another attempt, which is right. Retrying a mail that names no
+        # time can only loop until it is parked, and those terminal parks are
+        # the backlog this work is trying to empty.
+        proposed_interview = value.get("interview") or {}
+        has_a_time = all(
+            str(proposed_interview.get(key) or "").strip()
+            for key in ("date", "time")
+        )
         unsupported_proposal = (
             rejection_reason in {
                 "INTERVIEW_EVENT_NOT_SUPPORTED_BY_ASSERTIVE_CONTEXT",
@@ -1494,16 +1525,19 @@ def _validate_result(
             }
             and proposed_status in {"INTERVIEW_CONFIRMED", "INTERVIEW_RESCHEDULED"}
             and str((relevance or {}).get("decision") or "").upper() == "ESTABLISHED"
+            and str((relevance or {}).get("message_kind") or "").upper()
+                == CANDIDATE_HIRING_MESSAGE_KIND
+            and not has_a_time
         )
         value.update(
-            status="MANUAL_REVIEW_REQUIRED" if unsupported_proposal else "IGNORED_NOT_OFFER_RELATED",
-            classification="needs_review" if unsupported_proposal else "not_relevant",
-            candidate_status="Needs Review" if unsupported_proposal else "Profile Active",
+            status="INTERVIEW_UPDATE" if unsupported_proposal else "IGNORED_NOT_OFFER_RELATED",
+            classification="interview_update" if unsupported_proposal else "not_relevant",
+            candidate_status="Interview In Progress" if unsupported_proposal else "Profile Active",
             is_selection_or_offer_related=False,
             should_create_review_record=unsupported_proposal,
-            requires_manual_review=unsupported_proposal,
+            requires_manual_review=False,
             ignore_reason=None if unsupported_proposal else (rejection_reason or context["email_intent"]),
-            validation_status="NEEDS_REVIEW" if unsupported_proposal else "REJECTED",
+            validation_status="INTERVIEW_ACTIVITY" if unsupported_proposal else "REJECTED",
             lifecycle_event="NONE",
             is_job_outcome=False,
             evidence_summary=context["evidence_summary"],
@@ -1516,8 +1550,9 @@ def _validate_result(
         )
         if unsupported_proposal:
             value["reason"] = (
-                f"The model read this as {proposed_status}, and the source did not "
-                "corroborate it. Nothing has been booked; an operator decides."
+                f"The model read this as {proposed_status} and the source did not "
+                "corroborate it, so this is recorded as interview activity. "
+                "Nothing is booked, and no date or time is inferred."
             )
             value["risk_flags"] = list(dict.fromkeys(
                 (value.get("risk_flags") or []) + ["PROPOSAL_NOT_CORROBORATED"]
@@ -1865,20 +1900,27 @@ def _validate_result(
             # raising discarded the whole detection: an Accenture "Your
             # Interview has been successfully Scheduled" looped on
             # OLLAMA_SCHEMA_VALIDATION_FAILED and was parked, so the interview
-            # never surfaced anywhere. Downgrading keeps the finding and puts a
-            # human on it, and the classification is no longer
-            # interview_confirmed, so auto-booking cannot pick it up.
+            # never surfaced anywhere. Downgrading keeps the finding, and the
+            # classification is no longer interview_confirmed, so auto-booking
+            # cannot pick it up.
+            #
+            # It is recorded as interview activity rather than sent to a person.
+            # "Action Required: Select Your Preferred Interview Slots with
+            # Accenture" has no time because the candidate has not chosen one
+            # yet -- there is nothing to book and nothing a re-read would find,
+            # so a retry would only loop. The unreadable fields are cleared
+            # rather than guessed: no date or time is ever inferred here.
             for field, usable in (("date", date_valid), ("time", time_valid), ("timezone", tz_valid)):
                 if not usable:
                     interview[field] = None
             value["interview"] = interview
             value.update(
-                status="MANUAL_REVIEW_REQUIRED", classification="needs_review",
-                candidate_status="Needs Review", should_create_review_record=True,
-                requires_manual_review=True, ignore_reason=None,
+                status="INTERVIEW_UPDATE", classification="interview_update",
+                candidate_status="Interview In Progress", should_create_review_record=True,
+                requires_manual_review=False, ignore_reason=None,
                 reason="Interview schedule could not be read: " + ", ".join(missing),
             )
-            value["validation_status"] = "NEEDS_REVIEW"
+            value["validation_status"] = "INTERVIEW_ACTIVITY"
             value["risk_flags"] = list(dict.fromkeys(
                 (value.get("risk_flags") or []) + ["INTERVIEW_SCHEDULE_UNREADABLE"]
             ))

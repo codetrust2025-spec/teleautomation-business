@@ -296,7 +296,7 @@ def test_confirmed_interview_requires_explicit_schedule(field,value,match):
     row=interview_result();row['interview'][field]=value
     message={'subject':'Technical interview','body':'Your interview is scheduled for July 20, 2026 at 03:00 PM IST.'}
     validate_result(row,message)
-    assert row['classification']=='ai_retry_pending'
+    assert row['classification']=='interview_update'
     assert row['requires_manual_review'] is False
     assert match in row['reason']
 
@@ -469,7 +469,7 @@ def test_a_24h_time_with_no_recoverable_source_time_fails():
              'body':'Your interview is scheduled for July 20, 2026. We will share the timing separately.'}
     validate_result(row,message)
     assert row['interview']['time'] is None, 'a time the source never stated was invented'
-    assert row['classification']=='ai_retry_pending'
+    assert row['classification']=='interview_update'
 
 
 def test_a_source_stated_am_pm_time_is_recovered_from_a_24h_model_value():
