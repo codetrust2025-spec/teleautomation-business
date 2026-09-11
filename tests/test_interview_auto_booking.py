@@ -249,6 +249,12 @@ def install_store_fakes(monkeypatch, *, rows=None, payment_reason=None, conflict
     monkeypatch.setattr(booking.candidate_store, "get_candidate", lambda _cid: candidate)
     monkeypatch.setattr(booking.candidate_store, "candidate_identity_ids", lambda _cid: ["c1"])
     monkeypatch.setattr(booking.candidate_store, "list_candidates", lambda **kwargs: list(rows or []))
+    # `_candidate_slots` reads the stored rows now rather than the collapsed
+    # display list, because the collapse returns one row per person and hid 117
+    # confirmed bookings from the gates. The fake has to hold the same rows on
+    # both paths or these tests exercise an empty store.
+    monkeypatch.setattr(booking.candidate_store, "_load", lambda **kwargs: {"candidates": list(rows or [])})
+    monkeypatch.setattr(booking.candidate_store, "_with_computed", lambda item: dict(item))
     monkeypatch.setattr(booking.candidate_store, "slot_confirm_block_reason", lambda _row: payment_reason)
     monkeypatch.setattr(booking.candidate_store, "find_interview_slot_conflicts", lambda *args, **kwargs: list(conflicts or []))
     monkeypatch.setattr(booking.candidate_store, "attach_public_slot_screenshot", lambda *args, **kwargs: {"id": "proof1"})

@@ -350,10 +350,35 @@ def _payment_check(candidate: dict[str, Any], schedule: dict[str, str] | None) -
 
 
 def _candidate_slots(candidate: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every booking row this person owns, not the one the list happens to show.
+
+    `list_candidates` collapses a person's rows to a single row for display --
+    newest by `updated_at` -- and this read that collapsed output. So the
+    lifecycle saw one booking per candidate however many they held. Measured on
+    production: 117 confirmed bookings were invisible to it, twenty of
+    Gangadhar's and twenty of Yamini Akhil's among them, and for Pujitha the
+    row it did see was an unconfirmed one while four confirmed bookings were
+    hidden behind it.
+
+    That is what let her Persistent Systems interview book twice. The duplicate
+    check could not see the row the Google invitation had already written, so
+    the reminder booked the same 02:30-04:00 slot again; and the cancellation
+    could only release whichever row the collapse happened to show, so clearing
+    one interview took two passes.
+
+    Identity resolution is not involved and was never at fault: every one of
+    those rows already resolved to the same identity set. What changes here is
+    only which rows are handed to it.
+
+    `_with_computed` is applied exactly as `list_candidates` applies it, so the
+    rows are identical to what this function returned before -- the collapse
+    and the display filters are what is dropped, and nothing else.
+    """
     identity_ids = set(candidate_store.candidate_identity_ids(str(candidate["id"])))
     name = str(candidate.get("name") or "").strip().casefold()
+    stored = candidate_store._load().get("candidates") or []
     return [
-        row for row in candidate_store.list_candidates(stage="all", month="all")
+        row for row in (candidate_store._with_computed(item) for item in stored)
         if str(row.get("id")) in identity_ids or str(row.get("name") or "").strip().casefold() == name
     ]
 
