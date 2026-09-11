@@ -1639,20 +1639,54 @@ def validate_result(
             str(context.get("interview_event") or "NONE").upper(),
             str(context.get("lifecycle_event") or "NONE").upper(),
         }
-        if asserted_by_source:
+        if asserted_by_source and safe_status == "INTERVIEW_CANCELLED":
+            # Deterministic source evidence may release a booking. It may never
+            # create one.
+            #
+            # Both readings agree the interview is off and only the verbatim
+            # quote is missing, and the asymmetry is what makes acting safe: a
+            # cancellation books nothing, cannot put a candidate at a wrong
+            # time, and a later invitation simply books again. Holding it back
+            # is the option with a victim -- Pujitha's Persistent Systems slot
+            # stayed confirmed for an interview the mail said she had missed,
+            # because the model paraphrased "you missed your interview slot"
+            # instead of quoting it.
+            #
+            # Confirmations and reschedules are not covered: those would commit
+            # a candidate to a time no quoted sentence supports, which is the
+            # anti-hallucination guard doing its job.
             value.update(
-                status="MANUAL_REVIEW_REQUIRED", classification="needs_review",
-                candidate_status="Needs Review", is_selection_or_offer_related=False,
-                should_create_review_record=True, requires_manual_review=True,
-                ignore_reason=None, validation_status="NEEDS_REVIEW",
+                classification="interview_cancelled", candidate_status="Interview Cancelled",
+                is_selection_or_offer_related=True, should_create_review_record=True,
+                requires_manual_review=False, ignore_reason=None,
+                validation_status="AUTO_VALIDATED",
+                interview_event="INTERVIEW_CANCELLED", evidence=supported,
+                backend_transition_validated=True,
+                backend_validation_reason="SOURCE_ASSERTS_CANCELLATION_UNQUOTED",
+                summary=(
+                    "The source parser reads this as the interview being called off and the "
+                    "model agrees; releasing a booking needs no quoted sentence, because it "
+                    "commits the candidate to nothing."
+                ),
+            )
+            return
+        if asserted_by_source:
+            # The source names this transition but nothing quoted entails it,
+            # and it is not a release. Another attempt against a different
+            # execution state often quotes it; a person is never asked.
+            value.update(
+                status="AI_RETRY_PENDING", classification="ai_retry_pending",
+                candidate_status="AI Retry Pending", is_selection_or_offer_related=False,
+                should_create_review_record=False, requires_manual_review=False,
+                ignore_reason="TRANSITION_UNQUOTED", validation_status="RETRY_PENDING",
                 lifecycle_event="NONE", interview_event="NONE", business_domain="NONE",
                 is_job_outcome=False, is_current_event=False, evidence=supported,
                 backend_transition_validated=False,
                 backend_validation_reason="SOURCE_ASSERTS_TRANSITION_UNQUOTED",
                 downgraded_from=proposed_status,
                 summary=(
-                    "The email reads as this outcome and the source parser agrees, but "
-                    "no quoted sentence entails it, so a human confirms before booking."
+                    "The email reads as this outcome and the source parser agrees, but no "
+                    "quoted sentence entails it, so it is read again rather than booked."
                 ),
             )
             value["risk_flags"] = list(dict.fromkeys(
