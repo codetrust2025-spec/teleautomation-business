@@ -204,7 +204,11 @@ export function OriginalEmail({
   const subject = email.subject || fallbackSubject || "(no subject)";
   const recipient = email.recipient_email || fallbackRecipient || "";
   const received = formatWhen(email.sent_at || fallbackReceivedAt);
-  const paragraphs = emailParagraphs(email.body);
+  // The mail as the sender wrote it, when the API has it. `body` is the
+  // flattened extraction -- for this recruiter's mail, 644 characters on a
+  // single line with no newline anywhere, so it carries neither the paragraphs
+  // nor the bold, and its URLs arrive split by the sending client's wrap.
+  const paragraphs = emailParagraphs(email.body_html || email.body);
 
   return <article className="gmail-view" aria-label="Original email">
     <h4 className="gmail-view__subject">{subject}</h4>

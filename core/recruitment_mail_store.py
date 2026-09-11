@@ -1806,11 +1806,23 @@ def event_detail(event_id:str,*,include_evidence:bool=False)->dict[str,Any]|None
                     'sender_email':incoming[2],'recipient_email':incoming[3],
                     'sent_at':incoming[4],
                     'body':incoming[5] or incoming[6] or '',
+                    # The same mail as the sender wrote it. `body_text` is the
+                    # flattened extraction: for the VHS interview mail that is
+                    # 644 characters on one line with no newline anywhere, so
+                    # the reading view could show neither the paragraphs nor
+                    # the bold, and the Teams URL arrived split across four
+                    # fragments by the sending client's 76-column wrap.
+                    #
+                    # Read-only and additive. `body` keeps exactly the value it
+                    # had, so every existing consumer is untouched; the reading
+                    # view prefers this when it is present.
+                    'body_html':incoming[6] or '',
                 }
     row['received_email']=received or {
         'subject':row.get('subject'),'sender_name':row.get('sender_name'),
         'sender_email':row.get('sender_email'),'recipient_email':row.get('recipient_email'),
         'sent_at':row.get('email_sent_at'),'body':row['email_body'],
+        'body_html':row.get('html_body_text') or '',
     }
     row.pop('body_text',None);row.pop('html_body_text',None)
     row.pop('mailbox_email',None)
