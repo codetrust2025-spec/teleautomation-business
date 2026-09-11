@@ -163,4 +163,16 @@ describe('operations backend routes are reachable from the UI', () => {
 // the frontend and the backend of each removed feature together. A drop here is
 // the evidence that no orphaned route family was left behind; had only the UI
 // gone, this number would have risen.
-const BASELINE_UNREFERENCED = 23
+//
+// Raised 23 → 24 on 2026-09-11 when the mail-monitoring review panel was
+// reduced to "View booking" and "Open meeting link". That was asked for as a
+// UI-only change with the backend explicitly left in place, so the rise is this
+// number reporting exactly what it is for rather than a regression: one route
+// family, `/api/mail-monitoring/booking-audit`, lost its only caller when
+// "View audit history" went. It is still served, and the booking audit is still
+// written on every booking -- nothing reads it from this dashboard.
+//
+// The other removed controls orphaned nothing. False detection, re-run, correct
+// and confirm all post to `/api/mail-monitoring/notifications/{id}/{action}`,
+// which the list still calls for read, unread and dismiss.
+const BASELINE_UNREFERENCED = 24
