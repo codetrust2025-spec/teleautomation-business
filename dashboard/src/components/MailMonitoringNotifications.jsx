@@ -5,7 +5,8 @@ import { publishMailUnread } from "../notifications/mailUnread.js";
 import { useDialogA11y } from "../hooks/useDialogA11y.js";
 import { formatIstDateTime, formatScheduleDateTime, formatScheduleIstDateTime } from "../utils/istTime.js";
 import { useConfirm } from "../context/ConfirmContext.jsx";
-import { InlineLoader, OverlayLoader } from "../Loader.jsx";
+import { OverlayLoader } from "../Loader.jsx";
+import { OriginalEmail } from "./OriginalEmail.jsx";
 
 // Important candidate employment outcomes and actionable interview activity.
 export const TRACKED_CLASSIFICATIONS = [
@@ -52,11 +53,6 @@ const when = (value) => formatIstDateTime(value, {
   second: undefined,
 });
 const confidence = (value) => `${Math.round(Number(value || 0) * 100)}%`;
-const plainEmailBody = (value) => {
-  const source = String(value || "");
-  if (!source || !/<[a-z][\s\S]*>/i.test(source) || typeof DOMParser === "undefined") return source;
-  return new DOMParser().parseFromString(source, "text/html").body.textContent || "";
-};
 
 // Which of the two filter groups an alert belongs to, for colour.
 //
@@ -213,22 +209,15 @@ function NotificationDetail({ item, onClose }) {
   return <div className="mail-detail-backdrop" role="presentation" onClick={(event) => event.target === event.currentTarget && onClose()}>
     <section ref={dialogRef} className="mail-detail" role="dialog" aria-modal="true" aria-label="Mail monitoring notification">
       <header><div><h3>{item.candidate_status || human(item.classification)}</h3><p>{item.candidate_name || "Candidate"} · {item.company_name || "Company unavailable"}</p></div><button type="button" onClick={onClose} aria-label="Close">×</button></header>
-      <section className="mail-detail__original" aria-label="Original email">
-        <strong>Original email</strong>
-        {item.detail_loading
-          ? <InlineLoader label="Loading original email…" />
-          : originalEmail
-            ? <>
-                <div className="mail-detail__email-meta">
-                  <span><b>From:</b> {originalEmail.sender_name || originalEmail.sender_email || "Unknown"}</span>
-                  <span><b>To:</b> {originalEmail.recipient_email || item.candidate_email || "Unknown"}</span>
-                  <span><b>Received:</b> {when(originalEmail.sent_at || item.email_received_at)}</span>
-                  <span><b>Subject:</b> {originalEmail.subject || item.email_subject || "(no subject)"}</span>
-                </div>
-                <pre className="mail-detail__email-body">{plainEmailBody(originalEmail.body) || "This email has no text body."}</pre>
-              </>
-            : <p>{item.detail_error || "The original email body is unavailable."}</p>}
-      </section>
+      <OriginalEmail
+        email={originalEmail}
+        loading={item.detail_loading}
+        error={item.detail_error}
+        fallbackSubject={item.email_subject}
+        fallbackRecipient={item.candidate_email}
+        fallbackReceivedAt={item.email_received_at}
+        formatWhen={when}
+      />
       <dl><div><dt>Email</dt><dd>{item.email_subject || "No subject"}</dd></div><div><dt>From</dt><dd>{item.sender_name || item.sender_email || "Unknown"}</dd></div><div><dt>Mail received</dt><dd>{when(item.email_received_at)}</dd></div><div><dt>Tool detected</dt><dd>{when(item.created_at)}</dd></div><div><dt>AI confidence</dt><dd>{confidence(item.ai_confidence)}</dd></div>{item.interview_date && <div><dt>Interview</dt><dd>{formatScheduleDateTime(item.interview_date, item.interview_time, item.interview_timezone)}</dd></div>}{istInterviewTime && <div><dt>IST Time</dt><dd>{istInterviewTime}</dd></div>}{item.interview_round && <div><dt>Round</dt><dd>{item.interview_round}</dd></div>}{(() => {
         const reason = blockingReason(item);
         if (!reason) return null;
