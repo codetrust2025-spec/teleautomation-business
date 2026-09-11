@@ -110,17 +110,26 @@ class TestThePreconditionThisRestsOn:
         assert asserted_transitions(text) == set()
 
 
-class TestTheReminderSurvivesAsReview:
+class TestTheReminderSurvivesAsAnAutomaticRetry:
+    """It must not vanish, and it must not book. Nobody is asked.
+
+    A confirmation the source names but nothing quoted entails would commit the
+    candidate to a time no sentence supports, so it is read again rather than
+    booked. The release case is the exception, and only the release case --
+    see test_missed_slot_is_not_a_booking.py.
+    """
+
     def test_it_is_no_longer_silently_ignored(self):
         value = validated()
-        assert value["status"] == "MANUAL_REVIEW_REQUIRED"
-        assert value["classification"] == "needs_review"
+        assert value["status"] == "AI_RETRY_PENDING"
+        assert value["classification"] == "ai_retry_pending"
+        assert value["status"] != "IGNORED_NOT_OFFER_RELATED"
 
-    def test_an_operator_sees_it(self):
+    def test_it_books_nothing_and_asks_no_one(self):
         value = validated()
-        assert value["should_create_review_record"] is True
-        assert value["requires_manual_review"] is True
-        assert value["ignore_reason"] is None
+        assert value["should_create_review_record"] is False
+        assert value["requires_manual_review"] is False
+        assert value["backend_transition_validated"] is False
 
     def test_it_records_why(self):
         value = validated()

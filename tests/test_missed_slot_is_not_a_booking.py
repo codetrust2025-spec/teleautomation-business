@@ -183,3 +183,48 @@ class TestOneInterviewIsOneSlot:
         result = {"calendar": {"uid": "uid-a"}}
         assert _same_lifecycle_slot(
             booked, result=result, message={}, schedule=SCHEDULE) is True
+
+
+class TestSourceEvidenceMayReleaseABookingNotCreateOne:
+    """The asymmetry that let Pujitha's missed slot stand.
+
+    Both readings agreed the interview was off; the model paraphrased "you
+    missed your interview slot" rather than quoting it, so
+    `SOURCE_ASSERTS_TRANSITION_UNQUOTED` parked the mail and the confirmed
+    booking stayed. Releasing a booking commits the candidate to nothing and a
+    later invitation simply books again, so a missing quote is not a reason to
+    keep a dead slot standing. Creating or moving one still needs the quote.
+    """
+
+    def _branch(self):
+        import inspect
+
+        from services import recruitment_mail_agent as agent
+
+        source = inspect.getsource(agent.validate_result)
+        start = source.index("if asserted_by_source and safe_status ==")
+        return source[start:source.index("value.update(\n            status=\"IGNORED_NOT_OFFER_RELATED\"")]
+
+    def test_a_cancellation_is_released_without_a_quoted_sentence(self):
+        branch = self._branch()
+        head = branch[:branch.index("if asserted_by_source:")]
+        assert 'classification="interview_cancelled"' in head
+        assert "backend_transition_validated=True" in head
+        assert "SOURCE_ASSERTS_CANCELLATION_UNQUOTED" in head
+
+    def test_only_a_cancellation_qualifies(self):
+        branch = self._branch()
+        assert 'safe_status == "INTERVIEW_CANCELLED"' in branch
+
+    def test_a_confirmation_without_a_quote_still_books_nothing(self):
+        """The anti-hallucination guard, unchanged for anything that commits."""
+        branch = self._branch()
+        tail = branch[branch.index("if asserted_by_source:"):]
+        assert "AI_RETRY_PENDING" in tail
+        assert "backend_transition_validated=False" in tail
+        assert 'classification="interview_confirmed"' not in tail
+
+    def test_no_unquoted_transition_asks_a_person(self):
+        branch = self._branch()
+        assert "MANUAL_REVIEW_REQUIRED" not in branch
+        assert "requires_manual_review=True" not in branch
