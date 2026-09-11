@@ -22,6 +22,8 @@ The subject and body are the ones production stored, read from mailbox_messages.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 
 from services import recruitment_mail_agent as agent
@@ -118,6 +120,17 @@ class TestItStillFailsClosed:
         )
 
 
+#: A moment before the interview these tests convert.
+#:
+#: The date is the real one from the mail, 2026-09-11, and keeping it is the
+#: point -- this is the slot the report was written about. But
+#: `normalized_schedule` refuses a schedule in the past, so on 2026-09-11 at
+#: 08:31 UTC these four started failing on PAST_INTERVIEW, which is not what
+#: any of them is about. They assert a timezone conversion, so the clock is
+#: pinned rather than the date chased forward.
+BEFORE_THE_INTERVIEW = datetime(2026, 9, 10, 12, 0, tzinfo=timezone.utc)
+
+
 class TestTheScheduleConvertsToIst:
     """The report named the timezone, so it is pinned even though it was right."""
 
@@ -125,7 +138,7 @@ class TestTheScheduleConvertsToIst:
         schedule = normalized_schedule({"interview": {
             "date": "2026-09-11", "time": "08:30 AM",
             "end_time": "09:30 AM", "timezone": "UTC",
-        }})
+        }}, now=BEFORE_THE_INTERVIEW)
         assert schedule["date"] == "2026-09-11"
         assert schedule["time"] == "14:00"
         assert schedule["time_end"] == "15:00"
@@ -136,14 +149,14 @@ class TestTheScheduleConvertsToIst:
         schedule = normalized_schedule({"interview": {
             "date": "2026-09-11", "time": "08:30 AM",
             "end_time": "09:30 AM", "timezone": "UTC (+0000)",
-        }})
+        }}, now=BEFORE_THE_INTERVIEW)
         assert (schedule["time"], schedule["time_end"]) == ("14:00", "15:00")
 
     def test_an_hour_stays_an_hour(self):
         schedule = normalized_schedule({"interview": {
             "date": "2026-09-11", "time": "08:30 AM",
             "end_time": "09:30 AM", "timezone": "UTC",
-        }})
+        }}, now=BEFORE_THE_INTERVIEW)
         start = tuple(int(part) for part in schedule["time"].split(":"))
         end = tuple(int(part) for part in schedule["time_end"].split(":"))
         assert (end[0] * 60 + end[1]) - (start[0] * 60 + start[1]) == 60
@@ -156,7 +169,7 @@ class TestTheScheduleConvertsToIst:
         schedule = normalized_schedule({"interview": {
             "date": "2026-09-11", "time": "08:30 AM",
             "end_time": "09:30 AM", "timezone": "+0000",
-        }})
+        }}, now=BEFORE_THE_INTERVIEW)
         assert (schedule["time"], schedule["time_end"]) == ("14:00", "15:00")
         assert schedule["timezone"] == "Asia/Kolkata"
         assert schedule["source_timezone"] == "UTC+00:00"

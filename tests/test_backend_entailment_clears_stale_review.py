@@ -120,10 +120,16 @@ class TestTheRealMail:
         booking.validate_ai_for_booking(value, value["classification"])
 
     def test_the_schedule_converts_to_the_right_ist_hour(self):
+        from datetime import datetime, timezone
+
         from services import interview_auto_booking as booking
 
         value = validated()
-        schedule = booking.normalized_schedule(value)
+        # The real mail's date, 2026-09-11. `normalized_schedule` refuses a
+        # past schedule, so the clock is pinned before it rather than the date
+        # being chased forward -- this test is about the hour it converts to.
+        schedule = booking.normalized_schedule(
+            value, now=datetime(2026, 9, 10, 12, 0, tzinfo=timezone.utc))
         assert schedule["time"] == "14:00"
         assert schedule["time_end"] == "15:00"
         assert schedule["timezone"] == "Asia/Kolkata"
