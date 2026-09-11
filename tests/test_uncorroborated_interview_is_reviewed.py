@@ -96,16 +96,29 @@ class TestAScheduledClaimSurvivesAsReview:
     @pytest.mark.parametrize("status", SCHEDULED)
     def test_it_becomes_needs_review(self, status):
         value = validated(status)
-        assert value["status"] == "AI_RETRY_PENDING"
-        assert value["classification"] == "ai_retry_pending"
-        assert value["candidate_status"] == "AI Retry Pending"
+        # These carry no date and no time at all -- the Zealogics access-code
+        # and link-expiry mails named above. A retry cannot corroborate a time
+        # the sender never wrote, and this file's sibling records what that
+        # costs: four interview mails sat in AI_RETRY_PENDING for weeks at
+        # eight attempts each and never surfaced. Recorded as activity instead.
+        assert value["status"] == "INTERVIEW_UPDATE"
+        assert value["classification"] == "interview_update"
+        assert value["candidate_status"] == "Interview In Progress"
 
     @pytest.mark.parametrize("status", SCHEDULED)
-    def test_an_operator_actually_sees_it(self, status):
+    def test_it_is_visible_without_being_anyone_s_task(self, status):
+        from services.interview_auto_booking import ACTIONABLE
+
         value = validated(status)
-        assert value["should_create_review_record"] is False
+        assert value["should_create_review_record"] is True
         assert value["requires_manual_review"] is False
-        assert value["ignore_reason"].endswith("NOT_SUPPORTED_BY_ASSERTIVE_CONTEXT")
+        # Nothing is being ignored, so there is no ignore reason. Why the
+        # proposal was refused is kept where it belongs -- see
+        # test_it_says_what_could_not_be_corroborated below.
+        assert value["ignore_reason"] is None
+        assert value["backend_validation_reason"].endswith(
+            "NOT_SUPPORTED_BY_ASSERTIVE_CONTEXT")
+        assert value["classification"] not in ACTIONABLE
 
     @pytest.mark.parametrize("status", SCHEDULED)
     def test_it_says_what_could_not_be_corroborated(self, status):
