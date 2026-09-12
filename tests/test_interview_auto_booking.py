@@ -684,6 +684,38 @@ def test_duplicate_gmail_message_does_not_mutate_booking_twice(monkeypatch):
     assert outcome["duplicate"] is True
 
 
+def test_persisted_lifecycle_retry_does_not_trust_a_previous_failed_audit(monkeypatch):
+    monkeypatch.setenv('AI_INTERVIEW_AUTO_BOOKING_ENABLED', 'true')
+    _, audits = install_store_fakes(monkeypatch)
+    monkeypatch.setattr(booking.mail_store, 'booking_audit_for_message', lambda *args: {
+        'id': 'failed', 'auto_booked': False, 'booking_id': None, 'booking_status': 'Processing Failed',
+    })
+    incoming = booking.interview_lifecycle.LifecycleEvent.from_payload('c1', result(), {'provider_message_id': 'gm1'})
+    claim = booking.interview_lifecycle.LifecycleClaim(
+        booking.interview_lifecycle.TransitionDecision.IDEMPOTENT, incoming, 'key', 'slot1', 'APPLIED')
+    monkeypatch.setattr(booking.interview_lifecycle, 'claim', lambda *args: claim)
+    monkeypatch.setattr(booking.candidate_store, 'assert_slot_persisted', lambda *args, **kwargs: {'id': 'slot1', 'slot_confirmed': True})
+    monkeypatch.setattr(booking.candidate_store, 'assign_interview_slot', lambda **kwargs: pytest.fail('retry booked twice'))
+    outcome = execute(result())
+    assert outcome['status'] == 'Auto Booked'
+    assert audits[-1]['auto_booked'] and audits[-1]['booking_id'] == 'slot1'
+    assert audits[-1]['lifecycle_transition_key'] == incoming.idempotency_key
+
+
+def test_past_replay_does_not_repoint_a_successful_notification(monkeypatch):
+    monkeypatch.setenv('AI_INTERVIEW_AUTO_BOOKING_ENABLED', 'true')
+    _, audits = install_store_fakes(monkeypatch)
+    monkeypatch.setattr(booking.mail_store, 'booking_audit_for_message', lambda *args: {
+        'id': 'original', 'auto_booked': True, 'booking_id': 'slot1', 'booking_status': 'Auto Booked',
+    })
+    monkeypatch.setattr(booking.mail_store, 'attach_booking_to_notification', lambda *args, **kwargs: pytest.fail('repointed original alert'))
+    value = result(date='2020-01-01')
+    value['_historical_reprocess'] = True
+    outcome = execute(value)
+    assert outcome['status'] == 'Historical Skipped'
+    assert audits[-1]['booking_id'] is None and not audits[-1]['auto_booked']
+
+
 def test_lifecycle_stale_replay_cannot_mutate_a_newer_interview(monkeypatch):
     monkeypatch.setenv("AI_INTERVIEW_AUTO_BOOKING_ENABLED", "true")
     install_store_fakes(monkeypatch)

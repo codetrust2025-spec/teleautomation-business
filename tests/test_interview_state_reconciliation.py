@@ -23,6 +23,16 @@ def test_report_finds_false_auto_booked_claim_without_mutating_inputs():
     assert audits[0]["booking_id"] == "missing-slot"
 
 
+def test_later_failed_replay_does_not_hide_an_immutable_successful_fact():
+    result = report(candidates=[{'id': 'slot', 'slot_confirmed': True}], audits=[
+        {'id': 'success', 'gmail_message_id': 'mail', 'booking_id': 'slot', 'auto_booked': True,
+         'booking_status': 'Auto Booked', 'created_at': '2026-09-01'},
+        {'id': 'replay', 'gmail_message_id': 'mail', 'auto_booked': False,
+         'booking_status': 'Historical Skipped', 'created_at': '2026-09-13'},
+    ], events=[{'id': 'event', 'provider_message_id': 'mail', 'automation_state': 'AUTO_BOOKED'}])
+    assert not any(f['code'] == 'EVENT_CLAIMS_BOOKED_WITHOUT_SLOT' for f in result['findings'])
+
+
 def test_report_finds_ai_slot_without_audit_and_broken_notification_audit_link():
     report = build_reconciliation_report(
         candidates=[{"id": "slot-1", "slot_confirmed": True, "interview_booking_source": "ai_auto_booked", "date": "2026-09-11", "time": "14:00", "time_end": "15:00"}],

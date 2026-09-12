@@ -945,6 +945,20 @@ def _execute_auto_booking(
     interview_round = normalize_booking_round(result)
     classification = mail_store.canonical_classification(result)
     notification = event.get("notification") or {}
+    prior_audit = mail_store.booking_audit_for_message(message['provider_message_id'], classification)
+    preserve_notification = bool(prior_audit and prior_audit.get('auto_booked'))
+    lifecycle_claim = None
+    source_snapshot = {
+        'mailbox_message_id': event.get('mailbox_message_id'),
+        'provider_message_id': message.get('provider_message_id'),
+        'provider_thread_id': message.get('provider_thread_id'),
+        'sent_at': message.get('sent_at'), 'result': result,
+    }
+    def audit_context():
+        return {
+            'source_event_id': event.get('id'), 'source_snapshot': source_snapshot,
+            'lifecycle_transition_key': lifecycle_claim.incoming.idempotency_key if lifecycle_claim else None,
+        }
     analysis = mail_store.record_interview_analysis(
         mailbox_message_id=event["mailbox_message_id"],
         email_analysis_id=notification.get("email_analysis_id"), mailbox_id=mailbox["id"],
@@ -964,6 +978,7 @@ def _execute_auto_booking(
             duplicate_status="NOT_CHECKED", conflict_status="NOT_CHECKED",
             booking_status=historical["status"], failure_code=historical["failure_code"],
             failure_message=historical["message"], correlation_id=correlation_id,
+            **audit_context(),
         )
         updated_notification = mail_store.attach_booking_to_notification(
             notification.get("id"), audit_id=audit["id"], booking_id=None,
@@ -972,7 +987,7 @@ def _execute_auto_booking(
             block_reason=booking_block_reasons.describe(
                 historical["failure_code"], interview=(result.get("interview") or {}),
             ),
-        ) if notification.get("id") else {}
+        ) if notification.get("id") and not preserve_notification else notification
         logger.info(
             "Historical interview disposition correlation_id=%s code=%s",
             correlation_id, historical["failure_code"],
@@ -1030,14 +1045,17 @@ def _execute_auto_booking(
             else:
                 booking = {"id": lifecycle_claim.booking_id}
             existing_audit = mail_store.booking_audit_for_message(message["provider_message_id"], classification)
-            if existing_audit:
+            if (existing_audit and existing_audit.get('auto_booked')
+                    and str(existing_audit.get('booking_id') or '') == str(booking.get('id') or '')):
                 # Retrying the idempotent outcome also heals a crash after the
                 # audit write but before its notification projection.
                 repaired_notification = mail_store.attach_booking_to_notification(
                     notification.get("id"), audit_id=existing_audit.get("id"), booking_id=str(booking.get("id") or ""),
                     booking_status=existing_audit.get("booking_status") or "Already Processed", result=result,
                     priority="high", schedule=schedule,
-                    display_status="Interview Automatically Booked",
+                    display_status=("Interview Cancelled" if classification == 'interview_cancelled'
+                                    else "Interview Rescheduled" if classification == 'interview_rescheduled'
+                                    else "Interview Automatically Booked"),
                 ) if notification.get("id") else notification
                 return {
                     "status": existing_audit.get("booking_status") or "Already Processed",
@@ -1157,6 +1175,7 @@ def _execute_auto_booking(
             payment_status=payment_status, duplicate_status=duplicate_status,
             conflict_status=conflict_status, booking_status=booking_status,
             previous_booking=previous, new_booking=booking, correlation_id=correlation_id,
+            **audit_context(),
         )
         updated_notification = mail_store.attach_booking_to_notification(
             notification.get("id"), audit_id=audit["id"], booking_id=str(booking.get("id") or ""),
@@ -1192,6 +1211,7 @@ def _execute_auto_booking(
             validation_status=validation_status, payment_status=payment_status, duplicate_status=duplicate_status,
             conflict_status=conflict_status, booking_status=booking_status, failure_code=exc.code,
             failure_message=exc.message, correlation_id=correlation_id,
+            **audit_context(),
         )
         # The operator-facing reason is decided here, beside the decision
         # itself, so the notification carries why the booking was blocked
@@ -1205,7 +1225,7 @@ def _execute_auto_booking(
             schedule=schedule,
             display_status=display_status, detail=exc.message,
             block_reason=block_reason,
-        ) if notification.get("id") else {}
+        ) if notification.get("id") and not preserve_notification else notification
         logger.info(
             "Interview booking blocked correlation_id=%s code=%s reason=%s",
             correlation_id, exc.code, block_reason["reason_code"],
@@ -1224,6 +1244,7 @@ def _execute_auto_booking(
             validation_status="FAILED", payment_status=payment_status, duplicate_status=duplicate_status,
             conflict_status=conflict_status, booking_status="Processing Failed", failure_code=code,
             failure_message="Automatic booking could not be completed safely.", correlation_id=correlation_id,
+            **audit_context(),
         )
         updated_notification = mail_store.attach_booking_to_notification(
             notification.get("id"), audit_id=audit["id"], booking_id=None,
@@ -1235,7 +1256,7 @@ def _execute_auto_booking(
             block_reason=booking_block_reasons.describe(
                 code, interview=(result.get("interview") or {}),
             ),
-        ) if notification.get("id") else {}
+        ) if notification.get("id") and not preserve_notification else notification
         logger.exception("Interview booking processing failed correlation_id=%s code=%s", correlation_id, code)
         return {"status": "Processing Failed", "event_type": "slot_booking_blocked", "failure_code": code,
                 "message": "Automatic booking could not be completed safely.", "audit": audit,

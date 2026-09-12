@@ -1757,7 +1757,7 @@ def list_events(*, candidate_id: str|None=None, review_status: str|None=None, li
         SELECT a.booking_id,a.booking_status,a.failure_code
         FROM interview_auto_booking_audit a
         WHERE a.gmail_message_id=m.provider_message_id
-        ORDER BY a.created_at DESC LIMIT 1
+        ORDER BY a.auto_booked DESC,a.created_at DESC,a.id DESC LIMIT 1
       ) booking ON true'''+((' WHERE '+' AND '.join(where)) if where else '')+' ORDER BY e.created_at DESC LIMIT %s OFFSET %s';params.extend([limit,offset])
     with get_connection() as conn, conn.cursor() as cur:
         cur.execute(sql,params);rows=_rows(cur)
@@ -3004,41 +3004,65 @@ def record_booking_audit(
     previous_booking: dict[str, Any] | None = None,
     new_booking: dict[str, Any] | None = None, failure_code: str | None = None,
     failure_message: str | None = None, correlation_id: str | None = None,
+    source_event_id: str | None = None, lifecycle_transition_key: str | None = None,
+    source_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """Append an immutable outcome; an equivalent retry returns the same fact.
+
+    Candidate aliases, regenerated analyses and worker correlation IDs must not
+    rekey an outcome. Source message, action, slot and outcome identify the
+    fact; source references/snapshots are fixed by its first committed writer.
+    A changed outcome (e.g. failure then success) appends, never erases failure.
+    """
     audit_id = _id()
+    fact_key = hashlib.sha256(json.dumps([
+        'booking-audit-v1', gmail_message_id, classification, booking_id or None,
+        bool(auto_booked), booking_status, failure_code or None,
+    ], separators=(',', ':')).encode()).hexdigest()
     with get_connection() as conn, conn.cursor() as cur:
+        # Serialize legacy-row adoption and concurrent retries in one DB
+        # transaction. The unique key is the final race/crash safety boundary.
+        cur.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',
+                    ('booking-audit:' + gmail_message_id + ':' + classification,))
+        cur.execute("""SELECT * FROM interview_auto_booking_audit
+          WHERE audit_fact_key=%s OR (audit_fact_key IS NULL
+            AND gmail_message_id=%s AND classification=%s
+            AND booking_id IS NOT DISTINCT FROM %s AND auto_booked=%s
+            AND booking_status=%s AND failure_code IS NOT DISTINCT FROM %s)
+          ORDER BY created_at,id LIMIT 1""",
+          (fact_key,gmail_message_id,classification,booking_id or None,bool(auto_booked),booking_status,failure_code or None))
+        existing = _rows(cur)
+        if existing:
+            return existing[0]  # Never backfill/repoint a historical row.
         cur.execute(
             """INSERT INTO interview_auto_booking_audit(id,booking_id,source,gmail_message_id,
               gmail_thread_id,email_analysis_id,candidate_id,classification,auto_booked,
               validation_status,payment_validation_status,duplicate_check_status,
               conflict_check_status,booking_status,previous_booking,new_booking,failure_code,
-              failure_message,correlation_id,created_at,updated_at)
+              failure_message,correlation_id,created_at,updated_at,
+              audit_fact_key,source_event_id,lifecycle_transition_key,source_snapshot)
               VALUES(%s,%s,'AI Mail Monitoring',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                     %s::jsonb,%s::jsonb,%s,%s,%s,now(),now())
-              ON CONFLICT(gmail_message_id,classification) DO UPDATE SET
-                booking_id=EXCLUDED.booking_id,email_analysis_id=EXCLUDED.email_analysis_id,
-                auto_booked=EXCLUDED.auto_booked,validation_status=EXCLUDED.validation_status,
-                payment_validation_status=EXCLUDED.payment_validation_status,
-                duplicate_check_status=EXCLUDED.duplicate_check_status,
-                conflict_check_status=EXCLUDED.conflict_check_status,
-                booking_status=EXCLUDED.booking_status,previous_booking=EXCLUDED.previous_booking,
-                new_booking=EXCLUDED.new_booking,failure_code=EXCLUDED.failure_code,
-                failure_message=EXCLUDED.failure_message,correlation_id=EXCLUDED.correlation_id,
-                updated_at=now()
+                     %s::jsonb,%s::jsonb,%s,%s,%s,now(),now(),%s,%s,%s,%s::jsonb)
+              ON CONFLICT(audit_fact_key) DO NOTHING
               RETURNING *""",
             (audit_id, booking_id, gmail_message_id, gmail_thread_id, analysis_id,
              candidate_id, classification, auto_booked, validation_status, payment_status,
              duplicate_status, conflict_status, booking_status,
              json.dumps(previous_booking or {}, default=str), json.dumps(new_booking or {}, default=str),
-             failure_code, str(failure_message or "")[:1000] or None, correlation_id),
+             failure_code, str(failure_message or "")[:1000] or None, correlation_id,
+             fact_key,source_event_id,lifecycle_transition_key,json.dumps(source_snapshot or {},default=str)),
         )
+        inserted = _rows(cur)
+        if inserted:
+            return inserted[0]
+        cur.execute('SELECT * FROM interview_auto_booking_audit WHERE audit_fact_key=%s', (fact_key,))
         return _rows(cur)[0]
 
 
 def booking_audit_for_message(gmail_message_id: str, classification: str) -> dict[str, Any] | None:
     with get_connection() as conn, conn.cursor() as cur:
         cur.execute(
-            "SELECT * FROM interview_auto_booking_audit WHERE gmail_message_id=%s AND classification=%s LIMIT 1",
+            "SELECT * FROM interview_auto_booking_audit WHERE gmail_message_id=%s AND classification=%s ORDER BY auto_booked DESC,created_at DESC,id DESC LIMIT 1",
             (gmail_message_id, classification),
         )
         rows = _rows(cur)
