@@ -2743,6 +2743,16 @@ BOOKED_BOOKING_STATUSES = ("Auto Booked", "Approved & Booked", "Rescheduled")
 RELEASED_BOOKING_STATUS = "AI_RETRY_PENDING"
 
 
+def _project_released_booking_title(row):
+    """Keep the historical title available without presenting it as live truth."""
+    if row.get('candidate_status') in {
+        'Interview Automatically Booked', 'Interview Manually Approved & Booked',
+        'Interview Rescheduled',
+    }:
+        row.setdefault('historical_candidate_status', row['candidate_status'])
+        row['candidate_status'] = 'AI Retry Pending'
+
+
 def reconcile_booking_claims(rows):
     """Never report a booking the roster does not have.
 
@@ -2764,6 +2774,11 @@ def reconcile_booking_claims(rows):
             row['candidate_status'] = 'AI Retry Pending'
         if row.get('booking_status') in {'Needs Review', 'MANUAL_REVIEW_REQUIRED'}:
             row['booking_status'] = 'AI_RETRY_PENDING'
+        # Some removals already persisted the released status. Those rows no
+        # longer enter `claims`, but their old title still painted a green
+        # "Automatically Booked" in the list, detail dialog and alert bell.
+        if row.get('booking_status') == RELEASED_BOOKING_STATUS:
+            _project_released_booking_title(row)
     claims = [
         row for row in (rows or [])
         if isinstance(row, dict)
@@ -2781,6 +2796,7 @@ def reconcile_booking_claims(rows):
                 continue
             row["booking_status"] = RELEASED_BOOKING_STATUS
             row["booking_claim_released"] = True
+            _project_released_booking_title(row)
     except Exception:
         # A reconciliation that cannot run must not blank the screen. The
         # stored column is still the one written under the persistence checks.
