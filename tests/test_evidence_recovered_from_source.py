@@ -27,6 +27,7 @@ from __future__ import annotations
 import pytest
 
 from services import recruitment_mail_agent as agent
+from tests.legacy_detection import legacy_rules_first  # noqa: F401
 
 
 SUBJECT = (

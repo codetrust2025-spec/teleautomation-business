@@ -1237,6 +1237,7 @@ def _validate_result(
     relevance: dict[str, Any] | None = None,
 ) -> None:
     from jsonschema import Draft202012Validator
+    pure_mode = pure_ollama_enabled()
     # Backward-compatible normalization for v1 responses while the configured
     # model transitions to the canonical lowercase classification contract.
     raw_confidence = float(value.get("confidence") or 0)
@@ -1257,7 +1258,15 @@ def _validate_result(
         "lifecycle_event", "evidence_summary",
         "business_domain", "interview_event",
     ):
-        value.setdefault(key, context[key])
+        default = context[key]
+        if pure_mode:
+            # Missing descriptive AI fields are unknown, not permission for
+            # the legacy keyword classifier to supply a second intent.
+            default = False if isinstance(default, bool) else (
+                "NONE" if key in {"document_type", "lifecycle_event", "business_domain", "interview_event"}
+                else "UNKNOWN" if key == "email_intent" else ""
+            )
+        value.setdefault(key, default)
     value.setdefault("ai_status", "ANALYZED")
     value.setdefault("validation_status", "AI_DETECTED")
     value.setdefault("classification", store.canonical_classification(value))
@@ -1266,13 +1275,14 @@ def _validate_result(
     errors = list(Draft202012Validator(SCHEMA).iter_errors(value))
     if errors:
         raise ValueError("invalid selection/offer JSON: " + errors[0].message)
+    value["backend_validation_policy"] = "OLLAMA_HARD_SAFETY" if pure_mode else "LEGACY_RULES_FIRST"
     # Second layer, in case such a mail reaches the model by another route. The
     # answer is left intact in the result so it stays auditable; it simply stops
     # being something the system tracks, which is the disposition a catalogue of
     # vacancies deserves however confidently it was read. Recorded the way every
     # other downgrade here is, and after schema validation because the schema
     # forbids the extra keys.
-    if message is not None and job_advertisement_digest(
+    if not pure_mode and message is not None and job_advertisement_digest(
         str(message.get("subject") or ""), str(message.get("body") or ""),
         str(message.get("sender_email") or ""), attachments,
     ):
@@ -1299,13 +1309,13 @@ def _validate_result(
     interview_statuses = {"INTERVIEW_CONFIRMED", "INTERVIEW_RESCHEDULED", "INTERVIEW_CANCELLED"}
     proposed_status = str(value.get("status") or "").upper()
     assertive_interview_status = str(context.get("interview_event") or "NONE").upper()
-    if proposed_status in interview_statuses or assertive_interview_status in interview_statuses:
+    if proposed_status in interview_statuses or (not pure_mode and assertive_interview_status in interview_statuses):
         # Ollama can return a correct interview event and schedule while also
         # returning a contradictory generic workflow boolean or a speculative
         # lifecycle status such as JOINING_CONFIRMED. The model must not veto
         # or replace an assertive interview event recognized from the original
         # source text.
-        safe_interview_status, _ = validate_interview_event(
+        safe_interview_status, _ = (proposed_status, None) if pure_mode else validate_interview_event(
             assertive_interview_status
             if assertive_interview_status in interview_statuses
             else proposed_status,
@@ -1403,6 +1413,11 @@ def _validate_result(
     # descriptive duplicates and small models can contradict their own status.
     # Route every tracked assertion through closed-world source validation.
     # The positive flags are restored only after that validation succeeds.
+    if pure_mode:
+        from services.recruitment_automation import LEGACY_UNCERTAIN_STATUSES, normalize_analysis
+        if str(value["status"]).upper() in LEGACY_UNCERTAIN_STATUSES | {"AI_RETRY_PENDING"}:
+            normalize_analysis(value)
+            return
     positive = value["status"] in TRACKED_STATUSES
     if not positive:
         value["status"] = "IGNORED_NOT_OFFER_RELATED"
@@ -1420,7 +1435,13 @@ def _validate_result(
         value["backend_validation_reason"] = value["ignore_reason"]
         return
     proposed_status = str(value.get("status") or "").upper()
-    if value["status"] in interview_statuses:
+    if pure_mode:
+        # Ollama owns intent. Keyword-derived context is retained in the trace,
+        # never used to veto or replace its proposed transition. This is not
+        # acceptance: the shared verbatim/entailment, confidence and schedule
+        # guards below still have to prove it before any booking can run.
+        safe_status, rejection_reason = proposed_status, None
+    elif value["status"] in interview_statuses:
         safe_status, rejection_reason = validate_interview_event(value["status"], context)
     else:
         safe_status, rejection_reason = validate_lifecycle_event(value["status"], context)
@@ -1576,11 +1597,13 @@ def _validate_result(
     value["lifecycle_event"] = "NONE" if is_interview_event else safe_status
     value["interview_event"] = safe_status if is_interview_event else "NONE"
     value["business_domain"] = "INTERVIEW_TRACKING" if is_interview_event else "SELECTION_TRACKING"
-    value["email_intent"] = context["email_intent"]
-    value["document_type"] = context["document_type"]
+    if not pure_mode:
+        value["email_intent"] = context["email_intent"]
+        value["document_type"] = context["document_type"]
     value["is_job_outcome"] = True
     value["is_current_event"] = True
-    value["evidence_summary"] = context["evidence_summary"]
+    if not pure_mode:
+        value["evidence_summary"] = context["evidence_summary"]
     value["evidence"] = [
         {**item, "text": redact_sensitive_text(str(item.get("text") or ""))}
         for item in value.get("evidence") or []
@@ -1631,6 +1654,23 @@ def _validate_result(
             supported = supported + entailing
             value["backend_evidence_recovered"] = True
     if not entailing:
+        if pure_mode:
+            # Unproved AI intent is uncertainty, not proof of a job ad. Keep
+            # the mail on the automatic retry path without authorizing a
+            # confirmation, reschedule or cancellation from keywords alone.
+            value.update(
+                status="AI_RETRY_PENDING", classification="ai_retry_pending",
+                candidate_status="AI Retry Pending", is_selection_or_offer_related=False,
+                should_create_review_record=False, requires_manual_review=False,
+                ignore_reason="EVIDENCE_DOES_NOT_ENTAIL_TRANSITION",
+                validation_status="RETRY_PENDING", lifecycle_event="NONE",
+                interview_event="NONE", business_domain="NONE", is_job_outcome=False,
+                is_current_event=False, evidence=supported,
+                backend_transition_validated=False,
+                backend_validation_reason="EVIDENCE_DOES_NOT_ENTAIL_TRANSITION",
+                downgraded_from=proposed_status,
+            )
+            return
         # Two different failures were landing in the same silent ignore.
         #
         # If the mail itself contains a sentence entailing the transition, the
@@ -3054,7 +3094,8 @@ def _analyze_on_one_node(message: dict[str, Any], attachment_texts: list[dict[st
         except ValueError as exc:
             raise AIGatewayError(f"Ollama response failed schema validation: {exc}", code="OLLAMA_SCHEMA_VALIDATION_FAILED") from exc
         logger.info("Ollama recruitment response schema validated")
-        normalise_shortlist_status(result, message)
+        if not pure_ollama_enabled():
+            normalise_shortlist_status(result, message)
         result["primary_status"] = result["status"]
         result["classification_source"] = "OLLAMA"
         result["ai_validation_status"] = "VALIDATED"
@@ -3321,7 +3362,7 @@ def process_message(mailbox: dict[str, Any], decoded: dict[str, Any], attachment
                 interview_event="NONE",
                 business_domain="NONE",
             )
-    if job_board_notification(decoded.get("sender_email", "")):
+    if not pure_ollama_enabled() and job_board_notification(decoded.get("sender_email", "")):
         # Marked not-relevant so it takes the existing ignore path: no event, no
         # lifecycle status, no notification. The analysis is still recorded, so
         # the decision stays auditable.

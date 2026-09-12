@@ -31,6 +31,7 @@ import pytest
 
 from core import recruitment_mail_store as store
 from services import recruitment_mail_agent as agent
+from tests.legacy_detection import legacy_rules_first  # noqa: F401
 
 BODY = (
     "This is a quick reminder that your Altimetrik interview for the Citi Scaled "

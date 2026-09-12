@@ -30,6 +30,7 @@ import pytest
 
 from core import recruitment_mail_store as store
 from services import recruitment_mail_agent as agent
+from tests.legacy_detection import legacy_rules_first  # noqa: F401
 
 # The real flocareer reminder, with the candidate's name removed.
 EY_SUBJECT = "Reminder for interview today at 06:30 PM IST for EY"

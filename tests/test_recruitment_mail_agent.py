@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 import pytest
+from tests.legacy_detection import legacy_rules_first  # noqa: F401
 
 from core.ai_gateway import AIGatewayError
 from core.recruitment_mail_store import should_route_to_mail_alert

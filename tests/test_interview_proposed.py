@@ -10,6 +10,7 @@ and "company.domain", which is why booking stays gated separately.
 
 from core.recruitment_offer_visibility import should_show_in_selection_offer_review
 from services import recruitment_mail_agent as agent
+from tests.legacy_detection import legacy_rules_first  # noqa: F401
 
 
 class TestRoutingReachesOllama:

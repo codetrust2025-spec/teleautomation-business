@@ -9,6 +9,7 @@ effect, but it may not delete the record.
 
 from core.recruitment_offer_visibility import ALLOWED_STATUSES, should_show_in_selection_offer_review
 from services import recruitment_mail_agent as agent
+from tests.legacy_detection import legacy_rules_first  # noqa: F401
 
 
 class TestDowngradeMapping:

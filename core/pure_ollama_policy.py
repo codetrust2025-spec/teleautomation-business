@@ -10,7 +10,9 @@ OFF, the existing flow runs exactly as before -- prefilter, routing gate,
 keyword cues and all. Nothing about the current system is removed, and the
 switch is reversible at any time.
 
-Either way the deterministic safety checks after classification are untouched.
+ON also leaves post-classification intent with Ollama: legacy JD/digest,
+sender-domain and semantic keyword vetoes cannot replace its verdict. OFF
+retains those legacy decisions. In both modes the hard safety checks remain:
 Candidate match, date/time and timezone validation, payment, duplicate,
 conflict and the persistence re-read all still have to pass, and nothing is
 recorded as Auto Booked until a slot is actually stored.

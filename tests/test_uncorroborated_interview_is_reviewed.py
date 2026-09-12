@@ -30,6 +30,7 @@ import pytest
 
 from core import recruitment_mail_store as store
 from services import recruitment_mail_agent as agent
+from tests.legacy_detection import legacy_rules_first  # noqa: F401
 
 ESTABLISHED = {"decision": "ESTABLISHED", "message_kind": "RECIPIENT_HIRING_PROCESS"}
 NOT_ESTABLISHED = {"decision": "NOT_ESTABLISHED", "message_kind": "PUBLIC_EVENT"}
