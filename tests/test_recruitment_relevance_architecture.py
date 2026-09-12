@@ -6,6 +6,7 @@ import pytest
 
 from core import recruitment_mail_store as store
 from services import recruitment_mail_agent as agent
+from tests.legacy_detection import legacy_rules_first  # noqa: F401
 from services import recruitment_semantics as semantics
 
 
