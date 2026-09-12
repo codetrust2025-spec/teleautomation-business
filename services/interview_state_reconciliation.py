@@ -126,7 +126,9 @@ def build_reconciliation_report(
                 expected=expected, repair="Normalize references in a separately approved, audited transaction; retain original source IDs. Do not rebook.", sources=("booking_audit", "ai_recruitment_event", "candidate_identity_links"))
 
     message_audits = {}
-    for audit in sorted(audit_rows, key=_stamp):
+    # Attempts are append-only. A later failed/skipped replay cannot hide a
+    # successful historical transition; its slot still needs re-verification.
+    for audit in sorted(audit_rows, key=lambda a: (bool(a.get('auto_booked')), _stamp(a))):
         message_audits[_text(audit.get('gmail_message_id'))] = audit
     for event in event_rows:
         if event.get('automation_state') not in {'AUTO_BOOKED', 'AUTO_RESCHEDULED'}:
