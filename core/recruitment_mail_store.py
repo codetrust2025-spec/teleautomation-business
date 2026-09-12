@@ -196,12 +196,12 @@ def candidate_booking_lock(candidate_id: str):
 
 
 def ensure_schema() -> None:
-    if not use_postgres():
-        return
-    with get_connection() as conn, conn.cursor() as cur:
-        migrations = Path(__file__).with_name("migrations")
-        for migration in sorted(migrations.glob("*_recruitment_mail_*.sql")):
-            cur.execute(migration.read_text(encoding="utf-8"))
+    # Route installation and startup both call this. Re-executing historical
+    # SQL here restored retired review flags and re-queued old messages after
+    # the tracked migration runner had already applied the cleanup. Schema and
+    # data migrations must share the same checksum ledger on every entry path.
+    from core.migrations.runner import apply_migrations
+    apply_migrations()
 
 
 def _rows(cur) -> list[dict[str, Any]]:
