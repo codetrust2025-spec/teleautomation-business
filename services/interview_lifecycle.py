@@ -66,6 +66,8 @@ def calendar_sequence(result: Mapping[str, Any]) -> int:
 
 
 def _schedule(result: Mapping[str, Any]) -> tuple[str, str, str]:
+    # This is the historical identity material, not display metadata. Keep its
+    # representation stable so existing keys and tombstones remain reachable.
     interview = result.get("interview") or {}
     if not isinstance(interview, Mapping):
         interview = {}
@@ -74,6 +76,23 @@ def _schedule(result: Mapping[str, Any]) -> tuple[str, str, str]:
         _text(interview.get("time"))[:5],
         _text(interview.get("end_time") or interview.get("time_end"))[:5],
     )
+
+
+def schedule_metadata(result: Mapping[str, Any]) -> dict[str, str]:
+    """Preserve the source clock and timezone; never turn 03:30 PM into 03:30.
+
+    Slots use the booking executor's validated/normalized schedule. This is
+    source metadata only, deliberately independent of immutable legacy keys.
+    """
+    interview = result.get('interview') or {}
+    if not isinstance(interview, Mapping):
+        interview = {}
+    return {
+        'date': _text(interview.get('date'))[:10],
+        'time': _text(interview.get('time')),
+        'time_end': _text(interview.get('end_time') or interview.get('time_end')),
+        'timezone': _text(interview.get('timezone')),
+    }
 
 
 def interview_key(candidate_id: str, result: Mapping[str, Any], message: Mapping[str, Any]) -> str:
@@ -262,7 +281,7 @@ def claim(candidate_id: str, result: Mapping[str, Any], message: Mapping[str, An
             return LifecycleClaim(TransitionDecision.IDEMPOTENT, incoming, key, _text(known[0]), _text(known[1]))
         if decision != TransitionDecision.ALLOW:
             return LifecycleClaim(decision, incoming, key)
-        schedule = {"date": incoming.schedule[0], "time": incoming.schedule[1], "time_end": incoming.schedule[2]}
+        schedule = schedule_metadata(result)
         cur.execute(
             """INSERT INTO interview_lifecycle_states(interview_key,candidate_id,calendar_uid,calendar_sequence,source_message_id,source_sent_at,classification,lifecycle_state,schedule,idempotency_key,transition_status)
                VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,'PENDING')
